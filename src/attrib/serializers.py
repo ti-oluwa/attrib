@@ -1,14 +1,16 @@
+from calendar import c
 from collections import OrderedDict
 import typing
 import functools
 
+from attrib.fields import empty
 from attrib.exceptions import SerializationError
-from attrib.dataclass import DataClass, get_field
+from attrib.dataclass import Dataclass, get_field
 
 
 @functools.lru_cache(maxsize=128)
 def aggregate_field_names(
-    cls: typing.Type["DataClass"],
+    cls: typing.Type["Dataclass"],
     include: typing.Optional[typing.Iterable[str]] = None,
     exclude: typing.Optional[typing.Iterable[str]] = None,
 ) -> typing.Set[str]:
@@ -34,7 +36,7 @@ def aggregate_field_names(
 def _serialize_instance(
     fmt: str,
     fields: typing.Iterable[str],
-    instance: "DataClass",
+    instance: "Dataclass",
     depth: int = 0,
     context: typing.Optional[typing.Dict[str, typing.Any]] = None,
 ) -> typing.OrderedDict[str, typing.Any]:
@@ -54,11 +56,14 @@ def _serialize_instance(
         key = field.effective_name
         try:
             value = field.__get__(instance, owner=type(instance))
+            if value is empty:
+                continue
+
             if depth <= 0:
                 serialized_data[key] = value
                 continue
 
-            if isinstance(value, DataClass):
+            if isinstance(value, Dataclass):
                 serialized_data[key] = _serialize_instance(
                     fmt=fmt,
                     fields=value.__fields__,
@@ -83,7 +88,7 @@ def _serialize_instance(
 
 @typing.overload
 def serialize(
-    obj: DataClass,
+    obj: Dataclass,
     *,
     fmt: typing.Literal["python", "json"],
     depth: int = 0,
@@ -95,7 +100,7 @@ def serialize(
 
 @typing.overload
 def serialize(
-    obj: DataClass,
+    obj: Dataclass,
     *,
     fmt: str,
     depth: int = 0,
@@ -107,7 +112,7 @@ def serialize(
 
 @typing.overload
 def serialize(
-    obj: DataClass,
+    obj: Dataclass,
     *,
     fmt: str = "python",
     depth: int = 0,
@@ -118,7 +123,7 @@ def serialize(
 
 
 def serialize(
-    obj: DataClass,
+    obj: Dataclass,
     *,
     fmt: str = "python",
     depth: int = 0,

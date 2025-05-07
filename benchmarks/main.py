@@ -1,5 +1,5 @@
 import sys
-import dataclasses_example
+import attrib_example
 import attrs_example
 import utils
 
@@ -9,7 +9,7 @@ DEFAULT_ITERATIONS = 10000
 
 def main(n: int) -> None:
     """Main function to run the benchmarks."""
-    dataclasses_example.test(n)
+    attrib_example.test(n)
     attrs_example.test(n)
 
 

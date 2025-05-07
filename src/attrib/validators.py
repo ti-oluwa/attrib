@@ -3,7 +3,7 @@ import typing
 import operator
 import re
 
-from attrib._typing import SupportsRichComparison, SupportsLen
+from attrib._typing import SupportsRichComparison
 from attrib.exceptions import FieldValidationError
 
 
@@ -18,10 +18,12 @@ _Validator: typing.TypeAlias = typing.Callable[
 
 Bound = SupportsRichComparison
 ComparableValue = SupportsRichComparison
-CountableValue = SupportsLen
+CountableValue = typing.Sized
 
 
 class FieldValidator(typing.NamedTuple):
+    """Field validator wrapper."""
+
     func: _Validator
     message: typing.Optional[str] = None
 

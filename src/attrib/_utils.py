@@ -70,10 +70,12 @@ def is_concrete_type(o: typing.Any, /) -> bool:
 
 
 def is_valid_type(o: typing.Any, /) -> bool:
-    """Check if an object is a valid type that can be used in an instance check."""
+    """Check if an object is a valid type that can be used in a field"""
     if isinstance(o, tuple):
-        return all(is_concrete_type(obj) for obj in o)
-    return is_concrete_type(o)
+        return all(
+            (isinstance(obj, typing.ForwardRef) or is_concrete_type(obj) for obj in o)
+        )
+    return is_concrete_type(o) or isinstance(o, typing.ForwardRef)
 
 
 def is_slotted_cls(cls: typing.Type[typing.Any], /) -> bool:
@@ -81,16 +83,18 @@ def is_slotted_cls(cls: typing.Type[typing.Any], /) -> bool:
     return "__slots__" in cls.__dict__
 
 
-def freeze_iterable(
-    values: typing.Iterable[typing.Any],
-) -> typing.Union[typing.FrozenSet[typing.Any], typing.Tuple[typing.Any, ...]]:
-    """
-    Make an iterable immutable.
-    """
-    try:
-        return frozenset(values)
-    except TypeError:
-        return tuple(values)
+HAS_DATEUTIL = has_package("dateutil")
+PY_GE_3_11 = sys.version_info >= (3, 11)
+
+
+def resolve_forward_ref(
+    ref: typing.ForwardRef,
+    /,
+    globalns: typing.Optional[typing.Dict[str, typing.Any]] = None,
+    localns: typing.Optional[typing.Dict[str, typing.Any]] = None,
+) -> typing.Optional[typing.Any]:
+    """Resolve a forward reference to its actual type."""
+    return ref._evaluate(globalns or globals(), localns or {}, frozenset())
 
 
 def precompile_function(
@@ -408,9 +412,6 @@ def rfc3339_parse(s: str, /) -> datetime.datetime:
         return datetime.datetime.strptime(s, _RFC3339_DATE_FORMAT_1)
 
 
-_has_dateutil = has_package("dateutil")
-
-
 def iso_parse(
     s: str, /, fmt: typing.Optional[typing.Union[str, typing.Iterable[str]]] = None
 ) -> datetime.datetime:
@@ -419,9 +420,9 @@ def iso_parse(
 
     Reference: https://stackoverflow.com/a/62769371
     """
-    global _has_dateutil, _ISO_DATE_FORMAT
+    global HAS_DATEUTIL, _ISO_DATE_FORMAT
 
-    if sys.version_info >= (3, 11):
+    if PY_GE_3_11:
         try:
             return datetime.datetime.fromisoformat(s)
         except ValueError:
@@ -431,9 +432,9 @@ def iso_parse(
     except ValueError:
         pass
 
-    if _has_dateutil:
+    if HAS_DATEUTIL:
         try:
-            from dateutil import parser # type: ignore
+            from dateutil import parser  # type: ignore
 
             return parser.isoparse(s)
         except ValueError:
@@ -452,6 +453,67 @@ def iso_parse(
             except ValueError:
                 continue
 
-    if _has_dateutil:
+    if HAS_DATEUTIL:
         return parser.parse(s)  # type: ignore
     raise ValueError(f"Could not parse datetime string {s}")
+
+
+K = typing.TypeVar("K")
+V = typing.TypeVar("V")
+
+
+class _LRUCache(typing.Generic[K, V]):
+    def __init__(self, maxsize: int = 128) -> None:
+        self.cache: typing.OrderedDict[K, V] = collections.OrderedDict()
+        self.maxsize = maxsize
+        self._hits = 0
+        self._misses = 0
+
+    @property
+    def stats(self) -> typing.Dict[str, int]:
+        """Return cache statistics."""
+        return {
+            "hits": self._hits,
+            "misses": self._misses,
+            "size": len(self.cache),
+            "maxsize": self.maxsize,
+        }
+
+    def __getitem__(self, key: K) -> V:
+        if key in self.cache:
+            self._hits += 1
+            self.cache.move_to_end(key, last=False)
+            return self.cache[key]
+        self._misses += 1
+        raise KeyError(f"Key {key} not found in cache.")
+
+    def __setitem__(self, key: K, value: V) -> None:
+        if key in self.cache:
+            self._hits += 1
+            self.cache.move_to_end(key, last=False)
+        else:
+            self._misses += 1
+            if len(self.cache) >= self.maxsize:
+                self.cache.popitem(last=True)
+        self.cache[key] = value
+
+    def clear(self) -> None:
+        """Clear the cache."""
+        self.cache.clear()
+        self._hits = 0
+        self._misses = 0
+
+    def __delitem__(self, key: K) -> None:
+        del self.cache[key]
+
+    def __contains__(self, key: K) -> bool:
+        return key in self.cache
+
+    def __len__(self) -> int:
+        return len(self.cache)
+
+    def __iter__(self) -> typing.Iterator[K]:
+        return iter(self.cache)
+
+    def __repr__(self) -> str:
+        return f"<LRUCache size={len(self.cache)} maxsize={self.maxsize}>"

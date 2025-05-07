@@ -16,7 +16,7 @@ def get_fields(cls: typing.Type) -> typing.Dict[str, Field]:
     :param cls: The class to inspect.
     :return: A dictionary of field names and their corresponding Field instances.
     """
-    if issubclass(cls, DataClass) or hasattr(cls, "__fields__"):
+    if issubclass(cls, Dataclass) or hasattr(cls, "__fields__"):
         return dict(cls.__fields__)
 
     fields = {}
@@ -31,7 +31,7 @@ def _sort_by_name(item: typing.Tuple[str, Field]) -> str:
 
 
 def _dataclass_repr(
-    instance: "DataClass",
+    instance: "Dataclass",
 ) -> str:
     """Build a string representation of the dataclass instance."""
     fields = instance.__fields__
@@ -44,7 +44,7 @@ def _dataclass_repr(
 
 
 def _dataclass_str(
-    instance: "DataClass",
+    instance: "Dataclass",
 ) -> str:
     """Build a string representation of the dataclass instance."""
     fields = instance.__fields__
@@ -56,22 +56,22 @@ def _dataclass_str(
     return field_values.__repr__()
 
 
-def _dataclass_getitem(instance: "DataClass", key: str) -> typing.Any:
+def _dataclass_getitem(instance: "Dataclass", key: str) -> typing.Any:
     field = instance.__fields__[key]
     return field.__get__(instance, owner=type(instance))
 
 
-def _dataclass_setitem(instance: "DataClass", key: str, value: typing.Any) -> None:
+def _dataclass_setitem(instance: "Dataclass", key: str, value: typing.Any) -> None:
     field = instance.__fields__[key]
     field.__set__(instance, value)
 
 
 def build_frozen_dataclass_setattr(
-    original_setattr: typing.Callable[["DataClass", str, Value], None],
-) -> typing.Callable[["DataClass", str, Value], None]:
+    original_setattr: typing.Callable[["Dataclass", str, Value], None],
+) -> typing.Callable[["Dataclass", str, Value], None]:
     """Build a frozen dataclass setattr function."""
 
-    def frozen_setattr(instance: "DataClass", key: str, value: Value) -> None:
+    def frozen_setattr(instance: "Dataclass", key: str, value: Value) -> None:
         """Set an attribute on a frozen dataclass instance."""
         if key in instance._set_attributes:
             raise FrozenInstanceError(
@@ -85,11 +85,11 @@ def build_frozen_dataclass_setattr(
 
 
 def build_frozen_dataclass_delattr(
-    original_delattr: typing.Callable[["DataClass", str], None],
-) -> typing.Callable[["DataClass", str], None]:
+    original_delattr: typing.Callable[["Dataclass", str], None],
+) -> typing.Callable[["Dataclass", str], None]:
     """Build a frozen dataclass delattr function."""
 
-    def frozen_delattr(instance: "DataClass", key: str) -> None:
+    def frozen_delattr(instance: "Dataclass", key: str) -> None:
         """Delete an attribute from a frozen dataclass instance."""
         if key in instance.base_to_effective_name_map:
             raise FrozenInstanceError(
@@ -103,7 +103,7 @@ def build_frozen_dataclass_delattr(
 
 
 def _get_slotted_instance_state(
-    slotted_instance: "DataClass",
+    slotted_instance: "Dataclass",
 ) -> typing.Tuple[typing.Dict[str, typing.Any], typing.Dict[str, typing.Any]]:
     """Get the state of the slotted dataclass instance."""
     fields = slotted_instance.__fields__
@@ -129,9 +129,9 @@ def _get_slotted_instance_state(
 
 
 def _set_slotted_instance_state(
-    slotted_instance: "DataClass",
+    slotted_instance: "Dataclass",
     state: typing.Tuple[typing.Dict[str, typing.Any], typing.Dict[str, typing.Any]],
-) -> "DataClass":
+) -> "Dataclass":
     """Set the state of the slotted dataclass."""
     field_values, attributes = state
     load(slotted_instance, field_values)
@@ -140,6 +140,11 @@ def _set_slotted_instance_state(
             continue
         setattr(slotted_instance, key, value)
     return slotted_instance
+
+
+def _getnewargs(instance: "Dataclass") -> typing.Tuple:
+    """Get the __new__ arguments for the dataclass instance."""
+    return (), instance.__getstate__()  # type: ignore[return-value]
 
 
 def _get_slot_attribute_name(
@@ -166,9 +171,8 @@ def _build_slotted_namespace(
     """
     # Only add slots for fields defined in the class, i.e those that are not
     # inherited from a base class.
-    unique_prefix = f"slotted_{id(namespace)}"
     slotted_attributes_names = {
-        key: _get_slot_attribute_name(unique_prefix, key) for key in own_fields
+        key: _get_slot_attribute_name("slotted", key) for key in own_fields
     }
 
     slots = set(slotted_attributes_names.values())
@@ -190,17 +194,20 @@ def _build_slotted_namespace(
         namespace["__getstate__"] = _get_slotted_instance_state
     if "__setstate__" not in namespace:
         namespace["__setstate__"] = _set_slotted_instance_state
+    if "__getnewargs__" not in namespace:
+        namespace["__getnewargs__"] = _getnewargs
 
     namespace["__slots__"] = tuple(slots)
     if parent_slotted_attributes:
         slotted_attributes_names |= parent_slotted_attributes
+
     namespace["__slotted_names__"] = slotted_attributes_names
     namespace.pop("__dict__", None)
     namespace.pop("__weakref__", None)
     return namespace
 
 
-def _dataclass_hash(instance: "DataClass") -> int:
+def _dataclass_hash(instance: "Dataclass") -> int:
     """Compute the hash of the dataclass instance based on descriptor fields."""
     fields = instance.__fields__
     instance_type = type(instance)
@@ -216,7 +223,7 @@ def _dataclass_hash(instance: "DataClass") -> int:
 
 
 def _dataclass_eq(
-    instance: "DataClass",
+    instance: "Dataclass",
     other: typing.Any,
 ) -> bool:
     """Compare two dataclass instances for equality."""
@@ -224,7 +231,7 @@ def _dataclass_eq(
         return NotImplemented
     if instance is other:
         return True
-    if not isinstance(other, DataClass):
+    if not isinstance(other, Dataclass):
         return False
     if len(instance.__fields__) != len(other.__fields__):
         return False
@@ -240,8 +247,8 @@ def _dataclass_eq(
 u = str
 
 
-class DataClassMeta(type):
-    """Metaclass for DataClass types"""
+class DataclassMeta(type):
+    """Metaclass for Dataclass types"""
 
     def __new__(
         cls,
@@ -261,7 +268,7 @@ class DataClassMeta(type):
         setitem: bool = False,
     ):
         """
-        Create a new DataClass type.
+        Create a new Dataclass type.
 
         :param name: Name of the new class.
         :param bases: Base classes for the new class.
@@ -277,7 +284,7 @@ class DataClassMeta(type):
         :param eq: If True, add __eq__ method to the class.
         :param getitem: If True, add __getitem__ method to the class.
         :param setitem: If True, add __setitem__ method to the class.
-        :return: New DataClass type
+        :return: New Dataclass type
         """
         own_fields = {}
         fields = {}
@@ -307,7 +314,7 @@ class DataClassMeta(type):
                 if slots and hasattr(cls_, "__slotted_names__"):
                     parent_slotted_attributes.update(cls_.__slotted_names__)
 
-                cls_ = typing.cast(typing.Type["DataClass"], cls_)
+                cls_ = typing.cast(typing.Type["Dataclass"], cls_)
                 # Borrow fields from the base class
                 fields.update(cls_.__fields__)
                 base_to_effective_name_map.update(cls_.base_to_effective_name_map)
@@ -367,11 +374,11 @@ class DataClassMeta(type):
         return new_cls
 
 
-class DataClass(metaclass=DataClassMeta, slots=True):
+class Dataclass(metaclass=DataclassMeta, slots=True):
     """
-    Simple dataclass.
+    Simple dataclass
 
-    Dataclasses are defined by subclassing `DataClass` and defining fields as class attributes.
+    Dataclasses are defined by subclassing `Dataclass` and defining fields as class attributes.
     Dataclasses enforce type validation, field requirements, and custom validation functions.
 
     :param frozen: If True, the dataclass is immutable after creation.
@@ -396,20 +403,41 @@ class DataClass(metaclass=DataClassMeta, slots=True):
     base_to_effective_name_map: typing.Mapping[str, str] = {}
     effective_to_base_name_map: typing.Mapping[str, str] = {}
 
+    @typing.overload
+    def __init__(self, data: None = None) -> None:
+        """Initialize the dataclass with no data."""
+        ...
+
+    @typing.overload
+    def __init__(
+        self,
+        data: typing.Mapping[str, typing.Any],
+    ) -> None:
+        """Initialize the dataclass with raw data."""
+        ...
+
+    @typing.overload
+    def __init__(self, **kwargs: typing.Any) -> None:
+        """Initialize the dataclass with keyword arguments."""
+        ...
+
     def __init__(
         self,
         data: typing.Optional[typing.Mapping[str, typing.Any]] = None,
+        **kwargs,
     ) -> None:
         """
         Initialize the dataclass with raw data or keyword arguments.
 
         :param data: Raw data to initialize the dataclass with.
+        :param kwargs: Additional keyword arguments to initialize the dataclass with.
         """
         self._set_attributes = (
             set()
         )  # Set of attributes that have been set on the instance
-        if data is not None:
-            load(self, data)
+        combined = {**(data or {}), **kwargs}
+        if combined:
+            load(self, combined)
 
     def __init_subclass__(cls) -> None:
         """Ensure that subclasses define fields."""
@@ -418,12 +446,12 @@ class DataClass(metaclass=DataClassMeta, slots=True):
         return
 
 
-_DataClass_co = typing.TypeVar("_DataClass_co", bound=DataClass, covariant=True)
+_Dataclass_co = typing.TypeVar("_Dataclass_co", bound=Dataclass, covariant=True)
 
 
 def load(
-    instance: _DataClass_co, data: typing.Mapping[str, typing.Any]
-) -> _DataClass_co:
+    instance: _Dataclass_co, data: typing.Mapping[str, typing.Any]
+) -> _Dataclass_co:
     """
     Load raw data into the dataclass instance.
 
@@ -442,9 +470,9 @@ def load(
 
 
 def from_dict(
-    dataclass_: typing.Type[_DataClass_co],
+    dataclass_: typing.Type[_Dataclass_co],
     data: typing.Mapping[str, typing.Any],
-) -> _DataClass_co:
+) -> _Dataclass_co:
     """
     Convert a dictionary to a dataclass instance.
 
@@ -456,9 +484,9 @@ def from_dict(
 
 
 def from_attributes(
-    dataclass_: typing.Type[_DataClass_co],
+    dataclass_: typing.Type[_Dataclass_co],
     obj: typing.Any,
-) -> _DataClass_co:
+) -> _Dataclass_co:
     """
     Convert an object to a dataclass instance by loading fields using
     the objects attributes
@@ -480,11 +508,11 @@ def from_attributes(
 
 
 def deserialize(
-    dataclass_: typing.Type[_DataClass_co],
+    dataclass_: typing.Type[_Dataclass_co],
     obj: typing.Any,
     *,
     attributes: bool = False,
-) -> _DataClass_co:
+) -> _Dataclass_co:
     """
     Deserialize an object to a dataclass instance.
 
@@ -500,13 +528,13 @@ def deserialize(
 
 @functools.cache
 def get_field(
-    cls: typing.Type[DataClass],
+    cls: typing.Type[Dataclass],
     field_name: str,
 ) -> typing.Optional[Field]:
     """
     Get a field by its name.
 
-    :param cls: The DataClass type to search in.
+    :param cls: The Dataclass type to search in.
     :param field_name: The name of the field to retrieve.
     :return: The field instance or None if not found.
     """

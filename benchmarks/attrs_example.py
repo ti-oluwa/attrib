@@ -1,8 +1,11 @@
 # Import necessary packages and modules
+from re import S
 import typing
 from datetime import date, datetime
 import zoneinfo
 import attrs
+import random
+from memory_profiler import profile
 
 from utils import timeit, profileit
 from mock_data import course_data, student_data, year_data
@@ -45,18 +48,42 @@ class Course:
 
 
 @attrs.define(slots=True)
-class Student:
+class PersonalInfo:
+    """Personal information data class"""
+
+    name: str = attrs.field(validator=attrs.validators.max_len(100), converter=str)
+    age: int = attrs.field(validator=attrs.validators.in_(range(0, 31)), converter=int)
+    email: typing.Optional[str] = attrs.field(default=None)
+    phone: typing.Optional[str] = attrs.field(default=None)
+
+
+@attrs.define(slots=True, kw_only=True)
+class Student(PersonalInfo):
     """Student data class with multiple fields and a list of enrolled courses"""
 
     id: int = attrs.field()
-    name: str = attrs.field(validator=attrs.validators.max_len(100), converter=str)
-    age: int = attrs.field(
-        validator=attrs.validators.in_(range(18, 101)), converter=int
+    year: typing.Optional[AcademicYear] = attrs.field()
+    gpa: float = attrs.field(
+        default=attrs.Factory(lambda: random.uniform(1.5, 5.0)),
     )
-    year: AcademicYear = attrs.field()
-    email: typing.Optional[str] = attrs.field(default=None)
-    phone: typing.Optional[str] = attrs.field(default=None)
-    courses: typing.List[Course] = attrs.field(factory=list)
+    courses: typing.List[Course] = attrs.field(
+        default=attrs.Factory(list),
+        converter=lambda x: [Course(**course) for course in x],
+    )
+    friend: typing.Optional["Student"] = attrs.field(
+        factory=lambda: Student(
+            id=0,
+            name="",
+            age=0,
+            email=None,
+            phone=None,
+            year=None,
+            courses=[],
+            gpa=0.0,
+            joined_at=None,
+            friend=None,
+        ),
+    )
     joined_at: typing.Optional[datetime] = attrs.field(
         default=None,
         converter=lambda x: datetime.now() if x is None else parse(x),
@@ -88,6 +115,7 @@ def example():
 
 
 @timeit("attrs_test")
+# @profile
 def test(n: int):
     for _ in range(n):
         example()

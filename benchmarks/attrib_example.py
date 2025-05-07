@@ -1,26 +1,19 @@
-# Import necessary packages and modules
-import pickle
-import time
+from calendar import c
+import random
 import typing
 from datetime import datetime
+import tracemalloc
+from memory_profiler import profile
 
 import attrib
 from utils import timeit, profileit
 from mock_data import course_data, student_data, year_data
 
 
-_DataClass_co = typing.TypeVar("_DataClass_co", bound=attrib.DataClass, covariant=True)
+_Dataclass_co = typing.TypeVar("_Dataclass_co", bound=attrib.Dataclass, covariant=True)
 
 
-################
-# DATA CLASSES #
-################
-class AcademicYear(
-    attrib.DataClass,
-    eq=True,
-    hash=True,
-    slots=True,
-):
+class AcademicYear(attrib.Dataclass, eq=True, hash=True):
     """Academic year data class"""
 
     id = attrib.Field(int, required=True)
@@ -32,12 +25,7 @@ class AcademicYear(
     )
 
 
-class Course(
-    attrib.DataClass,
-    eq=True,
-    hash=True,
-    slots=True,
-):
+class Course(attrib.Dataclass, eq=True, hash=True):
     """Course data class"""
 
     id = attrib.Field(int, required=True, allow_null=True)
@@ -47,32 +35,31 @@ class Course(
     created_at = attrib.DateTimeField(default=attrib.Factory(datetime.now))
 
 
-class PersonalInfo(
-    attrib.DataClass,
-    eq=True,
-    hash=True,
-    slots=True,
-):
+class PersonalInfo(attrib.Dataclass, eq=True, hash=True):
     """Personal information data class"""
 
     name = attrib.StringField(max_length=100)
-    age = attrib.IntegerField(min_value=0, max_value=100)
+    age = attrib.IntegerField(min_value=0, max_value=30)
     email = attrib.EmailField(allow_null=True, default=None)
     phone = attrib.PhoneNumberField(allow_null=True, default=None)
 
 
-class Student(
-    PersonalInfo,
-    eq=True,
-    hash=True,
-    slots=True,
-):
+class Student(PersonalInfo, eq=True, hash=True):
     """Student data class with multiple fields and a list of enrolled courses"""
 
     id = attrib.IntegerField(required=True)
-    year = attrib.NestedField(AcademicYear, lazy=False)
+    year = attrib.NestedField(AcademicYear, lazy=False, allow_null=True)
     courses = attrib.ListField(
         child=attrib.NestedField(Course, lazy=False),
+    )
+    gpa = attrib.FloatField(
+        allow_null=True, default=attrib.Factory(random.uniform, a=1.5, b=5.0)
+    )
+    friend: attrib.Field["Student"] = attrib.NestedField(
+        "Self",
+        lazy=False,
+        default=lambda: dummy_student,
+        allow_null=True,
     )
     joined_at = attrib.DateTimeField(allow_null=True, tz="Africa/Lagos")
     created_at = attrib.DateTimeField(
@@ -80,10 +67,24 @@ class Student(
     )
 
 
+dummy_student = Student(
+    id=0,
+    name="",
+    age=0,
+    email=None,
+    phone=None,
+    year=year_data[0],
+    courses=course_data,
+    gpa=0.0,
+    joined_at=None,
+    friend=None,
+)
+
+
 def load_data(
     data_list: typing.List[typing.Dict[str, typing.Any]],
-    cls: typing.Type[_DataClass_co],
-) -> typing.List[_DataClass_co]:
+    cls: typing.Type[_Dataclass_co],
+) -> typing.List[_Dataclass_co]:
     """
     Load data into data classes
 
@@ -91,7 +92,6 @@ def load_data(
     :param cls: Data class to load data into
     :return: List of the data class instances
     """
-    # raise
     return [attrib.deserialize(cls, data) for data in data_list]
 
 
@@ -102,13 +102,13 @@ def example():
     students = load_data(student_data, Student)
 
     for student in students:
-        attrib.serialize(student, fmt="json", depth=2)
+        attrib.serialize(student, fmt="python", depth=2)
 
     for course in courses:
-        attrib.serialize(course, fmt="json", depth=2)
+        attrib.serialize(course, fmt="python", depth=2)
 
     for year in years:
-        attrib.serialize(year, fmt="json", depth=2)
+        attrib.serialize(year, fmt="python", depth=2)
 
     # dump = pickle.dumps(students)
     # loaded_students = pickle.loads(dump)
@@ -158,8 +158,18 @@ def example():
     # log(student.name, "is now", student.age, "years old")
 
 
-@timeit("dataclasses_test")
+@timeit("attrib_test")
+# @profile
 def test(n: int = 1):
-    """Run the dataclasses example multiple times"""
+    """Run the attrib example multiple times"""
+    # tracemalloc.start()
     for _ in range(n):
+        # snapshot1 = tracemalloc.take_snapshot()
         example()
+    #     snapshot2 = tracemalloc.take_snapshot()
+    #     stats = snapshot2.compare_to(snapshot1, 'lineno')
+    #     for stat in stats[:10]:
+    #         print(stat)
+
+    # print(tracemalloc.get_traced_memory())
+    # tracemalloc.stop()
