@@ -21,7 +21,6 @@ except ImportError:
     import json
 
 from .exceptions import SerializationError
-from ._typing import P, R
 
 
 def has_package(package_name) -> bool:

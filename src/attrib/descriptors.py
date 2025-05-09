@@ -40,7 +40,7 @@ from attrib._utils import (
     get_cache_key,
     make_jsonable,
 )
-from attrib._typing import SupportsRichComparison, R
+from attrib._typing import P, SupportsRichComparison, R
 
 
 _T = typing.TypeVar("_T")
@@ -241,10 +241,10 @@ class Value(typing.Generic[_T]):
 
 
 def Factory(
-    factory: typing.Callable[..., R],
+    factory: typing.Callable[P, R],
     /,
-    *args: typing.Any,
-    **kwargs: typing.Any,
+    *args: P.args,
+    **kwargs: P.kwargs,
 ) -> typing.Callable[[], R]:
     """
     Factory function to create a callable that invokes the provided factory with the given arguments.

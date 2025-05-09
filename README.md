@@ -1,8 +1,10 @@
 # attrib
 
-`attrib` is a fast and lightweight data description library for Python. It provides an intuitive to describe and validate simple and complex data structures using Python's descriptor protocol. The library is designed to be easy to use and flexible, allowing you to create complex data structures with minimal boilerplate code. It also supports features like nested data structures, validation, and serialization. It provides an API similar to `dataclasses` and `drf serializers`, but with a focus on performance and simplicity.
+`attrib` is a fast and lightweight data description library for Python. It provides an intuitive API for describing and validating data structures using Python's descriptor protocol. `attrib` is designed to be familiar and flexible, allowing you to create complex data structures with minimal boilerplate code.
 
-`attrib` is designed to be used where you need to describe and validate data structures, such as in APIs, configuration files, and data processing pipelines.
+It provides an API similar to `dataclasses` and `drf serializers`, but with a focus on performance and simplicity.
+
+`attrib` dataclasses can be used for describing, validating, and serializing data in APIs, configuration definitions, and data processing pipelines.
 
 ## Features
 
