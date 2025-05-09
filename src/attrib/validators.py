@@ -21,11 +21,14 @@ ComparableValue = SupportsRichComparison
 CountableValue = typing.Sized
 
 
+@typing.final
 class FieldValidator(typing.NamedTuple):
     """Field validator wrapper."""
 
     func: _Validator
+    """Validator function."""
     message: typing.Optional[str] = None
+    """Error message template."""
 
     @property
     def name(self) -> str:
@@ -45,7 +48,7 @@ class FieldValidator(typing.NamedTuple):
             raise FieldValidationError(
                 msg.format_map(
                     {
-                        "name": field.effective_name if field else "value",
+                        "name": name,
                         "value": value,
                         "field": field,
                     }
@@ -91,7 +94,7 @@ def pipe(
     if not validators:
         raise ValueError("At least one validator must be provided.")
 
-    loaded_validators = load_validators(*validators)
+    loaded_validators = tuple(load_validators(*validators))
 
     def validation_pipeline(
         value: typing.Any,
@@ -144,11 +147,12 @@ def number_validator_factory(
 
             if pre_validation_hook:
                 value = pre_validation_hook(value)
-            if comparison_func(value, bound):
+
+            if isinstance(value, (int, float)) and comparison_func(value, bound):
                 return
 
             name = field.effective_name if field else "value"
-            raise ValueError(
+            raise FieldValidationError(
                 msg.format_map(
                     {
                         "value": value,
@@ -194,7 +198,7 @@ def number_range(
     :param message: Error message template
     :param pre_validation_hook: A function to preprocess the value before validation
     :return: A validator function
-    :raises ValueError: If the value is not within the specified range
+    :raises FieldValidationError: If the value is not within the specified range
     """
     msg = message or "'{name}' must be between {min} and {max}"
 
@@ -206,9 +210,10 @@ def number_range(
         nonlocal msg
         if pre_validation_hook:
             value = pre_validation_hook(value)
-        if value < min_val or value > max_val:
+
+        if not (min_val <= value <= max_val):
             name = field.effective_name if field else "value"
-            raise ValueError(
+            raise FieldValidationError(
                 msg.format(name=name, min=min_val, max=max_val),
                 name,
                 value,
@@ -252,7 +257,7 @@ def length_validator_factory(
                 return
             name = field.effective_name if field else "value"
             length = len(value)
-            raise ValueError(
+            raise FieldValidationError(
                 msg.format_map(
                     {
                         "name": name,
@@ -295,7 +300,7 @@ def pattern(
     ] = None,
 ):
     r"""
-    A validator that raises `ValueError` if the initializer is called with a
+    A validator that raises `FieldValidationError` if the initializer is called with a
     string that doesn't match *regex*.
 
     :param regex: A regex string or precompiled pattern to match against
@@ -307,7 +312,7 @@ def pattern(
         always precompiled using `re.compile`.
     :param pre_validation_hook: A function to preprocess the value before matching
     :return: A validator function
-    :raises ValueError: If the value does not match the regex
+    :raises FieldValidationError: If the value does not match the regex
     """
     global _NO_MATCH_MESSAGE
 
@@ -346,7 +351,7 @@ def pattern(
             value = pre_validation_hook(value)
         if not match_func(value):
             name = field.effective_name if field else "value"
-            raise ValueError(
+            raise FieldValidationError(
                 msg.format_map(
                     {
                         "name": name,
@@ -374,14 +379,14 @@ def instance_of(
     ] = None,
 ) -> FieldValidator:
     """
-    A validator that raises `ValueError` if the initializer is called with a
+    A validator that raises `FieldValidationError` if the initializer is called with a
     value that is not an instance of *cls*.
 
     :param cls: A type or tuple of types to check against
     :param message: Error message template
     :param pre_validation_hook: A function to preprocess the value before validation
     :return: A validator function
-    :raises ValueError: If the value is not an instance of the specified type
+    :raises FieldValidationError: If the value is not an instance of the specified type
     """
     global _INSTANCE_CHECK_FAILURE_MESSAGE
 
@@ -398,7 +403,7 @@ def instance_of(
             value = pre_validation_hook(value)
         if not isinstance(value, cls):
             name = field.effective_name if field else "value"
-            raise ValueError(
+            raise FieldValidationError(
                 msg.format_map(
                     {"cls": cls, "value": value, "name": name, "field": field}
                 ),
@@ -422,14 +427,14 @@ def subclass_of(
     ] = None,
 ) -> FieldValidator:
     """
-    A validator that raises `ValueError` if the initializer is called with a
+    A validator that raises `FieldValidationError` if the initializer is called with a
     value that is not a subclass of *cls*.
 
     :param cls: A type or tuple of types to check against
     :param message: Error message template
     :param pre_validation_hook: A function to preprocess the value before validation
     :return: A validator function
-    :raises ValueError: If the value is not a subclass of the specified type
+    :raises FieldValidationError: If the value is not a subclass of the specified type
     """
     global _SUBCLASS_CHECK_FAILURE_MESSAGE
 
@@ -446,7 +451,7 @@ def subclass_of(
             value = pre_validation_hook(value)
         if not (inspect.isclass(value) and issubclass(value, cls)):
             name = field.effective_name if field else "value"
-            raise ValueError(
+            raise FieldValidationError(
                 msg.format_map(
                     {"cls": cls, "value": value, "name": name, "field": field}
                 ),
@@ -474,8 +479,6 @@ def optional(validator: _Validator) -> FieldValidator:
         field: typing.Optional[typing.Any] = None,
         instance: typing.Optional[typing.Any] = None,
     ):
-        if field and field.is_null(value):
-            return
         if value is None:
             return
         return _validator(value, field, instance)
@@ -495,18 +498,21 @@ def in_(
     ] = None,
 ) -> FieldValidator:
     """
-    A validator that raises `ValueError` if the initializer is called with a
+    A validator that raises `FieldValidationError` if the initializer is called with a
     value that is not in *choices*.
 
     :param choices: An iterable of valid values
     :param message: Error message template
     :param pre_validation_hook: A function to preprocess the value before validation
     :return: A validator function
-    :raises ValueError: If the value is not in the specified choices
+    :raises FieldValidationError: If the value is not in the specified choices
     """
     global _IN_CHECK_FAILURE_MESSAGE
 
     msg = message or _IN_CHECK_FAILURE_MESSAGE
+    choices = set(choices)  # fast membership check
+    if len(choices) < 2:
+        raise ValueError("'choices' must contain at least 2 elements")
 
     def validator(
         value: typing.Any,
@@ -519,7 +525,7 @@ def in_(
             value = pre_validation_hook(value)
         if value not in choices:
             name = field.effective_name if field else "value"
-            raise ValueError(
+            raise FieldValidationError(
                 msg.format_map(
                     {"choices": choices, "value": value, "name": name, "field": field}
                 ),
@@ -543,14 +549,14 @@ def not_(
     ] = None,
 ) -> FieldValidator:
     """
-    A validator that raises `ValueError` if the initializer is called with a
+    A validator that raises `FieldValidationError` if the initializer is called with a
     value that validates against *validator*.
 
     :param validator: The validator to check against
     :param message: Error message template
     :param pre_validation_hook: A function to preprocess the value before validation
     :return: A validator function
-    :raises ValueError: If the value validates against the specified validator
+    :raises FieldValidationError: If the value validates against the specified validator
     """
     global _NEGATION_CHECK_FAILURE_MESSAGE
 
@@ -568,10 +574,10 @@ def not_(
             value = pre_validation_hook(value)
         try:
             _validator(value, field, instance)
-        except ValueError:
+        except (ValueError, FieldValidationError):
             return
         name = field.effective_name if field else "value"
-        raise ValueError(
+        raise FieldValidationError(
             msg.format_map(
                 {"validator": validator, "value": value, "name": name, "field": field}
             ),
@@ -584,27 +590,7 @@ def not_(
     return FieldValidator(negative_validator)
 
 
-def and_(*validators: _Validator) -> FieldValidator:
-    """
-    A validator that raises `ValueError` if the initializer is called with a
-    value that does not validate against all of *validators*.
-
-    :param validators: The validators to check against
-    :return: A validator function
-    :raises ValueError: If the value does not validate against all of the specified validators
-    """
-
-    def validator(
-        value: typing.Any,
-        field: typing.Optional[typing.Any] = None,
-        instance: typing.Optional[typing.Any] = None,
-    ):
-        for validator in validators:
-            validator(value, field, instance)
-        return
-
-    validator.__name__ = f"conjunction({[v.__name__ for v in validators]})"
-    return FieldValidator(validator)
+and_ = pipe
 
 
 _DISJUNCTION_CHECK_FAILURE_MESSAGE = (
@@ -620,14 +606,14 @@ def or_(
     ] = None,
 ):
     """
-    A validator that raises `ValueError` if the initializer is called with a
+    A validator that raises `FieldValidationError` if the initializer is called with a
     value that does not validate against any of *validators*.
 
     :param validators: The validators to check against
     :param message: Error message template
     :param pre_validation_hook: A function to preprocess the value before validation
     :return: A validator function
-    :raises ValueError: If the value does not validate against any of the specified validators
+    :raises FieldValidationError: If the value does not validate against any of the specified validators
     """
     global _DISJUNCTION_CHECK_FAILURE_MESSAGE
 
@@ -647,10 +633,11 @@ def or_(
             try:
                 validator(value, field, instance)
                 return
-            except ValueError:
+            except (ValueError, FieldValidationError):
                 continue
+
         name = field.effective_name if field else "value"
-        raise ValueError(
+        raise FieldValidationError(
             msg.format_map(
                 {
                     "validators": [v.__name__ for v in validators],
@@ -676,7 +663,7 @@ def _is_callable(
     """Check if the value is callable."""
     if not callable(value):
         name = field.effective_name if field else "value"
-        raise ValueError(
+        raise FieldValidationError(
             f"'{name}' must be callable",
             name,
             value,

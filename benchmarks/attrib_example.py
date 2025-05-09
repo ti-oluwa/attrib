@@ -1,4 +1,3 @@
-from calendar import c
 import random
 import typing
 from datetime import datetime
@@ -6,63 +5,63 @@ import tracemalloc
 from memory_profiler import profile
 
 import attrib
-from utils import timeit, profileit
+from utils import timeit, profileit, log
 from mock_data import course_data, student_data, year_data
 
 
 _Dataclass_co = typing.TypeVar("_Dataclass_co", bound=attrib.Dataclass, covariant=True)
 
 
-class AcademicYear(attrib.Dataclass, eq=True, hash=True):
+class AcademicYear(attrib.Dataclass, slots=True):
     """Academic year data class"""
 
     id = attrib.Field(int, required=True)
-    name = attrib.StringField(max_length=100)
-    start_date = attrib.DateField(input_formats=["%d-%m-%Y", "%d/%m/%Y"])
-    end_date = attrib.DateField(input_formats=["%d-%m-%Y", "%d/%m/%Y"])
-    created_at = attrib.DateTimeField(
+    name = attrib.String(max_length=100)
+    start_date = attrib.Date(input_formats=["%d-%m-%Y", "%d/%m/%Y"])
+    end_date = attrib.Date(input_formats=["%d-%m-%Y", "%d/%m/%Y"])
+    created_at = attrib.DateTime(
         default=attrib.Factory(datetime.now), tz="Africa/Lagos"
     )
 
 
-class Course(attrib.Dataclass, eq=True, hash=True):
+class Course(attrib.Dataclass, slots=True):
     """Course data class"""
 
     id = attrib.Field(int, required=True, allow_null=True)
-    name = attrib.StringField(max_length=100)
-    code = attrib.StringField(max_length=20)
-    year = attrib.NestedField(AcademicYear, lazy=False)
-    created_at = attrib.DateTimeField(default=attrib.Factory(datetime.now))
+    name = attrib.String(max_length=100)
+    code = attrib.String(max_length=20)
+    year = attrib.Nested(AcademicYear, lazy=False)
+    created_at = attrib.DateTime(default=attrib.Factory(datetime.now))
 
 
-class PersonalInfo(attrib.Dataclass, eq=True, hash=True):
+class PersonalInfo(attrib.Dataclass, slots=True):
     """Personal information data class"""
 
-    name = attrib.StringField(max_length=100)
-    age = attrib.IntegerField(min_value=0, max_value=30)
-    email = attrib.EmailField(allow_null=True, default=None)
-    phone = attrib.PhoneNumberField(allow_null=True, default=None)
+    name = attrib.String(max_length=100)
+    age = attrib.Integer(min_value=0, max_value=30)
+    email = attrib.Email(allow_null=True, default=None)
+    phone = attrib.PhoneNumber(allow_null=True, default=None)
 
 
-class Student(PersonalInfo, eq=True, hash=True):
+class Student(PersonalInfo, slots=True):
     """Student data class with multiple fields and a list of enrolled courses"""
 
-    id = attrib.IntegerField(required=True)
-    year = attrib.NestedField(AcademicYear, lazy=False, allow_null=True)
-    courses = attrib.ListField(
-        child=attrib.NestedField(Course, lazy=False),
+    id = attrib.Integer(required=True)
+    year = attrib.Nested(AcademicYear, lazy=False, allow_null=True)
+    courses = attrib.List(
+        child=attrib.Nested(Course, lazy=False),
     )
-    gpa = attrib.FloatField(
+    gpa = attrib.Float(
         allow_null=True, default=attrib.Factory(random.uniform, a=1.5, b=5.0)
     )
-    friend: attrib.Field["Student"] = attrib.NestedField(
+    friend: attrib.Field["Student"] = attrib.Nested(
         "Self",
         lazy=False,
         default=lambda: dummy_student,
         allow_null=True,
     )
-    joined_at = attrib.DateTimeField(allow_null=True, tz="Africa/Lagos")
-    created_at = attrib.DateTimeField(
+    joined_at = attrib.DateTime(allow_null=True, tz="Africa/Lagos")
+    created_at = attrib.DateTime(
         default=attrib.Factory(datetime.now), tz="Africa/Lagos"
     )
 
@@ -102,13 +101,13 @@ def example():
     students = load_data(student_data, Student)
 
     for student in students:
-        attrib.serialize(student, fmt="python", depth=2)
+        attrib.serialize(student, fmt="json", options=[attrib.Option(depth=2, exclude={"friend"})])
 
     for course in courses:
-        attrib.serialize(course, fmt="python", depth=2)
+        attrib.serialize(course, fmt="json", options=[attrib.Option(depth=2)])
 
     for year in years:
-        attrib.serialize(year, fmt="python", depth=2)
+        attrib.serialize(year, fmt="json", options=[attrib.Option(depth=2)])
 
     # dump = pickle.dumps(students)
     # loaded_students = pickle.loads(dump)
@@ -158,7 +157,8 @@ def example():
     # log(student.name, "is now", student.age, "years old")
 
 
-@timeit("attrib_test")
+@profileit("attrib", max_rows=20, output="rich")
+# @timeit("attrib")
 # @profile
 def test(n: int = 1):
     """Run the attrib example multiple times"""

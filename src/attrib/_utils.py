@@ -463,51 +463,31 @@ V = typing.TypeVar("V")
 
 
 class _LRUCache(typing.Generic[K, V]):
+    """
+    Simple LRU cache implementation.
+    """
+
     def __init__(self, maxsize: int = 128) -> None:
         self.cache: typing.OrderedDict[K, V] = collections.OrderedDict()
         self.maxsize = maxsize
-        self._hits = 0
-        self._misses = 0
-
-    @property
-    def stats(self) -> typing.Dict[str, int]:
-        """Return cache statistics."""
-        return {
-            "hits": self._hits,
-            "misses": self._misses,
-            "size": len(self.cache),
-            "maxsize": self.maxsize,
-        }
 
     def __getitem__(self, key: K) -> V:
-        if key in self.cache:
-            self._hits += 1
-            self.cache.move_to_end(key, last=False)
-            return self.cache[key]
-        self._misses += 1
-        raise KeyError(f"Key {key} not found in cache.")
+        value = self.cache.pop(key)
+        self.cache[key] = value
+        return value
 
     def __setitem__(self, key: K, value: V) -> None:
         if key in self.cache:
-            self._hits += 1
-            self.cache.move_to_end(key, last=False)
-        else:
-            self._misses += 1
-            if len(self.cache) >= self.maxsize:
-                self.cache.popitem(last=True)
+            self.cache.pop(key)
+        elif len(self.cache) >= self.maxsize:
+            self.cache.popitem(last=False)
         self.cache[key] = value
-
-    def clear(self) -> None:
-        """Clear the cache."""
-        self.cache.clear()
-        self._hits = 0
-        self._misses = 0
-
-    def __delitem__(self, key: K) -> None:
-        del self.cache[key]
 
     def __contains__(self, key: K) -> bool:
         return key in self.cache
+
+    def __delitem__(self, key: K) -> None:
+        del self.cache[key]
 
     def __len__(self) -> int:
         return len(self.cache)
@@ -515,5 +495,23 @@ class _LRUCache(typing.Generic[K, V]):
     def __iter__(self) -> typing.Iterator[K]:
         return iter(self.cache)
 
-    def __repr__(self) -> str:
-        return f"<LRUCache size={len(self.cache)} maxsize={self.maxsize}>"
+    def clear(self) -> None:
+        self.cache.clear()
+
+
+PRIMITIVE_TYPES = (
+    int,
+    str,
+    float,
+    bool,
+    bytes,
+    bytearray,
+    frozenset,
+    tuple,
+    complex,
+)
+
+
+def get_cache_key(value: typing.Any) -> typing.Any:
+    # Prefer integer-type cache key for performance and memory efficiency
+    return value if isinstance(value, PRIMITIVE_TYPES) else id(value)

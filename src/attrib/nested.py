@@ -1,9 +1,10 @@
 import typing
 from typing_extensions import Unpack
 
-from attrib.fields import Field, FieldInitKwargs, FieldType
+from attrib.descriptors import Field, FieldInitKwargs, NonTupleFieldType
 from attrib.dataclass import Dataclass
 from attrib.serializers import _serialize_instance
+from attrib._utils import is_iterable
 
 
 _Dataclass = typing.TypeVar("_Dataclass", bound=Dataclass)
@@ -16,21 +17,10 @@ def nested_json_serializer(
     context: typing.Optional[typing.Dict[str, typing.Any]] = None,
 ) -> typing.Dict[str, typing.Any]:
     """Serialize a nested dataclass instance to a dictionary."""
-    if context:
-        depth = context.get("depth", 0)
-        fields = context.get("__targets__", None)
-        serializable_fields = (
-            fields.get(instance.__class__.__name__, None) if fields else None
-        )
-    else:
-        depth = 0
-        serializable_fields = None
-
     return _serialize_instance(
         fmt="json",
-        fields=serializable_fields or instance.__fields__,
         instance=instance,
-        depth=depth,
+        options_map=context.get("__options", None) if context else None,
         context=context,
     )
 
@@ -41,26 +31,15 @@ def nested_python_serializer(
     context: typing.Optional[typing.Dict[str, typing.Any]] = None,
 ) -> typing.Dict[str, typing.Any]:
     """Serialize a nested dataclass instance to a dictionary."""
-    if context:
-        depth = context.get("depth", 0)
-        fields = context.get("__targets__", None)
-        serializable_fields = (
-            fields.get(instance.__class__.__name__, None) if fields else None
-        )
-    else:
-        depth = 0
-        serializable_fields = None
-
     return _serialize_instance(
         fmt="python",
-        fields=serializable_fields or instance.__fields__,
         instance=instance,
-        depth=depth,
+        options_map=context.get("__options", None) if context else None,
         context=context,
     )
 
 
-class NestedField(Field[_Dataclass]):
+class Nested(Field[_Dataclass]):
     """Nested Dataclass field."""
 
     default_serializers = {
@@ -70,22 +49,29 @@ class NestedField(Field[_Dataclass]):
 
     def __init__(
         self,
-        dataclass_: FieldType[_Dataclass],
+        dataclass_: NonTupleFieldType[_Dataclass],
         **kwargs: Unpack[FieldInitKwargs],
     ) -> None:
         """
-        Initialize a NestedField.
+        Initialize a nested field.
 
         :param dataclass_: The dataclass type or a callable that returns the dataclass type.
-    
+
         :param kwargs: Additional keyword arguments for the field.
         """
         super().__init__(dataclass_, **kwargs)
 
-    # def post_init_validate(self):
-    #     super().post_init_validate()
-    #     self.field_type = typing.cast(typing.Type[_Dataclass], self.field_type)
-    #     if not issubclass(self.field_type, Dataclass):
-    #         raise TypeError(
-    #             f"{self.field_type} must be a subclass of {Dataclass.__name__}."
-    #         )
+    def post_init_validate(self) -> None:
+        super().post_init_validate()
+        field_type = typing.cast(NonTupleFieldType[_Dataclass], self.field_type)
+        if isinstance(field_type, (typing.ForwardRef, str)):
+            return
+
+        if is_iterable(field_type):
+            raise TypeError(
+                f"{type(self).__name__} does not support iterable types. Got {field_type}."
+            )
+        if not issubclass(field_type, Dataclass):
+            raise TypeError(
+                f"{type(self).__name__} must be a subclass of Dataclass. Got {field_type}."
+            )

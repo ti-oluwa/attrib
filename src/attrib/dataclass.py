@@ -1,11 +1,10 @@
-"""Simple dataclass implementation with field validation."""
+"""Data description classes"""
 
-import functools
 import typing
 from collections import OrderedDict
 from types import MappingProxyType
 
-from attrib.fields import Field, Value
+from attrib.descriptors import Field, Value
 from attrib.exceptions import FrozenInstanceError
 
 
@@ -376,10 +375,12 @@ class DataclassMeta(type):
 
 class Dataclass(metaclass=DataclassMeta, slots=True):
     """
-    Simple dataclass
+    Data description class.
+    
+    Define data structures with special descriptors.
 
     Dataclasses are defined by subclassing `Dataclass` and defining fields as class attributes.
-    Dataclasses enforce type validation, field requirements, and custom validation functions.
+    Dataclasses enforce type conversion, validation, and other behaviors on the fields.
 
     :param frozen: If True, the dataclass is immutable after creation.
     :param slots: If True, use __slots__ for instance attribute storage.
@@ -391,6 +392,67 @@ class Dataclass(metaclass=DataclassMeta, slots=True):
         If False, do not sort fields.
     :param getitem: If True, add __getitem__ method to the class.
     :param setitem: If True, add __setitem__ method to the class.
+
+    Example:
+    ```
+    import attrib
+
+    class Continent(attrib.Dataclass):
+        name = attrib.String()
+        population = attrib.Integer()
+
+        
+    class Country(attrib.Dataclass):
+        name = attrib.String()
+        code = attrib.String()
+        population = attrib.Integer()
+        continent = attrib.Nested(Continent)
+
+        
+    class City(attrib.Dataclass):
+        name = attrib.String()
+        country = attrib.Nested(Country)
+        population = attrib.Integer()
+        area = attrib.Float()
+        postal_code = attrib.String(allow_null=True, default=None)
+
+        
+    africa = Continent(
+        name="Africa",
+        population=1_300_000_000,
+    )
+    kenya = Country(
+        name="Kenya",
+        code="KE",
+        population=50_000_000,
+        continent=africa,
+    )
+    nairobi = City(
+        name="Nairobi",
+        country=kenya,
+        population=4_000_000,
+        area=696.1,
+        postal_code="00100",
+    )
+
+    print(attrib.serialize(nairobi, fmt="json"))
+    # Output:
+    # {
+    #     "name": "Nairobi",
+    #     "country": {
+    #         "name": "Kenya",
+    #         "code": "KE",
+    #         "population": 50_000_000,
+    #         "continent": {
+    #             "name": "Africa",
+    #             "population": 1_300_000_000,
+    #         }
+    #     },
+    #     "population": 4_000_000,
+    #     "area": 696.1,
+    #     "postal_code": "00100"
+    # }
+    ```
     """
 
     __slots__ = ("__weakref__", "_set_attributes")
@@ -453,7 +515,7 @@ def load(
     instance: _Dataclass_co, data: typing.Mapping[str, typing.Any]
 ) -> _Dataclass_co:
     """
-    Load raw data into the dataclass instance.
+    Load raw data unto the dataclass instance.
 
     :param data: Mapping of raw data to initialize the dataclass instance with.
     :return: This same instance with the raw data loaded.
@@ -526,7 +588,6 @@ def deserialize(
     return from_dict(dataclass_, obj)
 
 
-@functools.cache
 def get_field(
     cls: typing.Type[Dataclass],
     field_name: str,

@@ -1,5 +1,6 @@
-"""Data fields"""
+"""Data description and validation fields."""
 
+import enum
 import functools
 from types import NoneType
 import uuid
@@ -43,6 +44,7 @@ from attrib._utils import (
     has_package,
     resolve_forward_ref,
     _LRUCache,
+    get_cache_key,
 )
 from attrib._typing import SupportsRichComparison, R
 
@@ -218,6 +220,7 @@ def default_deserializer(
             arg = typing.cast(typing.Type[_T], arg)
             try:
                 deserialized = arg(value)  # type: ignore[call-arg]
+                return deserialized
             except (TypeError, ValueError):
                 continue
         return value
@@ -234,19 +237,14 @@ class Value(typing.Generic[_T]):
     Wrapper for field values.
     """
 
-    value: typing.Union[_T, typing.Any]
-    is_valid: bool = False
+    wrapped: typing.Union[_T, typing.Any]
+    is_valid: typing.Literal[0, 1] = 0
 
     def __bool__(self) -> bool:
-        return bool(self.value)
+        return bool(self.wrapped and self.is_valid)
 
     def __hash__(self) -> int:
-        return hash(self.value)
-
-
-def _get_cache_key(value: typing.Any) -> typing.Any:
-    # Prefer integer-type cache key for performance and memory efficiency
-    return hash(value) if isinstance(value, (int, str, tuple, frozenset)) else id(value)
+        return hash((self.wrapped, self.is_valid))
 
 
 def Factory(
@@ -308,8 +306,14 @@ class FieldMeta(type):
         }
 
 
+class MemoizationFactor(enum.Enum):
+    """Enum for memoization factors."""
+
+    ...
+
+
 class Field(typing.Generic[_T], metaclass=FieldMeta):
-    """Base attribute descriptor."""
+    """Attribute descriptor."""
 
     default_serializers: typing.Mapping[str, FieldSerializer] = {}
     default_deserializer: FieldDeserializer = default_deserializer
@@ -476,8 +480,8 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         field_value = self.get_value(instance)
         if not field_value.is_valid:
             # with self._lock:
-            return self.set_value(instance, field_value.value, True).value
-        return field_value.value
+            return self.set_value(instance, field_value.wrapped, True).wrapped
+        return field_value.wrapped
 
     def __set__(self, instance: typing.Any, value: typing.Any):
         """Set and validate the field value on an instance."""
@@ -487,7 +491,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
             )
 
         # with self._lock:
-        cache_key = _get_cache_key(value)
+        cache_key = get_cache_key(value)
         if cache_key in self._serialized_cache:
             del self._serialized_cache[cache_key]
         self.set_value(instance, value, not self.lazy)
@@ -533,11 +537,11 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
             )
 
         if value is empty:
-            field_value = Value(empty, is_valid=True)
+            field_value = Value(empty, is_valid=1)
         elif validate:
             field_value = Value(
                 self.validate(value, instance),
-                is_valid=True,
+                is_valid=1,
             )
         else:
             field_value = Value(value)
@@ -572,7 +576,11 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         """Check if the value is of the expected type."""
         if self.field_type is UndefinedType:
             return True
-        return isinstance(value, self.field_type)  # type: ignore[no-redef]
+        if value is None and self.allow_null:
+            return True
+
+        # field_type = typing.cast(NonForwardRefFieldType[_T], self.field_type) # Adds additional overhead since the method is called often
+        return isinstance(value, self.field_type)  # type: ignore[arg-type]
 
     def validate(
         self,
@@ -590,7 +598,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         if value is None and self.allow_null:
             return None
 
-        cache_key = _get_cache_key(value)
+        cache_key = get_cache_key(value)
         if cache_key in self._validated_cache:
             return self._validated_cache[cache_key]
 
@@ -627,7 +635,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         if value is None:
             return None
 
-        cache_key = _get_cache_key(value)
+        cache_key = get_cache_key(value)
         if cache_key in self._serialized_cache:
             return self._serialized_cache[cache_key]
 
@@ -725,7 +733,7 @@ class FieldInitKwargs(typing.TypedDict, total=False):
     """A default value for the field to be used if no value is set."""
 
 
-class AnyField(Field[typing.Any]):
+class Any(Field[typing.Any]):
     """Field for handling values of any type."""
 
     def __init__(self, **kwargs: Unpack[FieldInitKwargs]):
@@ -733,7 +741,7 @@ class AnyField(Field[typing.Any]):
         super().__init__(field_type=UndefinedType, **kwargs)
 
 
-def boolean_deserializer(field: "BooleanField", value: typing.Any) -> bool:
+def boolean_deserializer(field: "Boolean", value: typing.Any) -> bool:
     if value in field.TRUTHY_VALUES:
         return True
     if value in field.FALSY_VALUES:
@@ -743,14 +751,14 @@ def boolean_deserializer(field: "BooleanField", value: typing.Any) -> bool:
 
 def boolean_json_serializer(
     value: bool,
-    field: "BooleanField",
+    field: "Boolean",
     context: typing.Optional[typing.Dict[str, typing.Any]],
 ) -> bool:
     """Serialize a boolean value to JSON."""
     return value
 
 
-class BooleanField(Field[bool]):
+class Boolean(Field[bool]):
     """Field for handling boolean values."""
 
     TRUTHY_VALUES = {
@@ -798,7 +806,7 @@ def build_min_max_value_validators(
     return validators
 
 
-class FloatField(Field[float]):
+class Float(Field[float]):
     """Field for handling float values."""
 
     def __init__(
@@ -821,7 +829,7 @@ class FloatField(Field[float]):
         )
 
 
-class IntegerField(Field[int]):
+class Integer(Field[int]):
     """Field for handling integer values."""
 
     def __init__(
@@ -862,7 +870,7 @@ def build_min_max_length_validators(
     return validators
 
 
-class StringField(Field[str]):
+class String(Field[str]):
     """Field for handling string values."""
 
     DEFAULT_MIN_LENGTH: typing.Optional[int] = None
@@ -920,14 +928,14 @@ class StringField(Field[str]):
         return deserialized
 
 
-class DictField(Field[typing.Dict]):
+class Dict(Field[typing.Dict]):
     """Field for handling dictionary values."""
 
     def __init__(self, **kwargs: Unpack[FieldInitKwargs]):
         super().__init__(dict, **kwargs)
 
 
-class UUIDField(Field[uuid.UUID]):
+class UUID(Field[uuid.UUID]):
     """Field for handling UUID values."""
 
     default_serializers = {
@@ -969,7 +977,7 @@ def _get_adder(field_type: typing.Type[IterType]) -> typing.Callable:
 
 def iterable_python_serializer(
     value: IterType,
-    field: "IterableField[IterType, _V]",
+    field: "Iterable[IterType, _V]",
     context: typing.Optional[typing.Dict[str, typing.Any]],
 ) -> IterType:
     """
@@ -991,7 +999,7 @@ def iterable_python_serializer(
 
 def iterable_json_serializer(
     value: IterType,
-    field: "IterableField[IterType, _V]",
+    field: "Iterable[IterType, _V]",
     context: typing.Optional[typing.Dict[str, typing.Any]],
 ) -> typing.List[typing.Any]:
     """
@@ -1006,7 +1014,7 @@ def iterable_json_serializer(
 
 
 def iterable_deserializer(
-    field: "IterableField[IterType, _V]",
+    field: "Iterable[IterType, _V]",
     value: typing.Any,
 ) -> IterType:
     """
@@ -1029,7 +1037,7 @@ def iterable_deserializer(
 
 def validate_iterable(
     value: IterType,
-    field: "IterableField[IterType, _V]",
+    field: "Iterable[IterType, _V]",
     instance: typing.Optional[typing.Any],
 ) -> None:
     """
@@ -1043,15 +1051,15 @@ def validate_iterable(
         field.child.validate(item, instance)
 
 
-class IterableField(typing.Generic[IterType, _V], Field[IterType]):
+class Iterable(typing.Generic[IterType, _V], Field[IterType]):
     """Base class for iterable fields."""
 
     default_serializers = {
         "python": iterable_python_serializer,
         "json": iterable_json_serializer,
     }
-    default_deserializer = iterable_deserializer  # type: ignore
-    default_validators = (validate_iterable,)  # type: ignore
+    default_deserializer = iterable_deserializer
+    default_validators = (validate_iterable,)
 
     def __init__(
         self,
@@ -1060,7 +1068,7 @@ class IterableField(typing.Generic[IterType, _V], Field[IterType]):
         *,
         size: typing.Optional[int] = None,
         **kwargs: Unpack[FieldInitKwargs],
-    ):
+    ) -> NoneType:
         """
         Initialize the field.
 
@@ -1083,9 +1091,9 @@ class IterableField(typing.Generic[IterType, _V], Field[IterType]):
                 field_validators.max_len(size),
             ]
             kwargs["validators"] = validators
-        super().__init__(field_type=field_type, **kwargs)  # type: ignore
-        self.child = child or AnyField()
-        self.adder = _get_adder(field_type)  # type: ignore
+        super().__init__(field_type=field_type, **kwargs)
+        self.child = child or Any()
+        self.adder = _get_adder(field_type)
 
     def post_init_validate(self):
         super().post_init_validate()
@@ -1105,8 +1113,8 @@ class IterableField(typing.Generic[IterType, _V], Field[IterType]):
         return True
 
 
-class ListField(IterableField[typing.List[_V], _V]):
-    """Field for lists, with optional validation of list elements through the `child` field."""
+class List(Iterable[typing.List[_V], _V]):
+    """List field."""
 
     def __init__(
         self,
@@ -1114,7 +1122,7 @@ class ListField(IterableField[typing.List[_V], _V]):
         *,
         size: typing.Optional[int] = None,
         **kwargs: Unpack[FieldInitKwargs],
-    ):
+    ) -> NoneType:
         super().__init__(
             field_type=list,
             child=child,
@@ -1123,8 +1131,8 @@ class ListField(IterableField[typing.List[_V], _V]):
         )
 
 
-class SetField(IterableField[typing.Set[_V], _V]):
-    """Field for sets, with optional validation of set elements through the `child` field."""
+class Set(Iterable[typing.Set[_V], _V]):
+    """Set field."""
 
     def __init__(
         self,
@@ -1132,7 +1140,7 @@ class SetField(IterableField[typing.Set[_V], _V]):
         *,
         size: typing.Optional[int] = None,
         **kwargs: Unpack[FieldInitKwargs],
-    ):
+    ) -> NoneType:
         super().__init__(
             field_type=set,
             child=child,
@@ -1141,8 +1149,8 @@ class SetField(IterableField[typing.Set[_V], _V]):
         )
 
 
-class TupleField(IterableField[typing.Tuple[_V], _V]):
-    """Field for tuples, with optional validation of tuple elements through the `child` field."""
+class Tuple(Iterable[typing.Tuple[_V], _V]):
+    """Tuple field."""
 
     def __init__(
         self,
@@ -1150,7 +1158,7 @@ class TupleField(IterableField[typing.Tuple[_V], _V]):
         *,
         size: typing.Optional[int] = None,
         **kwargs: Unpack[FieldInitKwargs],
-    ):
+    ) -> NoneType:
         super().__init__(
             field_type=tuple,
             child=child,
@@ -1166,7 +1174,7 @@ def get_quantizer(dp: int) -> decimal.Decimal:
     return decimal.Decimal(f"0.{'0' * (dp - 1)}1") if dp > 0 else decimal.Decimal("1")
 
 
-class DecimalField(Field[decimal.Decimal]):
+class Decimal(Field[decimal.Decimal]):
     """Field for handling decimal values."""
 
     default_serializers = {
@@ -1204,7 +1212,7 @@ email_validator = field_validators.pattern(
 )
 
 
-class EmailField(StringField):
+class Email(String):
     """Field for handling email addresses."""
 
     default_validators = (email_validator,)
@@ -1239,7 +1247,7 @@ if has_package("urllib3"):
         """Deserialize URL data to the specified type."""
         return parse_url(str(value))
 
-    class URLField(Field[Url]):  # type: ignore
+    class URL(Field[Url]):  # type: ignore
         """Field for handling URL values."""
 
         default_serializers = {
@@ -1252,14 +1260,14 @@ if has_package("urllib3"):
 
 else:
 
-    def URLField(**kwargs):
+    def URL(**kwargs):
         """Ghost field for URLField. Install `urllib3` package to use this field."""
         raise ImportError(
             "The 'urllib3' package is required for URLField. Please install it to use this field."
         )
 
 
-class ChoiceField(Field[_T]):
+class Choice(Field[_T]):
     """Field for with predefined choices for values."""
 
     def __init__(
@@ -1281,19 +1289,19 @@ class ChoiceField(Field[_T]):
         super().__init__(field_type=field_type, **kwargs)
 
 
-class StringChoiceField(StringField, ChoiceField[str]):
+class StringChoice(String, Choice[str]):
     """String field with predefined choices for values."""
 
     pass
 
 
-class IntegerChoiceField(IntegerField, ChoiceField[int]):
+class IntegerChoice(Integer, Choice[int]):
     """Integer field with predefined choices for values."""
 
     pass
 
 
-class FloatChoiceField(FloatField, ChoiceField[float]):
+class FloatChoice(Float, Choice[float]):
     """Float field with predefined choices for values."""
 
     pass
@@ -1304,7 +1312,7 @@ def json_deserializer(field: Field, value: typing.Any) -> typing.Any:
     return json.loads(json.dumps(value))
 
 
-class JSONField(AnyField):
+class JSON(Any):
     """Field for handling JSON data."""
 
     default_deserializer = json_deserializer
@@ -1316,7 +1324,7 @@ hex_color_validator = field_validators.pattern(
 )
 
 
-class HexColorField(StringField):
+class HexColor(String):
     """Field for handling hex color values."""
 
     # DEFAULT_MIN_LENGTH = 4
@@ -1330,7 +1338,7 @@ rgb_color_validator = field_validators.pattern(
 )
 
 
-class RGBColorField(StringField):
+class RGBColor(String):
     """Field for handling RGB color values."""
 
     # DEFAULT_MAX_LENGTH = 38
@@ -1361,7 +1369,7 @@ hsl_color_validator = field_validators.pattern(
 )
 
 
-class HSLColorField(StringField):
+class HSLColor(String):
     """Field for handling HSL color values."""
 
     # DEFAULT_MAX_LENGTH = 40
@@ -1392,7 +1400,7 @@ slug_validator = field_validators.pattern(
 )
 
 
-class SlugField(StringField):
+class Slug(String):
     """Field for URL-friendly strings."""
 
     default_validators = (slug_validator,)
@@ -1403,9 +1411,7 @@ def ip_address_deserializer(field: Field, value: typing.Any) -> typing.Any:
     return ipaddress.ip_address(value)
 
 
-class IPAddressField(
-    Field[typing.Union[ipaddress.IPv4Address, ipaddress.IPv6Address]],
-):
+class IPAddress(Field[typing.Union[ipaddress.IPv4Address, ipaddress.IPv6Address]]):
     """Field for handling IP addresses."""
 
     default_serializers = {
@@ -1434,7 +1440,7 @@ def timedelta_deserializer(field: Field, value: typing.Any) -> datetime.timedelt
     return duration
 
 
-class DurationField(Field[datetime.timedelta]):
+class Duration(Field[datetime.timedelta]):
     """Field for handling duration values."""
 
     default_serializers = {
@@ -1446,7 +1452,7 @@ class DurationField(Field[datetime.timedelta]):
         super().__init__(field_type=datetime.timedelta, **kwargs)
 
 
-TimeDeltaField = DurationField
+TimeDelta = Duration
 
 
 def timezone_deserializer(field: Field, value: typing.Any) -> zoneinfo.ZoneInfo:
@@ -1454,7 +1460,7 @@ def timezone_deserializer(field: Field, value: typing.Any) -> zoneinfo.ZoneInfo:
     return zoneinfo.ZoneInfo(value)
 
 
-class TimeZoneField(Field[datetime.tzinfo]):
+class TimeZone(Field[datetime.tzinfo]):
     """Field for handling timezone values."""
 
     default_serializers = {
@@ -1474,15 +1480,15 @@ DatetimeType = typing.TypeVar(
 
 def datetime_serializer(
     value: DatetimeType,
-    field: "BaseDateTimeField[DatetimeType]",
+    field: "DateTimeBase[DatetimeType]",
     context: typing.Optional[typing.Dict[str, typing.Any]],
 ) -> str:
     """Serialize a datetime object to a string."""
     return value.strftime(field.output_format)
 
 
-class BaseDateTimeField(Field[DatetimeType]):
-    """Mixin base for datetime fields."""
+class DateTimeBase(Field[DatetimeType]):
+    """Base class for datetime fields."""
 
     DEFAULT_OUTPUT_FORMAT: str = "%Y-%m-%d %H:%M:%S%z"
     default_serializers = {
@@ -1512,23 +1518,39 @@ class BaseDateTimeField(Field[DatetimeType]):
         self.output_format = output_format or self.DEFAULT_OUTPUT_FORMAT
 
 
+_datetime_cache = _LRUCache[str, datetime.datetime](maxsize=128)
+
+
+def cached_iso_parse(
+    value: str,
+    fmt: typing.Optional[typing.Iterable[str]] = None,
+) -> datetime.datetime:
+    """Parse a datetime string in ISO format with caching."""
+    if value in _datetime_cache:
+        return _datetime_cache[value]
+
+    parsed = iso_parse(value, fmt=fmt)
+    _datetime_cache[value] = parsed
+    return parsed
+
+
 def iso_date_deserializer(
-    field: BaseDateTimeField[datetime.date],
+    field: DateTimeBase[datetime.date],
     value: str,
 ) -> datetime.date:
     """Parse a date string in ISO format."""
-    return iso_parse(value, fmt=field.input_formats).date()
+    return cached_iso_parse(value, fmt=field.input_formats).date()
 
 
 def iso_time_deserializer(
-    field: BaseDateTimeField[datetime.time],
+    field: DateTimeBase[datetime.time],
     value: str,
 ) -> datetime.time:
     """Parse a time string in ISO format."""
-    return iso_parse(value, fmt=field.input_formats).time()
+    return cached_iso_parse(value, fmt=field.input_formats).time()
 
 
-class DateField(BaseDateTimeField[datetime.date]):
+class Date(DateTimeBase[datetime.date]):
     """Field for handling date values."""
 
     DEFAULT_OUTPUT_FORMAT = "%Y-%m-%d"
@@ -1549,7 +1571,7 @@ class DateField(BaseDateTimeField[datetime.date]):
         )
 
 
-class TimeField(BaseDateTimeField[datetime.time]):
+class Time(DateTimeBase[datetime.time]):
     """Field for handling time values."""
 
     DEFAULT_OUTPUT_FORMAT = "%H:%M:%S.%s"
@@ -1571,14 +1593,14 @@ class TimeField(BaseDateTimeField[datetime.time]):
 
 
 def datetime_deserializer(
-    field: BaseDateTimeField[datetime.datetime],
+    field: DateTimeBase[datetime.datetime],
     value: str,
 ) -> datetime.datetime:
     """Parse a datetime string in ISO format."""
-    return iso_parse(value, fmt=field.input_formats)
+    return cached_iso_parse(value, fmt=field.input_formats)
 
 
-class DateTimeField(BaseDateTimeField[datetime.datetime]):
+class DateTime(DateTimeBase[datetime.datetime]):
     """Field for handling datetime values."""
 
     DEFAULT_OUTPUT_FORMAT = "%Y-%m-%d %H:%M:%S%z"
@@ -1625,7 +1647,7 @@ class DateTimeField(BaseDateTimeField[datetime.datetime]):
 
 def bytes_serializer(
     value: bytes,
-    field: "BytesField",
+    field: "Bytes",
     context: typing.Optional[typing.Dict[str, typing.Any]],
 ) -> str:
     """Serialize bytes to a string."""
@@ -1633,7 +1655,7 @@ def bytes_serializer(
 
 
 def bytes_deserializer(
-    field: "BytesField",
+    field: "Bytes",
     value: typing.Any,
 ) -> bytes:
     """Deserialize an object or base64-encoded string to bytes."""
@@ -1647,8 +1669,8 @@ def bytes_deserializer(
     return bytes(value)
 
 
-class BytesField(Field[bytes]):
-    """Field for handling byte values."""
+class Bytes(Field[bytes]):
+    """Field for handling byte types or base64-encoded strings."""
 
     default_serializers = {
         "json": bytes_serializer,
@@ -1669,7 +1691,7 @@ class BytesField(Field[bytes]):
 IOType = typing.TypeVar("IOType", bound=io.IOBase)
 
 
-class BaseIOField(Field[IOType]):
+class IOBase(Field[IOType]):
     """Base field for handling I/O objects."""
 
     default_serializers = {
@@ -1707,7 +1729,7 @@ def file_serializer(
     }
 
 
-class FileField(BaseIOField[io.BufferedIOBase]):
+class File(IOBase[io.BufferedIOBase]):
     """Field for handling files"""
 
     default_serializers = {
@@ -1754,34 +1776,36 @@ class FileField(BaseIOField[io.BufferedIOBase]):
         super().__delete__(instance)
 
 
+# TODO: Add PathField using `pathlib.Path`
+
 if not has_package("phonenumbers"):
 
-    def PhoneNumberField(**kwargs):  # type: ignore
-        """Ghost `PhoneNumberField`. Install the `phonenumbers` package to use this field."""
+    def PhoneNumber(**kwargs):  # type: ignore
+        """Ghost `PhoneNumber`. Install the `phonenumbers` package to use this field."""
         raise ImportError(
-            "The 'phonenumbers' package is required for `PhoneNumberField`. "
+            "The 'phonenumbers' package is required for `PhoneNumber`. "
             "Please install it to use this field."
         )
 
-    def PhoneNumberStringField(**kwargs):  # type: ignore
-        """Ghost `PhoneNumberStringField`. Install the `phonenumbers` package to use this field."""
+    def PhoneNumberString(**kwargs):  # type: ignore
+        """Ghost `PhoneNumberString`. Install the `phonenumbers` package to use this field."""
         raise ImportError(
-            "The 'phonenumbers' package is required for `PhoneNumberStringField`. "
+            "The 'phonenumbers' package is required for `PhoneNumberString`. "
             "Please install it to use this field."
         )
 
 
 else:
     from phonenumbers import (  # type: ignore[import]
-        PhoneNumber,
+        PhoneNumber as PhoneNumberType,
         parse as parse_number,
         format_number,
         PhoneNumberFormat,
     )
 
     def phone_number_serializer(
-        value: PhoneNumber,
-        field: "PhoneNumberField",
+        value: PhoneNumberType,
+        field: "PhoneNumber",
         context: typing.Optional[typing.Dict[str, typing.Any]],
     ) -> str:
         """Serialize a phone number object to a string format."""
@@ -1789,13 +1813,13 @@ else:
         return format_number(value, output_format)
 
     def phone_number_deserializer(
-        field: "PhoneNumberField",
+        field: "PhoneNumber",
         value: typing.Any,
-    ) -> PhoneNumber:
+    ) -> PhoneNumberType:
         """Deserialize a string to a phone number object."""
         return parse_number(value)
 
-    class PhoneNumberField(Field[PhoneNumber]):
+    class PhoneNumber(Field[PhoneNumberType]):
         """Phone number object field."""
 
         DEFAULT_OUTPUT_FORMAT = PhoneNumberFormat.E164
@@ -1817,25 +1841,25 @@ else:
                 See the `phonenumbers` library for more details.
             :param kwargs: Additional keyword arguments for the field.
             """
-            super().__init__(field_type=PhoneNumber, **kwargs)
+            super().__init__(field_type=PhoneNumberType, **kwargs)
             self.output_format = output_format or self.DEFAULT_OUTPUT_FORMAT
 
     def phone_number_string_serializer(
-        value: PhoneNumber,
-        field: "PhoneNumberStringField",
+        value: PhoneNumberType,
+        field: "PhoneNumberString",
         context: typing.Optional[typing.Dict[str, typing.Any]],
     ) -> str:
         """Serialize a phone number object to a string format."""
         return format_number(value, field.output_format)
 
     def phone_number_string_deserializer(
-        field: "PhoneNumberStringField",
+        field: "PhoneNumberString",
         value: typing.Any,
     ) -> str:
         """Deserialize a string to a phone number object."""
         return format_number(parse_number(value), field.output_format)
 
-    class PhoneNumberStringField(StringField):
+    class PhoneNumberString(String):
         """Phone number string field"""
 
         DEFAULT_OUTPUT_FORMAT = PhoneNumberFormat.E164
@@ -1868,36 +1892,36 @@ __all__ = [
     "Field",
     "Factory",
     "FieldInitKwargs",
-    "AnyField",
-    "BooleanField",
-    "StringField",
-    "FloatField",
-    "IntegerField",
-    "DictField",
-    "ListField",
-    "SetField",
-    "TupleField",
-    "DecimalField",
-    "EmailField",
-    "URLField",
-    "ChoiceField",
-    "StringChoiceField",
-    "IntegerChoiceField",
-    "FloatChoiceField",
-    "JSONField",
-    "HexColorField",
-    "RGBColorField",
-    "HSLColorField",
-    "IPAddressField",
-    "SlugField",
-    "DateField",
-    "TimeField",
-    "DurationField",
-    "TimeDeltaField",
-    "DateTimeField",
-    "BytesField",
-    "BaseIOField",
-    "FileField",
-    "PhoneNumberField",
-    "PhoneNumberStringField",
+    "Any",
+    "Boolean",
+    "String",
+    "Float",
+    "Integer",
+    "Dict",
+    "List",
+    "Set",
+    "Tuple",
+    "Decimal",
+    "Email",
+    "URL",
+    "Choice",
+    "StringChoice",
+    "IntegerChoice",
+    "FloatChoice",
+    "JSON",
+    "HexColor",
+    "RGBColor",
+    "HSLColor",
+    "IPAddress",
+    "Slug",
+    "Date",
+    "Time",
+    "Duration",
+    "TimeDelta",
+    "DateTime",
+    "Bytes",
+    "IOBase",
+    "File",
+    "PhoneNumber",
+    "PhoneNumberString",
 ]

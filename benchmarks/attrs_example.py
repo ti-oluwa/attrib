@@ -114,7 +114,7 @@ def example():
         attrs.asdict(year, recurse=True)
 
 
-@timeit("attrs_test")
+@timeit("attrs")
 # @profile
 def test(n: int):
     for _ in range(n):
