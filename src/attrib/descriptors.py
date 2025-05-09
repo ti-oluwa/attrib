@@ -1,13 +1,11 @@
 """Data description and validation fields."""
 
-import enum
 import functools
 from types import NoneType
 import uuid
 import decimal
 import datetime
 import typing
-import json
 import base64
 import io
 import copy
@@ -15,11 +13,6 @@ import ipaddress
 from typing_extensions import Unpack, Self
 from collections import defaultdict
 from dataclasses import dataclass
-
-try:
-    import orjson as json  # type: ignore[import]
-except ImportError:
-    import json
 
 try:
     import zoneinfo
@@ -45,6 +38,7 @@ from attrib._utils import (
     resolve_forward_ref,
     _LRUCache,
     get_cache_key,
+    make_jsonable,
 )
 from attrib._typing import SupportsRichComparison, R
 
@@ -144,8 +138,7 @@ def to_json_serializer(
     field: "Field",
     context: typing.Optional[typing.Dict[str, typing.Any]],
 ) -> typing.Any:
-    """Serialize a value to JSON."""
-    return json.loads(json.dumps(value))
+    return make_jsonable(value)
 
 
 def to_string_serializer(
@@ -306,17 +299,11 @@ class FieldMeta(type):
         }
 
 
-class MemoizationFactor(enum.Enum):
-    """Enum for memoization factors."""
-
-    ...
-
-
 class Field(typing.Generic[_T], metaclass=FieldMeta):
     """Attribute descriptor."""
 
-    default_serializers: typing.Mapping[str, FieldSerializer] = {}
-    default_deserializer: FieldDeserializer = default_deserializer
+    default_serializers: typing.ClassVar[typing.Mapping[str, FieldSerializer]] = {}
+    default_deserializer: typing.ClassVar[FieldDeserializer] = default_deserializer
     default_validators: typing.Iterable[FieldValidator[_T]] = []
 
     def __init__(
@@ -670,15 +657,17 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
                 self.effective_name,
             ) from exc
 
-    NO_DEEPCOPY_ARGS: typing.Set[str] = {
-        "field_type",
-    }
+    COPY_EXCLUDED_ARGS: typing.Set[int] = {0}
     """
-    Indices of arguments that should not be deepcopied when copying the field.
+    Indices of arguments that should not be copied when copying the field.
 
     This is useful for arguments that are immutable or should not be copied to avoid shared state.
     """
-    NO_DEEPCOPY_KWARGS: typing.Set[str] = {
+    COPY_EXCLUDED_KWARGS: typing.Set[str] = {
+        "alias",
+        "lazy",
+        "allow_null",
+        "required",
         "validators",
         "serializers",
         "deserializer",
@@ -686,22 +675,18 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         "field_type",
     }
     """
-    Names of keyword arguments that should not be deepcopied when copying the field.
+    Names of keyword arguments that should not be copied when copying the field.
 
     This is useful for arguments that are immutable or should not be copied to avoid shared state.
     """
 
-    def __deepcopy__(self, memo):
+    def __copy__(self):
         args = [
-            (copy.deepcopy(arg, memo) if index not in self.NO_DEEPCOPY_ARGS else arg)
+            (copy.copy(arg) if index not in self.COPY_EXCLUDED_ARGS else arg)
             for index, arg in enumerate(self._init_args)
         ]
         kwargs = {
-            key: (
-                copy.deepcopy(value, memo)
-                if value not in self.NO_DEEPCOPY_KWARGS
-                else value
-            )
+            key: (copy.copy(value) if value not in self.COPY_EXCLUDED_KWARGS else value)
             for key, value in self._init_kwargs.items()
         }
         field_copy = self.__class__(*args, **kwargs)
@@ -761,14 +746,16 @@ def boolean_json_serializer(
 class Boolean(Field[bool]):
     """Field for handling boolean values."""
 
-    TRUTHY_VALUES = {
+    TRUTHY_VALUES: typing.ClassVar[typing.Set[typing.Any]] = {
         True,
         1,
         "1",
         iexact("true"),
         iexact("yes"),
     }
-    FALSY_VALUES = {  # Use sets for faster lookups
+    FALSY_VALUES: typing.ClassVar[
+        typing.Set[typing.Any]
+    ] = {  # Use sets for faster lookups
         False,
         0,
         "0",
@@ -873,9 +860,9 @@ def build_min_max_length_validators(
 class String(Field[str]):
     """Field for handling string values."""
 
-    DEFAULT_MIN_LENGTH: typing.Optional[int] = None
+    default_min_length: typing.ClassVar[typing.Optional[int]] = None
     """Default minimum length of values."""
-    DEFAULT_MAX_LENGTH: typing.Optional[int] = None
+    default_max_length: typing.ClassVar[typing.Optional[int]] = None
     """Default maximum length of values."""
 
     default_serializers = {
@@ -1307,14 +1294,28 @@ class FloatChoice(Float, Choice[float]):
     pass
 
 
+def json_serializer(
+    value: typing.Any,
+    field: "JSON",
+    context: typing.Optional[typing.Dict[str, typing.Any]],
+) -> typing.Any:
+    """Serialize JSON data to a JSON-compatible format."""
+    # Return value as is, since it is already been made JSON-compatible
+    # by the deserializer.
+    return value
+
+
 def json_deserializer(field: Field, value: typing.Any) -> typing.Any:
     """Deserialize JSON data to the specified type."""
-    return json.loads(json.dumps(value))
+    return make_jsonable(value)
 
 
 class JSON(Any):
     """Field for handling JSON data."""
 
+    default_serializers = {
+        "json": json_serializer,
+    }
     default_deserializer = json_deserializer
 
 
@@ -1327,8 +1328,8 @@ hex_color_validator = field_validators.pattern(
 class HexColor(String):
     """Field for handling hex color values."""
 
-    # DEFAULT_MIN_LENGTH = 4
-    # DEFAULT_MAX_LENGTH = 9
+    # default_min_length = 4
+    # default_max_length = 9
     default_validators = (hex_color_validator,)
 
 
@@ -1341,7 +1342,7 @@ rgb_color_validator = field_validators.pattern(
 class RGBColor(String):
     """Field for handling RGB color values."""
 
-    # DEFAULT_MAX_LENGTH = 38
+    # default_max_length = 38
     default_validators = (rgb_color_validator,)
 
     def __init__(
@@ -1372,7 +1373,7 @@ hsl_color_validator = field_validators.pattern(
 class HSLColor(String):
     """Field for handling HSL color values."""
 
-    # DEFAULT_MAX_LENGTH = 40
+    # default_max_length = 40
     default_validators = (hsl_color_validator,)
 
     def __init__(
@@ -1490,7 +1491,7 @@ def datetime_serializer(
 class DateTimeBase(Field[DatetimeType]):
     """Base class for datetime fields."""
 
-    DEFAULT_OUTPUT_FORMAT: str = "%Y-%m-%d %H:%M:%S%z"
+    default_output_format: typing.ClassVar[str] = "%Y-%m-%d %H:%M:%S%z"
     default_serializers = {
         "json": datetime_serializer,
     }
@@ -1515,7 +1516,7 @@ class DateTimeBase(Field[DatetimeType]):
         """
         super().__init__(field_type=field_type, **kwargs)  # type: ignore
         self.input_formats = input_formats
-        self.output_format = output_format or self.DEFAULT_OUTPUT_FORMAT
+        self.output_format = output_format or self.default_output_format
 
 
 _datetime_cache = _LRUCache[str, datetime.datetime](maxsize=128)
@@ -1553,7 +1554,7 @@ def iso_time_deserializer(
 class Date(DateTimeBase[datetime.date]):
     """Field for handling date values."""
 
-    DEFAULT_OUTPUT_FORMAT = "%Y-%m-%d"
+    default_output_format = "%Y-%m-%d"
     default_deserializer = iso_date_deserializer
 
     def __init__(
@@ -1574,7 +1575,7 @@ class Date(DateTimeBase[datetime.date]):
 class Time(DateTimeBase[datetime.time]):
     """Field for handling time values."""
 
-    DEFAULT_OUTPUT_FORMAT = "%H:%M:%S.%s"
+    default_output_format = "%H:%M:%S.%s"
     default_deserializer = iso_time_deserializer
 
     def __init__(
@@ -1603,7 +1604,7 @@ def datetime_deserializer(
 class DateTime(DateTimeBase[datetime.datetime]):
     """Field for handling datetime values."""
 
-    DEFAULT_OUTPUT_FORMAT = "%Y-%m-%d %H:%M:%S%z"
+    default_output_format = "%Y-%m-%d %H:%M:%S%z"
     default_deserializer = datetime_deserializer
 
     def __init__(
@@ -1637,11 +1638,10 @@ class DateTime(DateTimeBase[datetime.datetime]):
 
     def deserialize(self, value: typing.Any) -> datetime.datetime:
         deserialized = super().deserialize(value)
-        if self.tz:
-            if deserialized.tzinfo:
-                deserialized = deserialized.astimezone(self.tz)
-            else:
-                deserialized = deserialized.replace(tzinfo=self.tz)
+        if self.tz and deserialized.tzinfo:
+            deserialized = deserialized.astimezone(self.tz)
+        elif self.tz:
+            deserialized = deserialized.replace(tzinfo=self.tz)
         return deserialized
 
 
@@ -1822,7 +1822,7 @@ else:
     class PhoneNumber(Field[PhoneNumberType]):
         """Phone number object field."""
 
-        DEFAULT_OUTPUT_FORMAT = PhoneNumberFormat.E164
+        default_output_format: typing.ClassVar[int] = PhoneNumberFormat.E164
         default_serializers = {
             "json": phone_number_serializer,
         }
@@ -1842,7 +1842,7 @@ else:
             :param kwargs: Additional keyword arguments for the field.
             """
             super().__init__(field_type=PhoneNumberType, **kwargs)
-            self.output_format = output_format or self.DEFAULT_OUTPUT_FORMAT
+            self.output_format = output_format or self.default_output_format
 
     def phone_number_string_serializer(
         value: PhoneNumberType,
@@ -1862,7 +1862,7 @@ else:
     class PhoneNumberString(String):
         """Phone number string field"""
 
-        DEFAULT_OUTPUT_FORMAT = PhoneNumberFormat.E164
+        default_output_format: typing.ClassVar[int] = PhoneNumberFormat.E164
         default_serializers = {
             "json": phone_number_string_serializer,
         }
@@ -1882,7 +1882,7 @@ else:
             :param kwargs: Additional keyword arguments for the field.
             """
             super().__init__(max_length=20, **kwargs)
-            self.output_format = output_format or self.DEFAULT_OUTPUT_FORMAT
+            self.output_format = output_format or self.default_output_format
 
 
 __all__ = [

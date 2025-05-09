@@ -1,7 +1,6 @@
 """Data description classes"""
 
 import typing
-from collections import OrderedDict
 from types import MappingProxyType
 
 from attrib.descriptors import Field, Value
@@ -26,10 +25,10 @@ def get_fields(cls: typing.Type) -> typing.Dict[str, Field]:
 
 
 def _sort_by_name(item: typing.Tuple[str, Field]) -> str:
-    return item[1].name or item[0]
+    return item[0]
 
 
-def _dataclass_repr(
+def _repr(
     instance: "Dataclass",
 ) -> str:
     """Build a string representation of the dataclass instance."""
@@ -42,7 +41,7 @@ def _dataclass_repr(
     return f"{instance_type.__name__}({', '.join(field_strs)})"
 
 
-def _dataclass_str(
+def _str(
     instance: "Dataclass",
 ) -> str:
     """Build a string representation of the dataclass instance."""
@@ -55,50 +54,35 @@ def _dataclass_str(
     return field_values.__repr__()
 
 
-def _dataclass_getitem(instance: "Dataclass", key: str) -> typing.Any:
+def _getitem(instance: "Dataclass", key: str) -> typing.Any:
     field = instance.__fields__[key]
     return field.__get__(instance, owner=type(instance))
 
 
-def _dataclass_setitem(instance: "Dataclass", key: str, value: typing.Any) -> None:
+def _setitem(instance: "Dataclass", key: str, value: typing.Any) -> None:
     field = instance.__fields__[key]
     field.__set__(instance, value)
 
 
-def build_frozen_dataclass_setattr(
-    original_setattr: typing.Callable[["Dataclass", str, Value], None],
-) -> typing.Callable[["Dataclass", str, Value], None]:
-    """Build a frozen dataclass setattr function."""
+def _frozen_setattr(instance: "Dataclass", key: str, value: Value) -> None:
+    """Set an attribute on a frozen dataclass instance."""
+    if key in instance._set_attributes:
+        raise FrozenInstanceError(
+            f"Cannot modify '{type(instance).__name__}.{key}'. "
+            f"Instance is frozen and field '{key}' has already been set."
+        ) from None
 
-    def frozen_setattr(instance: "Dataclass", key: str, value: Value) -> None:
-        """Set an attribute on a frozen dataclass instance."""
-        if key in instance._set_attributes:
-            raise FrozenInstanceError(
-                f"Cannot modify '{instance.__class__.__name__}.{key}'. "
-                f"Instance is frozen and field '{key}' has already been set."
-            ) from None
-
-        return original_setattr(instance, key, value)
-
-    return frozen_setattr
+    return object.__setattr__(instance, key, value)
 
 
-def build_frozen_dataclass_delattr(
-    original_delattr: typing.Callable[["Dataclass", str], None],
-) -> typing.Callable[["Dataclass", str], None]:
-    """Build a frozen dataclass delattr function."""
+def _frozen_delattr(instance: "Dataclass", key: str) -> None:
+    """Delete an attribute from a frozen dataclass instance."""
+    if key in instance.base_to_effective_name_map:
+        raise FrozenInstanceError(
+            f"Cannot delete '{type(instance).__name__}.{key}'. Instance is frozen"
+        ) from None
 
-    def frozen_delattr(instance: "Dataclass", key: str) -> None:
-        """Delete an attribute from a frozen dataclass instance."""
-        if key in instance.base_to_effective_name_map:
-            raise FrozenInstanceError(
-                f"Cannot delete '{instance.__class__.__name__}.{key}'. "
-                "Instance is frozen"
-            ) from None
-
-        return original_delattr(instance, key)
-
-    return frozen_delattr
+    return object.__delattr__(instance, key)
 
 
 def _get_slotted_instance_state(
@@ -206,7 +190,7 @@ def _build_slotted_namespace(
     return namespace
 
 
-def _dataclass_hash(instance: "Dataclass") -> int:
+def _hash(instance: "Dataclass") -> int:
     """Compute the hash of the dataclass instance based on descriptor fields."""
     fields = instance.__fields__
     instance_type = type(instance)
@@ -217,28 +201,24 @@ def _dataclass_hash(instance: "Dataclass") -> int:
                 for field in fields.values()
             )
         )
-    except TypeError as e:
-        raise TypeError(f"Unhashable field value in {instance}: {e}")
+    except TypeError as exc:
+        raise TypeError(f"Unhashable field value in {instance}: {exc}")
 
 
-def _dataclass_eq(
+def _eq(
     instance: "Dataclass",
-    other: typing.Any,
+    other: typing.Any
 ) -> bool:
     """Compare two dataclass instances for equality."""
     if not isinstance(other, instance.__class__):
         return NotImplemented
     if instance is other:
         return True
-    if not isinstance(other, Dataclass):
-        return False
-    if len(instance.__fields__) != len(other.__fields__):
-        return False
 
     for field in instance.__fields__.values():
-        instance_value = field.__get__(instance, type(instance))
-        other_value = field.__get__(other, type(instance))
-        if instance_value != other_value:
+        if field.__get__(instance, type(instance)) != field.__get__(
+            other, type(instance)
+        ):
             return False
     return True
 
@@ -332,34 +312,29 @@ class DataclassMeta(type):
             attrs = slotted_namespace
 
         if frozen:
-            attrs["__setattr__"] = build_frozen_dataclass_setattr(attrs["__setattr__"])
-            attrs["__delattr__"] = build_frozen_dataclass_delattr(attrs["__delattr__"])
+            attrs["__setattr__"] = _frozen_setattr
+            attrs["__delattr__"] = _frozen_delattr
         if repr:
-            attrs["__repr__"] = _dataclass_repr
+            attrs["__repr__"] = _repr
         if str:
-            attrs["__str__"] = _dataclass_str
+            attrs["__str__"] = _str
         if getitem:
-            attrs["__getitem__"] = _dataclass_getitem
+            attrs["__getitem__"] = _getitem
         if setitem:
-            attrs["__setitem__"] = _dataclass_setitem
+            attrs["__setitem__"] = _setitem
         if hash:
-            attrs["__hash__"] = _dataclass_hash
+            attrs["__hash__"] = _hash
         if eq:
-            attrs["__eq__"] = _dataclass_eq
+            attrs["__eq__"] = _eq
 
         sort = attrs.get("sort", sort)
         if sort:
-            if callable(sort):
-                sort_key = sort
-            else:
-                sort_key = _sort_by_name
-
+            sort_key = sort if callable(sort) else _sort_by_name
             sort_key = typing.cast(
                 typing.Callable[[typing.Tuple[u, Field]], u], sort_key
             )
-            fields_data = list(fields.items())
-            fields_data.sort(key=sort_key)
-            fields = OrderedDict(fields_data)
+            fields_data = sorted(fields.items(), key=sort_key)
+            fields = dict(fields_data)
 
         # Make read-only to prevent accidental modification
         attrs["__fields__"] = MappingProxyType(fields)
@@ -376,7 +351,7 @@ class DataclassMeta(type):
 class Dataclass(metaclass=DataclassMeta, slots=True):
     """
     Data description class.
-    
+
     Define data structures with special descriptors.
 
     Dataclasses are defined by subclassing `Dataclass` and defining fields as class attributes.
@@ -401,14 +376,14 @@ class Dataclass(metaclass=DataclassMeta, slots=True):
         name = attrib.String()
         population = attrib.Integer()
 
-        
+
     class Country(attrib.Dataclass):
         name = attrib.String()
         code = attrib.String()
         population = attrib.Integer()
         continent = attrib.Nested(Continent)
 
-        
+
     class City(attrib.Dataclass):
         name = attrib.String()
         country = attrib.Nested(Country)
@@ -416,7 +391,7 @@ class Dataclass(metaclass=DataclassMeta, slots=True):
         area = attrib.Float()
         postal_code = attrib.String(allow_null=True, default=None)
 
-        
+
     africa = Continent(
         name="Africa",
         population=1_300_000_000,
@@ -431,7 +406,7 @@ class Dataclass(metaclass=DataclassMeta, slots=True):
         name="Nairobi",
         country=kenya,
         population=4_000_000,
-        area=696.1,
+        area="696.1",
         postal_code="00100",
     )
 
@@ -494,9 +469,7 @@ class Dataclass(metaclass=DataclassMeta, slots=True):
         :param data: Raw data to initialize the dataclass with.
         :param kwargs: Additional keyword arguments to initialize the dataclass with.
         """
-        self._set_attributes = (
-            set()
-        )  # Set of attributes that have been set on the instance
+        self._set_attributes = set()
         combined = {**(data or {}), **kwargs}
         if combined:
             load(self, combined)

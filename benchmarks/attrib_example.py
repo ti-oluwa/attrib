@@ -34,7 +34,7 @@ class Course(attrib.Dataclass, slots=True):
     created_at = attrib.DateTime(default=attrib.Factory(datetime.now))
 
 
-class PersonalInfo(attrib.Dataclass, slots=True):
+class PersonalInfo(attrib.Dataclass, slots=True, sort=True):
     """Personal information data class"""
 
     name = attrib.String(max_length=100)
@@ -43,7 +43,7 @@ class PersonalInfo(attrib.Dataclass, slots=True):
     phone = attrib.PhoneNumber(allow_null=True, default=None)
 
 
-class Student(PersonalInfo, slots=True):
+class Student(PersonalInfo, slots=True, sort=True):
     """Student data class with multiple fields and a list of enrolled courses"""
 
     id = attrib.Integer(required=True)
@@ -101,13 +101,22 @@ def example():
     students = load_data(student_data, Student)
 
     for student in students:
-        attrib.serialize(student, fmt="json", options=[attrib.Option(depth=2, exclude={"friend"})])
+        log(
+            attrib.serialize(
+                student,
+                fmt="json",
+                options=[
+                    attrib.Option(Course, depth=0, strict=True),
+                    attrib.Option(depth=1),
+                ],
+            )
+        )
 
     for course in courses:
-        attrib.serialize(course, fmt="json", options=[attrib.Option(depth=2)])
+        attrib.serialize(course, fmt="json", options=[attrib.Option(depth=1)])
 
     for year in years:
-        attrib.serialize(year, fmt="json", options=[attrib.Option(depth=2)])
+        attrib.serialize(year, fmt="json", options=[attrib.Option(depth=1)])
 
     # dump = pickle.dumps(students)
     # loaded_students = pickle.loads(dump)
@@ -157,8 +166,8 @@ def example():
     # log(student.name, "is now", student.age, "years old")
 
 
-@profileit("attrib", max_rows=20, output="rich")
-# @timeit("attrib")
+# @profileit("attrib", max_rows=20, output="rich")
+@timeit("attrib")
 # @profile
 def test(n: int = 1):
     """Run the attrib example multiple times"""

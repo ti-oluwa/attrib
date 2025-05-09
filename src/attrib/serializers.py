@@ -1,6 +1,6 @@
 """Dataclass serialization module."""
 
-from collections import OrderedDict, deque
+from collections import deque
 import typing
 import os
 
@@ -21,7 +21,7 @@ Use "recursive" for smaller or less complex dataclass serialization.
 Default is "iterative".
 This setting can also be overridden by the `ATTRIB_SERIALIZATION_STYLE` environment variable.
 """
-print(SERIALIZATION_STYLE)
+
 
 class Option(typing.NamedTuple):
     """Dataclass serialization options."""
@@ -40,7 +40,15 @@ class Option(typing.NamedTuple):
     """
 
     def __hash__(self) -> int:
-        return hash((self.target, self.depth, self.include, self.exclude, self.strict))
+        return hash(
+            (
+                self.target,
+                self.depth,
+                self.include,
+                self.exclude,
+                self.strict,
+            )
+        )
 
 
 DEFAULT_OPTION = Option()
@@ -67,7 +75,7 @@ def _serialize_instance_recursive(
     instance: Dataclass,
     options_map: typing.Optional[OptionsMap] = None,
     context: typing.Optional[typing.Dict[str, typing.Any]] = None,
-) -> typing.OrderedDict[str, typing.Any]:
+) -> typing.Dict[str, typing.Any]:
     """
     Recursively serialize a dataclass instance.
 
@@ -75,10 +83,10 @@ def _serialize_instance_recursive(
     :param instance: The dataclass instance to serialize.
     :param options_map: Optional serialization options map.
     :param context: Optional context dictionary.
-    :return: Serialized OrderedDict.
+    :return: Serialized dictionary.
     :raises SerializationError: If serialization fails.
     """
-    serialized_data = OrderedDict()
+    serialized_data = {}
     instance_type = type(instance)
 
     if options_map is None:
@@ -124,10 +132,10 @@ def _serialize_instance_recursive(
             if isinstance(value, Dataclass):
                 nested_option = Option(
                     target=type(value),
-                    depth=option.depth - 1 if option.depth is not None else None,
-                    include=None,
-                    exclude=None,
-                    strict=False,
+                    depth=option.depth,
+                    include=option.include,
+                    exclude=option.exclude,
+                    strict=option.strict,
                 )
                 options_map[type(value)] = nested_option
 
@@ -161,7 +169,7 @@ def _serialize_instance_iterative(
     instance: Dataclass,
     options_map: typing.Optional[OptionsMap] = None,
     context: typing.Optional[typing.Dict[str, typing.Any]] = None,
-) -> typing.OrderedDict[str, typing.Any]:
+) -> typing.Dict[str, typing.Any]:
     """
     Iteratively serialize a dataclass instance.
 
@@ -172,11 +180,11 @@ def _serialize_instance_iterative(
     :param fmt: Serialization format (e.g., 'python', 'json').
     :param options: Optional serialization options.
     :param context: Optional context dictionary.
-    :return: Serialized OrderedDict.
+    :return: Serialized dictionary.
     :raises SerializationError: If serialization fails.
     """
     try:
-        serialized_data = OrderedDict()
+        serialized_data = {}
         stack = deque([(instance, 0, serialized_data)])
         context = context or {}
         if "__options" not in context:
@@ -212,12 +220,12 @@ def _serialize_instance_iterative(
                     if value is empty:
                         continue
 
-                    if option.depth is not None and current_depth >= option.depth - 1:
+                    if option.depth is not None and current_depth >= option.depth:
                         current_output[key] = value
                         continue
 
                     if isinstance(value, Dataclass):
-                        nested_output = OrderedDict()
+                        nested_output = {}
                         current_output[key] = nested_output
                         stack.append((value, current_depth + 1, nested_output))
                     else:
@@ -250,7 +258,7 @@ def serialize(
     fmt: typing.Union[typing.Literal["python", "json"], str] = "python",
     options: typing.Optional[typing.Iterable[Option]] = None,
     context: typing.Optional[typing.Dict[str, typing.Any]] = None,
-) -> typing.OrderedDict[str, typing.Any]:
+) -> typing.Dict[str, typing.Any]:
     """
     Build a serialized representation of the dataclass.
 
@@ -276,7 +284,7 @@ def serialize(
 
     john = Person(
         name="John Doe",
-        age=30,
+        age="30",
         email="john.doe@example.com",
         phone="+1234567890",
         address="123 Obadeyi Street, Lagos, Nigeria",
