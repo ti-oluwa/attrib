@@ -53,7 +53,7 @@ class Option(typing.NamedTuple):
 
 DEFAULT_OPTION = Option()
 
-OptionsMap: typing.TypeAlias = typing.Dict[typing.Type[Dataclass], Option]
+OptionsMap: typing.TypeAlias = typing.MutableMapping[typing.Type[Dataclass], Option]
 
 
 def resolve_option(
@@ -111,7 +111,6 @@ def _serialize_instance_recursive(
     if "__options" not in context:
         context["__options"] = options_map
 
-    # Determine the current depth from the context
     current_depth = context.get("__depth", 0)
 
     for name in field_names:
@@ -123,13 +122,11 @@ def _serialize_instance_recursive(
             if value is empty:
                 continue
 
-            # Respect depth option and stop deeper serialization when the depth is exceeded
-            if option.depth is not None and current_depth >= option.depth:
-                serialized_data[key] = value
-                continue
-
-            # Increase the depth in the context for nested serializations
             if isinstance(value, Dataclass):
+                if option.depth is not None and current_depth >= option.depth:
+                    serialized_data[key] = value
+                    continue
+
                 nested_option = Option(
                     target=type(value),
                     depth=option.depth,
@@ -138,8 +135,6 @@ def _serialize_instance_recursive(
                     strict=option.strict,
                 )
                 options_map[type(value)] = nested_option
-
-                # Increase depth for nested dataclass serialization
                 nested_context = context.copy()
                 nested_context["__depth"] = current_depth + 1
 
@@ -196,12 +191,11 @@ def _serialize_instance_iterative(
             current_instance, current_depth, current_output = stack.pop()
             instance_type = type(current_instance)
 
-            # Option resolution
             if instance_type in local_options_map:
                 option = local_options_map[instance_type]
             else:
                 option = resolve_option(instance_type, local_options_map)
-                local_options_map[instance_type] = option
+                local_options_map[instance_type] = option  # Cache resolved option
 
             fields = current_instance.__fields__.keys()
             if option.include or option.exclude:
@@ -220,11 +214,11 @@ def _serialize_instance_iterative(
                     if value is empty:
                         continue
 
-                    if option.depth is not None and current_depth >= option.depth:
-                        current_output[key] = value
-                        continue
-
                     if isinstance(value, Dataclass):
+                        if option.depth is not None and current_depth >= option.depth:
+                            current_output[key] = value
+                            continue
+
                         nested_output = {}
                         current_output[key] = nested_output
                         stack.append((value, current_depth + 1, nested_output))

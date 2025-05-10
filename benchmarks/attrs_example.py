@@ -47,7 +47,7 @@ class Course:
     created_at: datetime = attrs.field(factory=datetime.now)
 
 
-@attrs.define(slots=True)
+@attrs.define(slots=True, kw_only=True)
 class PersonalInfo:
     """Personal information data class"""
 
@@ -70,20 +70,7 @@ class Student(PersonalInfo):
         default=attrs.Factory(list),
         converter=lambda x: [Course(**course) for course in x],
     )
-    friend: typing.Optional["Student"] = attrs.field(
-        factory=lambda: Student(
-            id=0,
-            name="",
-            age=0,
-            email=None,
-            phone=None,
-            year=None,
-            courses=[],
-            gpa=0.0,
-            joined_at=None,
-            friend=None,
-        ),
-    )
+    friend: typing.Optional["Student"] = attrs.field(factory=lambda: dummy_student)
     joined_at: typing.Optional[datetime] = attrs.field(
         default=None,
         converter=lambda x: datetime.now() if x is None else parse(x),
@@ -91,6 +78,19 @@ class Student(PersonalInfo):
     created_at: datetime = attrs.field(
         factory=lambda: datetime.now().astimezone(zoneinfo.ZoneInfo("Africa/Lagos"))
     )
+
+
+dummy_student = Student(
+    id=0,
+    name="",
+    age=0,
+    email=None,
+    phone=None,
+    year=year_data[0],
+    courses=course_data,
+    joined_at=None,
+    friend=None,
+)
 
 
 def load_data(

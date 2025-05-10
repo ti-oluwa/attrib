@@ -2,6 +2,7 @@ import random
 import typing
 from datetime import datetime
 import tracemalloc
+import gc
 from memory_profiler import profile
 
 import attrib
@@ -19,9 +20,7 @@ class AcademicYear(attrib.Dataclass, slots=True):
     name = attrib.String(max_length=100)
     start_date = attrib.Date(input_formats=["%d-%m-%Y", "%d/%m/%Y"])
     end_date = attrib.Date(input_formats=["%d-%m-%Y", "%d/%m/%Y"])
-    created_at = attrib.DateTime(
-        default=attrib.Factory(datetime.now), tz="Africa/Lagos"
-    )
+    created_at = attrib.DateTime(default=datetime.now, tz="Africa/Lagos")
 
 
 class Course(attrib.Dataclass, slots=True):
@@ -31,7 +30,7 @@ class Course(attrib.Dataclass, slots=True):
     name = attrib.String(max_length=100)
     code = attrib.String(max_length=20)
     year = attrib.Nested(AcademicYear, lazy=False)
-    created_at = attrib.DateTime(default=attrib.Factory(datetime.now))
+    created_at = attrib.DateTime(default=datetime.now)
 
 
 class PersonalInfo(attrib.Dataclass, slots=True, sort=True):
@@ -61,9 +60,7 @@ class Student(PersonalInfo, slots=True, sort=True):
         allow_null=True,
     )
     joined_at = attrib.DateTime(allow_null=True, tz="Africa/Lagos")
-    created_at = attrib.DateTime(
-        default=attrib.Factory(datetime.now), tz="Africa/Lagos"
-    )
+    created_at = attrib.DateTime(default=datetime.now, tz="Africa/Lagos")
 
 
 dummy_student = Student(
@@ -74,7 +71,6 @@ dummy_student = Student(
     phone=None,
     year=year_data[0],
     courses=course_data,
-    gpa=0.0,
     joined_at=None,
     friend=None,
 )
@@ -101,22 +97,26 @@ def example():
     students = load_data(student_data, Student)
 
     for student in students:
-        log(
-            attrib.serialize(
-                student,
-                fmt="json",
-                options=[
-                    attrib.Option(Course, depth=0, strict=True),
-                    attrib.Option(depth=1),
-                ],
-            )
+        attrib.serialize(
+            student,
+            fmt="python",
+            # options=[
+            #     attrib.Option(Course, depth=0, strict=True),
+            #     attrib.Option(depth=1),
+            # ],
         )
 
     for course in courses:
-        attrib.serialize(course, fmt="json", options=[attrib.Option(depth=1)])
+        attrib.serialize(
+            course,
+            fmt="python",
+        )
 
     for year in years:
-        attrib.serialize(year, fmt="json", options=[attrib.Option(depth=1)])
+        attrib.serialize(
+            year,
+            fmt="python",
+        )
 
     # dump = pickle.dumps(students)
     # loaded_students = pickle.loads(dump)

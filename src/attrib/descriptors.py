@@ -324,7 +324,9 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
             typing.Mapping[str, "FieldSerializer[_T, Self]"]
         ] = None,
         deserializer: typing.Optional["FieldDeserializer[Self, _T]"] = None,
-        _cache_size: Annotated[int, annot.Interval(1, 3), annot.MultipleOf(1)] = 1,
+        _cache_size: Annotated[
+            int, annot.Interval(ge=1, le=3), annot.MultipleOf(1)
+        ] = 1,
     ) -> None:
         """
         Initialize the field.
@@ -343,6 +345,9 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         :param _cache_size: Multiplier for the base cache size for serialized and validated values, defaults to 1.
             Base cache size is 128, so the effective cache size will be 128 * _cache_size.
         """
+        assert type(_cache_size) is int, "Cache size must be an integer"
+        assert 1 <= _cache_size <= 3, "Cache size must be between 1 and 3"
+
         self.field_type = (
             typing.ForwardRef(field_type) if isinstance(field_type, str) else field_type
         )
@@ -720,7 +725,7 @@ class FieldInitKwargs(typing.TypedDict, total=False):
     """A deserializer function to convert the field's value to the expected type."""
     default: typing.Union[typing.Any, DefaultFactory, typing.Type[empty], NoneType]
     """A default value for the field to be used if no value is set."""
-    _cache_size: Annotated[int, annot.Interval(1, 3), annot.MultipleOf(1)]
+    _cache_size: Annotated[int, annot.Interval(ge=1, le=3), annot.MultipleOf(1)]
 
 
 class Any(Field[typing.Any]):
@@ -860,6 +865,13 @@ class Integer(Field[int]):
             **kwargs,
         )
         self.base = base
+
+    def post_init_validate(self) -> None:
+        super().post_init_validate()
+        if not (2 <= self.base <= 36):
+            raise FieldError(
+                f"Base {self.base} is not supported. Must be between 2 and 36."
+            )
 
 
 def build_min_max_length_validators(

@@ -1,8 +1,7 @@
 """
-Create fast data description classes.
+`attrib` is a data desciption library for Python.
 
-Quickly setup of structured data with fields that support type enforcement,
-custom validation, and optional constraints.
+Setup structured data with fields that support type enforcement, validation, and serialization.
 """
 
 from .dataclass import Dataclass, load, deserialize, from_dict, from_attributes  # noqa
