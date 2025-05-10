@@ -2,6 +2,8 @@ import inspect
 import typing
 import operator
 import re
+import os
+import pathlib
 
 from attrib._typing import SupportsRichComparison
 from attrib.exceptions import FieldValidationError
@@ -85,8 +87,8 @@ def pipe(
     *validators: typing.Union[_Validator, FieldValidator],
 ) -> FieldValidator:
     """
-    A function that takes a list of validators and returns a single validator
-    that applies all the validators in sequence.
+    Takes a sequence of validators and returns a single validator
+    that applies all the validators in sequential order.
 
     :param validators: A list of validator functions
     :return: A single validator function
@@ -671,3 +673,183 @@ def _is_callable(
 
 
 is_callable = FieldValidator(_is_callable)
+
+
+def value_validator(
+    func: typing.Callable[[typing.Any], typing.Any],
+) -> FieldValidator:
+    """
+    Wraps a validator function that only accepts a value and returns a boolean
+    indicating whether the value is valid or not such that it can be used
+    as a validator for a field.
+
+    The function can also raise a `FieldValidationError` if the value is invalid.
+
+    :param func: A function that takes a value and returns a boolean
+        indicating whether the value is valid or not
+    :return: A validator function
+    :raises TypeError: If the function is not callable
+    """
+    if not callable(func):
+        raise TypeError(f"Validator function '{func}' is not callable.")
+
+    def validator(
+        value: typing.Any,
+        field: typing.Optional[typing.Any] = None,
+        instance: typing.Optional[typing.Any] = None,
+    ):
+        if not func(value):
+            name = field.effective_name if field else "value"
+            raise FieldValidationError(
+                f"'{name}' must be valid according to {func.__name__!r}",
+                name,
+                value,
+            )
+        return
+
+    return FieldValidator(validator)
+
+
+@typing.overload
+def path(
+    *,
+    is_absolute: bool = ...,
+    is_relative: bool = ...,
+    exists: typing.Literal[False] = False,
+) -> FieldValidator: ...
+
+
+@typing.overload
+def path(
+    *,
+    is_absolute: bool = ...,
+    is_relative: bool = ...,
+    exists: typing.Literal[True] = True,
+    is_dir: bool = ...,
+    is_file: bool = ...,
+    is_symlink: bool = ...,
+    is_readable: bool = ...,
+    is_writable: bool = ...,
+    is_executable: bool = ...,
+    is_empty: bool = ...,
+) -> FieldValidator: ...
+
+
+@typing.overload
+def path(
+    *,
+    is_absolute: typing.Literal[True] = True,
+    is_relative: typing.Literal[False] = False,
+    exists: bool = ...,
+    is_dir: bool = ...,
+    is_file: bool = ...,
+    is_symlink: bool = ...,
+    is_readable: bool = ...,
+    is_writable: bool = ...,
+    is_executable: bool = ...,
+    is_empty: bool = ...,
+) -> FieldValidator: ...
+
+
+@typing.overload
+def path(
+    *,
+    is_absolute: typing.Literal[False] = False,
+    is_relative: typing.Literal[True] = True,
+    exists: bool = ...,
+    is_dir: bool = ...,
+    is_file: bool = ...,
+    is_symlink: bool = ...,
+    is_readable: bool = ...,
+    is_writable: bool = ...,
+    is_executable: bool = ...,
+    is_empty: bool = ...,
+) -> FieldValidator: ...
+
+
+def path(
+    *,
+    is_absolute: bool = False,
+    is_relative: bool = False,
+    exists: bool = False,
+    is_dir: bool = False,
+    is_file: bool = False,
+    is_symlink: bool = False,
+    is_readable: bool = False,
+    is_writable: bool = False,
+    is_executable: bool = False,
+    is_empty: bool = False,
+) -> FieldValidator:
+    """
+    `pathlib.Path` validator factory
+
+    :param exists: Check if the path exists
+    :param is_dir: Check if the path is a directory
+    :param is_file: Check if the path is a file
+    :param is_symlink: Check if the path is a symlink
+    :param is_absolute: Check if the path is absolute
+    :param is_relative: Check if the path is relative
+    :param is_readable: Check if the path is readable
+    :param is_writable: Check if the path is writable
+    :param is_executable: Check if the path is executable
+    :param is_empty: Check if the path is empty
+    """
+    if not any(
+        (
+            exists,
+            is_dir,
+            is_file,
+            is_symlink,
+            is_absolute,
+            is_relative,
+            is_readable,
+            is_writable,
+            is_executable,
+            is_empty,
+        )
+    ):
+        raise ValueError("At least one of the path checks must be True.")
+
+    if is_absolute and is_relative:
+        raise ValueError("`is_absolute` and `is_relative` cannot be used together.")
+
+    if not exists and any(
+        (is_dir, is_file, is_symlink, is_readable, is_writable, is_executable, is_empty)
+    ):
+        raise ValueError("`exists=True` is required for the selected checks.")
+    if is_dir and is_file:
+        raise ValueError("`is_dir` and `is_file` cannot be used together.")
+    if is_empty and not (is_dir or is_file):
+        raise ValueError("`is_empty` must be used with `is_dir` or `is_file`.")
+
+    validators = []
+    if is_absolute:
+        validators.append(value_validator(pathlib.Path.is_absolute))
+    elif is_relative:
+        validators.append(
+            value_validator(lambda path: not pathlib.Path.is_absolute(path))
+        )
+
+    if exists:
+        validators.append(value_validator(pathlib.Path.exists))
+    if is_symlink:
+        validators.append(value_validator(pathlib.Path.is_symlink))
+    if is_dir:
+        validators.append(value_validator(pathlib.Path.is_dir))
+    if is_file:
+        validators.append(value_validator(pathlib.Path.is_file))
+        if is_executable:
+            validators.append(value_validator(lambda path: os.access(path, os.X_OK)))
+
+    if is_empty:
+        if is_dir:
+            validators.append(value_validator(lambda path: not any(path.iterdir())))
+        elif is_file:
+            validators.append(value_validator(lambda path: path.stat().st_size == 0))
+
+    if is_readable:
+        validators.append(value_validator(lambda path: os.access(path, os.R_OK)))
+    if is_writable:
+        validators.append(value_validator(lambda path: os.access(path, os.W_OK)))
+
+    return pipe(*validators) if len(validators) > 1 else validators[0]

@@ -5,6 +5,7 @@ P = typing.ParamSpec("P")
 R = typing.TypeVar("R")
 
 
+@typing.runtime_checkable
 class SupportsRichComparison(typing.Protocol):
     def __lt__(self, other: typing.Any, /) -> bool: ...
     def __le__(self, other: typing.Any, /) -> bool: ...

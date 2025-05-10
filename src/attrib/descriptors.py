@@ -10,7 +10,10 @@ import base64
 import io
 import copy
 import ipaddress
-from typing_extensions import Unpack, Self
+import pathlib
+import os
+from typing_extensions import Unpack, Self, Annotated
+import annotated_types as annot
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -321,6 +324,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
             typing.Mapping[str, "FieldSerializer[_T, Self]"]
         ] = None,
         deserializer: typing.Optional["FieldDeserializer[Self, _T]"] = None,
+        _cache_size: Annotated[int, annot.Interval(1, 3), annot.MultipleOf(1)] = 1,
     ) -> None:
         """
         Initialize the field.
@@ -336,8 +340,8 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         :param serializers: A mapping of serialization formats to their respective serializer functions, defaults to None.
         :param default: A default value for the field to be used if no value is set, defaults to empty.
         :param deserializer: A deserializer function to convert the field's value to the expected type, defaults to None.
-        :param on_setvalue: Callable to run on the value just before setting it, defaults to None.
-            This is useful for transforming the value before it is set on the instance.
+        :param _cache_size: Multiplier for the base cache size for serialized and validated values, defaults to 1.
+            Base cache size is 128, so the effective cache size will be 128 * _cache_size.
         """
         self.field_type = (
             typing.ForwardRef(field_type) if isinstance(field_type, str) else field_type
@@ -364,8 +368,8 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         self.default = default
         self._init_args = ()
         self._init_kwargs = {}
-        self._serialized_cache = _LRUCache(maxsize=128)
-        self._validated_cache = _LRUCache(maxsize=128)
+        self._serialized_cache = _LRUCache(maxsize=128 * _cache_size)
+        self._validated_cache = _LRUCache(maxsize=128 * _cache_size)
 
     def post_init_validate(self) -> None:
         """
@@ -716,6 +720,7 @@ class FieldInitKwargs(typing.TypedDict, total=False):
     """A deserializer function to convert the field's value to the expected type."""
     default: typing.Union[typing.Any, DefaultFactory, typing.Type[empty], NoneType]
     """A default value for the field to be used if no value is set."""
+    _cache_size: Annotated[int, annot.Interval(1, 3), annot.MultipleOf(1)]
 
 
 class Any(Field[typing.Any]):
@@ -816,14 +821,31 @@ class Float(Field[float]):
         )
 
 
+def integer_deserializer(
+    field: "Integer",
+    value: typing.Any,
+) -> int:
+    """
+    Deserialize a value to an integer.
+
+    :param field: The field instance to which the value belongs.
+    :param value: The value to deserialize.
+    :return: The deserialized integer value.
+    """
+    return int(value, base=field.base)
+
+
 class Integer(Field[int]):
     """Field for handling integer values."""
+
+    default_deserializer = integer_deserializer
 
     def __init__(
         self,
         *,
         min_value: typing.Optional[int] = None,
         max_value: typing.Optional[int] = None,
+        base: Annotated[int, annot.Interval(ge=2, le=36)] = 10,
         **kwargs: Unpack[FieldInitKwargs],
     ):
         validators = kwargs.get("validators", [])
@@ -837,6 +859,7 @@ class Integer(Field[int]):
             field_type=int,
             **kwargs,
         )
+        self.base = base
 
 
 def build_min_max_length_validators(
@@ -872,13 +895,13 @@ class String(Field[str]):
     def __init__(
         self,
         *,
-        min_length: typing.Optional[int] = None,
-        max_length: typing.Optional[int] = None,
+        min_length: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
+        max_length: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
         trim_whitespaces: bool = True,
         to_lowercase: bool = False,
         to_uppercase: bool = False,
         **kwargs: Unpack[FieldInitKwargs],
-    ):
+    ) -> None:
         """
         Initialize the field.
 
@@ -899,7 +922,7 @@ class String(Field[str]):
         self.to_lowercase = to_lowercase
         self.to_uppercase = to_uppercase
 
-    def post_init_validate(self):
+    def post_init_validate(self) -> None:
         super().post_init_validate()
         if self.to_lowercase and self.to_uppercase:
             raise FieldError("`to_lowercase` and `to_uppercase` cannot both be set.")
@@ -1053,7 +1076,7 @@ class Iterable(typing.Generic[IterType, _V], Field[IterType]):
         field_type: typing.Type[IterType],
         child: typing.Optional[Field[_V]] = None,
         *,
-        size: typing.Optional[int] = None,
+        size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
         **kwargs: Unpack[FieldInitKwargs],
     ) -> NoneType:
         """
@@ -1107,7 +1130,7 @@ class List(Iterable[typing.List[_V], _V]):
         self,
         child: typing.Optional[Field[_V]] = None,
         *,
-        size: typing.Optional[int] = None,
+        size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
         **kwargs: Unpack[FieldInitKwargs],
     ) -> NoneType:
         super().__init__(
@@ -1125,7 +1148,7 @@ class Set(Iterable[typing.Set[_V], _V]):
         self,
         child: typing.Optional[Field[_V]] = None,
         *,
-        size: typing.Optional[int] = None,
+        size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
         **kwargs: Unpack[FieldInitKwargs],
     ) -> NoneType:
         super().__init__(
@@ -1143,7 +1166,7 @@ class Tuple(Iterable[typing.Tuple[_V], _V]):
         self,
         child: typing.Optional[Field[_V]] = None,
         *,
-        size: typing.Optional[int] = None,
+        size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
         **kwargs: Unpack[FieldInitKwargs],
     ) -> NoneType:
         super().__init__(
@@ -1170,7 +1193,7 @@ class Decimal(Field[decimal.Decimal]):
 
     def __init__(
         self,
-        dp: typing.Optional[int] = None,
+        dp: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
         **kwargs: Unpack[FieldInitKwargs],
     ):
         """
@@ -1700,83 +1723,36 @@ class IOBase(Field[IOType]):
     default_deserializer = unsupported_deserializer  # type: ignore
 
 
-def get_file_name(file_obj: io.BufferedIOBase) -> str:
-    """Get the name of the file object."""
-    if hasattr(file_obj, "name"):
-        return file_obj.name.split(".")[-1].lower()  # type: ignore
-    return ""
+def path_deserializer(
+    field: "Path",
+    value: typing.Any,
+) -> pathlib.Path:
+    """Deserialize a value to a `pathlib.Path` object."""
+    if field.resolve:
+        return pathlib.Path(value).resolve(strict=False)
+    return pathlib.Path(value)
 
 
-def get_file_size(file_obj: io.BufferedIOBase) -> int:
-    """Get the size of the file object in bytes."""
-    if hasattr(file_obj, "seek") and hasattr(file_obj, "tell"):
-        file_obj.seek(0, 2)  # Move to end of file to check size
-        size = file_obj.tell()
-        file_obj.seek(0)  # Reset file pointer to the beginning
-        return size
-    return 0
+class Path(Field[pathlib.Path]):
+    """
+    Field for handling file system paths using `pathlib.Path`.
 
-
-def file_serializer(
-    file_obj: io.BufferedIOBase,
-    field: "Field",
-    context: typing.Optional[typing.Dict[str, typing.Any]],
-) -> typing.Dict[str, typing.Any]:
-    """Serialize the file object to a dictionary."""
-    return {
-        "name": get_file_name(file_obj),
-        "size": get_file_size(file_obj),
-    }
-
-
-class File(IOBase[io.BufferedIOBase]):
-    """Field for handling files"""
+    By default, the field will resolve the path to an absolute path.
+    """
 
     default_serializers = {
-        "json": file_serializer,
+        "json": to_string_serializer,
     }
+    default_deserializer = path_deserializer
 
     def __init__(
         self,
-        max_size: typing.Optional[int] = None,
-        allowed_types: typing.Optional[typing.Iterable[str]] = None,
+        resolve: bool = False,
         **kwargs: Unpack[FieldInitKwargs],
     ):
-        """
-        Initialize the field.
+        super().__init__(field_type=pathlib.Path, **kwargs)
+        self.resolve = resolve
 
-        :param max_size: The maximum size of the file in bytes.
-        :param allowed_types: A list of allowed file types or extensions.
-        :param kwargs: Additional keyword arguments for the field.
-        """
-        validators = kwargs.get("validators", [])
-        validators = typing.cast(
-            typing.Iterable[FieldValidator[io.BufferedIOBase]], validators
-        )
-        if max_size is not None:
-            validators = [
-                *validators,
-                field_validators.lte(max_size, pre_validation_hook=get_file_size),
-            ]
-        if allowed_types:
-            validators = [
-                *validators,
-                field_validators.pattern(
-                    r"^.*\.(?:" + "|".join(allowed_types) + r")$",
-                    pre_validation_hook=get_file_name,
-                ),
-            ]
-        kwargs["validators"] = validators
-        super().__init__(field_type=io.BufferedIOBase, **kwargs)
-
-    def __delete__(self, instance: typing.Any):
-        value = self.__get__(instance, type(instance))
-        if value and not value.closed:
-            value.close()
-        super().__delete__(instance)
-
-
-# TODO: Add PathField using `pathlib.Path`
 
 if not has_package("phonenumbers"):
 
@@ -1921,7 +1897,7 @@ __all__ = [
     "DateTime",
     "Bytes",
     "IOBase",
-    "File",
+    "Path",
     "PhoneNumber",
     "PhoneNumberString",
 ]

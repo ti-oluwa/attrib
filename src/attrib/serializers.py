@@ -294,7 +294,7 @@ def serialize(
         john,
         fmt="json",
         options=[
-            Option(target=Person, include=["name", "age"]),
+            Option(target=Person, include={"name", "age"}),
         ],
     )
     print(data)
