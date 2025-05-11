@@ -45,7 +45,7 @@ def is_iterable_type(
     exclude: typing.Optional[typing.Tuple[typing.Type[typing.Any], ...]] = None,
 ) -> typing.TypeGuard[typing.Type[collections.abc.Iterable]]:
     """
-    Check if a given type is an iterable.
+    Check if a given type is an iterable. A subclass of `collections.abc.Iterable`.
 
     :param tp: The type to check.
     :param exclude: A tuple of types to return False for, even if they are iterable types.
@@ -86,6 +86,11 @@ def is_valid_type(o: typing.Any, /) -> bool:
             (isinstance(obj, typing.ForwardRef) or is_concrete_type(obj) for obj in o)
         )
     return is_concrete_type(o) or isinstance(o, typing.ForwardRef)
+
+
+def is_generic_type(o: typing.Any, /) -> bool:
+    """Check if an object is a generic type."""
+    return typing.get_origin(o) is not None and not isinstance(o, typing._SpecialForm)
 
 
 def is_slotted_cls(cls: typing.Type[typing.Any], /) -> bool:

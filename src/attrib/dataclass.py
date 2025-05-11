@@ -2,6 +2,7 @@
 
 import typing
 from types import MappingProxyType
+from typing_extensions import Unpack
 
 from attrib.descriptors import Field, Value
 from attrib.exceptions import FrozenInstanceError
@@ -205,10 +206,7 @@ def _hash(instance: "Dataclass") -> int:
         raise TypeError(f"Unhashable field value in {instance}: {exc}")
 
 
-def _eq(
-    instance: "Dataclass",
-    other: typing.Any
-) -> bool:
+def _eq(instance: "Dataclass", other: typing.Any) -> bool:
     """Compare two dataclass instances for equality."""
     if not isinstance(other, instance.__class__):
         return NotImplemented
@@ -223,7 +221,94 @@ def _eq(
     return True
 
 
-u = str
+str_type = str
+
+
+class DataclassConfigSchema(typing.TypedDict, total=False):
+    """Configuration schema for Dataclass types"""
+
+    frozen: bool
+    """If True, the dataclass is immutable after creation."""
+    slots: typing.Union[typing.Tuple[str], bool]
+    """If True, use __slots__ for instance attribute storage.
+        If a tuple, use as additional slots.
+        If False, use __dict__ for instance attribute storage."""
+
+    repr: bool
+    """If True, add __repr__ method to the class."""
+    str: bool
+    """If True, add __str__ method to the class."""
+    sort: typing.Union[
+        bool, typing.Callable[[typing.Tuple[str_type, Field]], typing.Any]
+    ]
+    """If True, sort fields by name. If a callable, use as the sort key.
+        If False, do not sort fields."""
+    hash: bool
+    """If True, add __hash__ method to the class. Should be used with `frozen=True`."""
+    eq: bool
+    """If True, add __eq__ method to the class."""
+    getitem: bool
+    """If True, add __getitem__ method to the class."""
+    setitem: bool
+    """If True, add __setitem__ method to the class."""
+
+
+class DataclassConfig(typing.NamedTuple):
+    """Configuration for Dataclass types"""
+
+    frozen: bool = False
+    """If True, the dataclass is immutable after creation."""
+    slots: typing.Union[typing.Tuple[str], bool] = False
+    """If True, use __slots__ for instance attribute storage.
+        If a tuple, use as additional slots.
+        If False, use __dict__ for instance attribute storage."""
+    repr: bool = False
+    """If True, add __repr__ method to the class."""
+    str: bool = False
+    """If True, add __str__ method to the class."""
+    sort: typing.Union[
+        bool, typing.Callable[[typing.Tuple[str_type, Field]], typing.Any]
+    ] = False
+    """If True, sort fields by name. If a callable, use as the sort key.
+        If False, do not sort fields."""
+    hash: bool = False
+    """If True, add __hash__ method to the class. Should be used with `frozen=True`."""
+    eq: bool = False
+    """If True, add __eq__ method to the class."""
+    getitem: bool = False
+    """If True, add __getitem__ method to the class."""
+    setitem: bool = False
+    """If True, add __setitem__ method to the class."""
+
+
+def build_config(
+    class_config: typing.Optional[DataclassConfig] = None,
+    bases: typing.Optional[typing.Tuple[typing.Type]] = None,
+    **meta_config: Unpack[DataclassConfigSchema],
+):
+    """
+    Build a configuration for Dataclass types.
+
+    Orders of precedence (from lowest to highest):
+    1. Base class(es) configuration
+    2. Class configuration
+    3. Meta configuration
+
+    :param class_config: Configuration defined directly in the class using `__config__` class variable.
+    :param bases: Base classes to inspect for configuration.
+    :param meta_config: Additional configuration options defined in the metaclass.
+    :return: A DataclassConfig instance with the combined configuration.
+    """
+    config = {}
+
+    if class_config:
+        config.update(class_config._asdict())
+    if bases:
+        for base in bases:
+            if isinstance(getattr(base, "__config__", None), DataclassConfig):
+                config.update(base.__config__._asdict())
+    config.update(meta_config)
+    return DataclassConfig(**config)
 
 
 class DataclassMeta(type):
@@ -234,17 +319,7 @@ class DataclassMeta(type):
         name: str,
         bases: typing.Tuple[typing.Type],
         attrs: typing.Dict[str, typing.Any],
-        frozen: bool = False,
-        slots: typing.Union[typing.Tuple[str], bool] = False,
-        repr: bool = False,
-        str: bool = False,
-        sort: typing.Union[
-            bool, typing.Callable[[typing.Tuple[str, Field]], typing.Any]
-        ] = False,
-        hash: bool = False,
-        eq: bool = False,
-        getitem: bool = False,
-        setitem: bool = False,
+        **meta_config: Unpack[DataclassConfigSchema],
     ):
         """
         Create a new Dataclass type.
@@ -252,32 +327,20 @@ class DataclassMeta(type):
         :param name: Name of the new class.
         :param bases: Base classes for the new class.
         :param attrs: Attributes and namespace for the new class.
-        :param slots: If True, use __slots__ for instance attribute storage.
-            If a tuple, use as additional slots.
-            If False, use __dict__ for instance attribute storage.
-        :param dict_repr: Whether to use dict representation for __repr__ or to use the default.
-        :param sort: If True, sort fields by name. If a callable, use as the sort key.
-            If False, do not sort fields.
-        :param frozen: If True, the dataclass is immutable after creation.
-        :param hash: If True, add __hash__ method to the class.
-        :param eq: If True, add __eq__ method to the class.
-        :param getitem: If True, add __getitem__ method to the class.
-        :param setitem: If True, add __setitem__ method to the class.
+        :param meta_config: Additional configuration options for the new class.
         :return: New Dataclass type
         """
+        config = build_config(
+            class_config=attrs.get("__config__", None),
+            bases=bases,
+            **meta_config,
+        )
+        attrs["__config__"] = config
         own_fields = {}
         fields = {}
         base_to_effective_name_map = {}
         effective_to_base_name_map = {}
         parent_slotted_attributes = {}
-        for key, value in attrs.items():
-            if isinstance(value, Field):
-                value.post_init_validate()
-                own_fields[key] = value
-                fields[key] = value
-                effective_name = value.alias or key
-                base_to_effective_name_map[key] = effective_name
-                effective_to_base_name_map[effective_name] = key
 
         # Inspect the base classes for fields and borrow them
         inspected = set()
@@ -290,7 +353,7 @@ class DataclassMeta(type):
                 if not hasattr(cls_, "__fields__"):
                     continue
 
-                if slots and hasattr(cls_, "__slotted_names__"):
+                if config.slots and hasattr(cls_, "__slotted_names__"):
                     parent_slotted_attributes.update(cls_.__slotted_names__)
 
                 cls_ = typing.cast(typing.Type["Dataclass"], cls_)
@@ -299,39 +362,47 @@ class DataclassMeta(type):
                 base_to_effective_name_map.update(cls_.base_to_effective_name_map)
                 effective_to_base_name_map.update(cls_.effective_to_base_name_map)
 
-        if slots:
+        for key, value in attrs.items():
+            if isinstance(value, Field):
+                value.post_init_validate()
+                own_fields[key] = value
+                fields[key] = value
+                effective_name = value.alias or key
+                base_to_effective_name_map[key] = effective_name
+                effective_to_base_name_map[effective_name] = key
+
+        if config.slots:
             # Replace the original namespace with a slotted one.
             slotted_namespace = _build_slotted_namespace(
                 namespace=attrs.copy(),
                 own_fields=own_fields.keys(),
-                additional_slots=slots
-                if isinstance(slots, (u, tuple, list, set))
+                additional_slots=config.slots
+                if isinstance(config.slots, (str, tuple, list, set))
                 else None,
                 parent_slotted_attributes=parent_slotted_attributes,
             )
             attrs = slotted_namespace
 
-        if frozen:
+        if config.frozen:
             attrs["__setattr__"] = _frozen_setattr
             attrs["__delattr__"] = _frozen_delattr
-        if repr:
+        if config.repr:
             attrs["__repr__"] = _repr
-        if str:
+        if config.str:
             attrs["__str__"] = _str
-        if getitem:
+        if config.getitem:
             attrs["__getitem__"] = _getitem
-        if setitem:
+        if config.setitem:
             attrs["__setitem__"] = _setitem
-        if hash:
+        if config.hash:
             attrs["__hash__"] = _hash
-        if eq:
+        if config.eq:
             attrs["__eq__"] = _eq
 
-        sort = attrs.get("sort", sort)
-        if sort:
-            sort_key = sort if callable(sort) else _sort_by_name
+        if config.sort:
+            sort_key = config.sort if callable(config.sort) else _sort_by_name
             sort_key = typing.cast(
-                typing.Callable[[typing.Tuple[u, Field]], u], sort_key
+                typing.Callable[[typing.Tuple[str, Field]], str], sort_key
             )
             fields_data = sorted(fields.items(), key=sort_key)
             fields = dict(fields_data)
@@ -348,7 +419,7 @@ class DataclassMeta(type):
         return new_cls
 
 
-class Dataclass(metaclass=DataclassMeta, slots=True):
+class Dataclass(metaclass=DataclassMeta):
     """
     Data description class.
 
@@ -436,9 +507,14 @@ class Dataclass(metaclass=DataclassMeta, slots=True):
     Attributes to be included in the state of the dataclass when __getstate__ is called,
     usually during pickling
     """
+    __config__: DataclassConfig = DataclassConfig(slots=True)
+    """Configuration for the dataclass."""
     __fields__: typing.Mapping[str, Field[typing.Any]] = {}
+    """Mapping of field names to their corresponding Field instances."""
     base_to_effective_name_map: typing.Mapping[str, str] = {}
+    """Mapping of base field names to effective field names."""
     effective_to_base_name_map: typing.Mapping[str, str] = {}
+    """Mapping of effective field names to base field names."""
 
     @typing.overload
     def __init__(self, data: None = None) -> None:
@@ -504,20 +580,6 @@ def load(
     return instance
 
 
-def from_dict(
-    dataclass_: typing.Type[_Dataclass_co],
-    data: typing.Mapping[str, typing.Any],
-) -> _Dataclass_co:
-    """
-    Convert a dictionary to a dataclass instance.
-
-    :param data: The dictionary to convert.
-    :param dataclass_: The dataclass type to convert to.
-    :return: The dataclass instance.
-    """
-    return load(dataclass_(), data)
-
-
 def from_attributes(
     dataclass_: typing.Type[_Dataclass_co],
     obj: typing.Any,
@@ -558,7 +620,7 @@ def deserialize(
     """
     if attributes:
         return from_attributes(dataclass_, obj)
-    return from_dict(dataclass_, obj)
+    return dataclass_(obj)
 
 
 def get_field(

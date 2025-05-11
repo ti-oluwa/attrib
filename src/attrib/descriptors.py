@@ -1,5 +1,6 @@
 """Data description and validation fields."""
 
+import enum
 import functools
 from types import NoneType
 import uuid
@@ -11,7 +12,6 @@ import io
 import copy
 import ipaddress
 import pathlib
-import os
 from typing_extensions import Unpack, Self, Annotated
 import annotated_types as annot
 from collections import defaultdict
@@ -34,6 +34,7 @@ from attrib._utils import (
     is_valid_type,
     is_iterable_type,
     is_iterable,
+    is_generic_type,
     SerializerRegistry,
     iso_parse,
     parse_duration,
@@ -50,10 +51,34 @@ _T = typing.TypeVar("_T")
 _V = typing.TypeVar("_V")
 
 
+class _empty:
+    """Class to represent missing/empty values."""
+
+    def __bool__(self):
+        return False
+
+    def __hash__(self) -> int:
+        return id(self)
+
+
+EMPTY = _empty()
+
+
+@typing.final
+class AnyType:
+    """Class to represent the Any type."""
+
+    def __init_subclass__(cls):
+        raise TypeError("AnyType cannot be subclassed.")
+
+    def __new__(cls):
+        raise TypeError("AnyType cannot be instantiated.")
+
+
 NonTupleFieldType: typing.TypeAlias = typing.Union[
     str,
     typing.Type[_T],
-    typing.Type["UndefinedType"],
+    typing.Type[AnyType],
     typing.ForwardRef,
 ]
 FieldType: typing.TypeAlias = typing.Union[
@@ -62,7 +87,7 @@ FieldType: typing.TypeAlias = typing.Union[
 ]
 NonForwardRefFieldType: typing.TypeAlias = typing.Union[
     typing.Type[_T],
-    typing.Type["UndefinedType"],
+    typing.Type[AnyType],
     typing.Tuple[typing.Type[_T], ...],
 ]
 
@@ -108,32 +133,6 @@ Takes a three arguments - the field type, the value to deserialize, and the fiel
 Returns the deserialized value.
 Should raise a DeserializationError if deserialization fails.
 """
-
-
-class empty:
-    """Class to represent missing/empty values."""
-
-    def __bool__(self):
-        return False
-
-    def __init_subclass__(cls):
-        raise TypeError("empty cannot be subclassed.")
-
-    def __new__(cls):
-        raise TypeError("empty cannot be instantiated.")
-
-    def __hash__(self) -> int:
-        return id(self)
-
-
-class UndefinedType:
-    """Class to represent an UndefinedType type."""
-
-    def __init_subclass__(cls):
-        raise TypeError("UndefinedType cannot be subclassed.")
-
-    def __new__(cls):
-        raise TypeError("UndefinedType cannot be instantiated.")
 
 
 def to_json_serializer(
@@ -279,7 +278,9 @@ def resolve_type(
     field_type = field.field_type
     if isinstance(field_type, typing.ForwardRef):
         field_type = resolve_forward_ref(field_type, globalns, localns)
-    elif is_iterable(field_type):
+    elif not issubclass(field_type, enum.Enum) and is_iterable(  # type: ignore[arg-type]
+        field_type, exclude=(str, bytes)
+    ):
         field_type = tuple(
             resolve_forward_ref(arg, globalns, localns)
             if isinstance(arg, typing.ForwardRef)
@@ -312,13 +313,12 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
     def __init__(
         self,
         field_type: FieldType[_T],
-        default: typing.Union[
-            _T, DefaultFactory[_T], typing.Type[empty], NoneType
-        ] = empty,
+        default: typing.Union[_T, DefaultFactory[_T], NoneType] = EMPTY,
         lazy: bool = False,
         alias: typing.Optional[str] = None,
         allow_null: bool = False,
         required: bool = False,
+        strict: bool = False,
         validators: typing.Optional[typing.Iterable[FieldValidator[_T]]] = None,
         serializers: typing.Optional[
             typing.Mapping[str, "FieldSerializer[_T, Self]"]
@@ -336,6 +336,8 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         :param alias: Optional string for alternative field naming, defaults to None.
         :param allow_null: If True, permits the field to be set to None, defaults to False.
         :param required: If True, field values must be explicitly provided, defaults to False.
+        :param strict: If True, the field will only accept values of the specified type and will not attempt to coerce them.
+            Defaults to False. This may speed up validation for large data sets.
         :param validators: A list of validation functions to apply to the field's value, defaults to None.
             Validators should be callables that accept the field value and the optional field instance as arguments.
             NOTE: Values returned from the validators are not used, but they should raise a FieldError if the value is invalid.
@@ -348,14 +350,22 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         assert type(_cache_size) is int, "Cache size must be an integer"
         assert 1 <= _cache_size <= 3, "Cache size must be between 1 and 3"
 
-        self.field_type = (
-            typing.ForwardRef(field_type) if isinstance(field_type, str) else field_type
-        )
+        if isinstance(field_type, str):
+            self.field_type = typing.ForwardRef(field_type)
+        elif is_generic_type(field_type):
+            self.field_type = typing.cast(
+                NonForwardRefFieldType[_T],
+                typing.get_origin(field_type),
+            )
+        else:
+            self.field_type = field_type
+
         self.lazy = lazy
         self.name = None
         self.alias = alias
         self.allow_null = allow_null
         self.required = required
+        self.strict = strict
         all_validators = [*self.default_validators, *(validators or [])]
         validator = field_validators.pipe(*all_validators) if all_validators else None
         self.validator = validator
@@ -389,7 +399,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         if not is_valid_type(self.field_type):
             raise TypeError(f"Specified type '{self.field_type}' is not a valid type.")
 
-        default_provided = self.default is not empty
+        default_provided = self.default is not EMPTY
         if self.required and default_provided:
             raise FieldError("A default value is not necessary when required=True")
 
@@ -408,11 +418,11 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         """
         return self.alias or self.name
 
-    def get_default(self) -> typing.Union[_T, typing.Type[empty], NoneType]:
+    def get_default(self) -> typing.Union[_T, NoneType]:
         """Return the default value for the field."""
         default_value = self.default
-        if default_value is empty:
-            return empty
+        if default_value is EMPTY:
+            return EMPTY  # type: ignore[return-value]
 
         if callable(default_value):
             try:
@@ -455,7 +465,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         self,
         instance: typing.Any,
         owner: typing.Optional[typing.Type[typing.Any]],
-    ) -> typing.Union[_T, typing.Any, empty]: ...
+    ) -> typing.Union[_T, typing.Any]: ...
 
     @typing.overload
     def __get__(
@@ -468,7 +478,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         self,
         instance: typing.Optional[typing.Any],
         owner: typing.Optional[typing.Type[typing.Any]],
-    ) -> typing.Optional[typing.Union[_T, Self, empty]]:
+    ) -> typing.Optional[typing.Union[_T, Self]]:
         """Retrieve the field value from an instance or return the default if unset."""
         if instance is None:
             return self
@@ -481,7 +491,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
 
     def __set__(self, instance: typing.Any, value: typing.Any):
         """Set and validate the field value on an instance."""
-        if self.required and value is empty:
+        if self.required and value is EMPTY:
             raise FieldError(
                 f"'{type(instance).__name__}.{self.effective_name}' is a required field."
             )
@@ -517,7 +527,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         instance: typing.Any,
         value: typing.Any,
         validate: bool = True,
-    ) -> Value[typing.Union[_T, empty]]:
+    ) -> Value[_T]:
         """
         Set the field's value on an instance, performing validation if required.
 
@@ -532,8 +542,8 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
                 f"'{type(self).__name__}' on '{type(instance).__name__}' has no name. Ensure it is bound to a class."
             )
 
-        if value is empty:
-            field_value = Value(empty, is_valid=1)
+        if value is EMPTY:
+            field_value = Value(EMPTY, is_valid=1)
         elif validate:
             field_value = Value(
                 self.validate(value, instance),
@@ -570,7 +580,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
 
     def check_type(self, value: typing.Any) -> typing.TypeGuard[_T]:
         """Check if the value is of the expected type."""
-        if self.field_type is UndefinedType:
+        if self.field_type is AnyType:
             return True
         if value is None and self.allow_null:
             return True
@@ -600,6 +610,11 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
 
         if self.check_type(value):
             deserialized = value
+        elif self.strict:
+            raise FieldValidationError(
+                f"'{type(self).__name__}' expected type '{self.field_type}', but got '{type(value)}'.",
+                self.effective_name,
+            )
         else:
             deserialized = self.deserialize(value)
             if not self.check_type(deserialized):
@@ -717,13 +732,18 @@ class FieldInitKwargs(typing.TypedDict, total=False):
     """If True, permits the field to be set to None."""
     required: bool
     """If True, the field must be explicitly provided."""
+    strict: bool
+    """
+    If True, the field will only accept values of the specified type,
+    and will not attempt to coerce them.
+    """
     validators: typing.Optional[typing.Iterable[FieldValidator]]
     """A list of validation functions to apply to the field's value."""
     serializers: typing.Optional[typing.Dict[str, FieldSerializer]]
     """A mapping of serialization formats to their respective serializer functions."""
     deserializer: typing.Optional[FieldDeserializer]
     """A deserializer function to convert the field's value to the expected type."""
-    default: typing.Union[typing.Any, DefaultFactory, typing.Type[empty], NoneType]
+    default: typing.Union[typing.Any, DefaultFactory, NoneType]
     """A default value for the field to be used if no value is set."""
     _cache_size: Annotated[int, annot.Interval(ge=1, le=3), annot.MultipleOf(1)]
 
@@ -733,7 +753,7 @@ class Any(Field[typing.Any]):
 
     def __init__(self, **kwargs: Unpack[FieldInitKwargs]):
         kwargs.setdefault("allow_null", True)
-        super().__init__(field_type=UndefinedType, **kwargs)
+        super().__init__(field_type=AnyType, **kwargs)
 
 
 def boolean_deserializer(field: "Boolean", value: typing.Any) -> bool:
@@ -1128,7 +1148,7 @@ class Iterable(typing.Generic[IterType, _V], Field[IterType]):
         if not super().check_type(value):
             return False
 
-        if value and self.child.field_type is not UndefinedType:
+        if value and self.child.field_type is not AnyType:
             for item in value:
                 if not self.child.check_type(item):
                     return False
@@ -1290,43 +1310,48 @@ else:
 
 
 class Choice(Field[_T]):
-    """Field for with predefined choices for values."""
+    """Field with predefined choices for values."""
 
+    @typing.overload
+    def __init__(
+        self,
+        field_type: typing.Type[_T],
+        *,
+        choices: None = None,
+        **kwargs: Unpack[FieldInitKwargs],
+    ) -> None: ...
+
+    @typing.overload
     def __init__(
         self,
         field_type: typing.Type[_T],
         *,
         choices: typing.Iterable[_T],
         **kwargs: Unpack[FieldInitKwargs],
+    ) -> None: ...
+
+    def __init__(
+        self,
+        field_type: typing.Type[_T],
+        *,
+        choices: typing.Optional[typing.Iterable[_T]] = None,
+        **kwargs: Unpack[FieldInitKwargs],
     ) -> None:
-        if len(set(choices)) < 2:
-            raise ValueError("At least two unique choices are required.")
-        validators = kwargs.get("validators", [])
-        validators = typing.cast(typing.Iterable[FieldValidator[_T]], validators)
-        validators = [
-            *validators,
-            field_validators.in_(choices),
-        ]
-        kwargs["validators"] = validators
+        # Skip `in` check for Enum types since the value will always be an Enum member after deserialization
+        if not choices and not issubclass(field_type, enum.Enum):
+            raise ValueError(
+                "Choices must be provided for the field. Use `choices` argument."
+            )
+
+        if choices:
+            validators = kwargs.get("validators", [])
+            validators = typing.cast(typing.Iterable[FieldValidator[_T]], validators)
+            validators = [
+                *validators,
+                field_validators.in_(choices),
+            ]
+            kwargs["validators"] = validators
         super().__init__(field_type=field_type, **kwargs)
-
-
-class StringChoice(String, Choice[str]):
-    """String field with predefined choices for values."""
-
-    pass
-
-
-class IntegerChoice(Integer, Choice[int]):
-    """Integer field with predefined choices for values."""
-
-    pass
-
-
-class FloatChoice(Float, Choice[float]):
-    """Float field with predefined choices for values."""
-
-    pass
 
 
 def json_serializer(
@@ -1874,8 +1899,8 @@ else:
 
 
 __all__ = [
-    "empty",
-    "UndefinedType",
+    "EMPTY",
+    "AnyType",
     "FieldError",
     "Field",
     "Factory",
@@ -1893,9 +1918,6 @@ __all__ = [
     "Email",
     "URL",
     "Choice",
-    "StringChoice",
-    "IntegerChoice",
-    "FloatChoice",
     "JSON",
     "HexColor",
     "RGBColor",

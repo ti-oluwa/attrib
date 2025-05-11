@@ -1,4 +1,6 @@
+import enum
 import random
+from tkinter import E
 import typing
 from datetime import datetime
 import tracemalloc
@@ -13,11 +15,20 @@ from mock_data import course_data, student_data, year_data
 _Dataclass_co = typing.TypeVar("_Dataclass_co", bound=attrib.Dataclass, covariant=True)
 
 
+class Term(enum.Enum):
+    """Academic term enumeration"""
+
+    FIRST = "First"
+    SECOND = "Second"
+    THIRD = "Third"
+
+
 class AcademicYear(attrib.Dataclass, slots=True):
     """Academic year data class"""
 
     id = attrib.Field(int, required=True)
     name = attrib.String(max_length=100)
+    term = attrib.Choice(Term, default=Term.FIRST)
     start_date = attrib.Date(input_formats=["%d-%m-%Y", "%d/%m/%Y"])
     end_date = attrib.Date(input_formats=["%d-%m-%Y", "%d/%m/%Y"])
     created_at = attrib.DateTime(default=datetime.now, tz="Africa/Lagos")

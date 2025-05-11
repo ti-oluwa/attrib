@@ -4,7 +4,7 @@ from collections import deque
 import typing
 import os
 
-from attrib.descriptors import empty
+from attrib.descriptors import EMPTY
 from attrib.exceptions import SerializationError
 from attrib.dataclass import Dataclass
 
@@ -119,7 +119,7 @@ def _serialize_instance_recursive(
 
         try:
             value = field.__get__(instance, owner=type(instance))
-            if value is empty:
+            if value is EMPTY:
                 continue
 
             if isinstance(value, Dataclass):
@@ -211,7 +211,7 @@ def _serialize_instance_iterative(
 
                 try:
                     value = field.__get__(current_instance, owner=instance_type)
-                    if value is empty:
+                    if value is EMPTY:
                         continue
 
                     if isinstance(value, Dataclass):

@@ -512,9 +512,14 @@ def in_(
     global _IN_CHECK_FAILURE_MESSAGE
 
     msg = message or _IN_CHECK_FAILURE_MESSAGE
-    choices = set(choices)  # fast membership check
+    try:
+        choices = set(choices)  # fast membership check. Ensures uniqueness
+    except TypeError:
+        # Choices is not hashable, so we need to use a tuple
+        choices = tuple(choices)
+
     if len(choices) < 2:
-        raise ValueError("'choices' must contain at least 2 elements")
+        raise ValueError("'choices' must contain at least 2 unique elements")
 
     def validator(
         value: typing.Any,
