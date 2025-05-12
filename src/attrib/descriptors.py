@@ -120,7 +120,7 @@ Takes three arguments - the value, the field instance, and optional context, and
 Should raise a SerializationError if serialization fails.
 """
 FieldDeserializer: typing.TypeAlias = typing.Callable[
-    [   
+    [
         typing.Any,
         typing.Union["_Field_co", typing.Any],
     ],
@@ -324,8 +324,8 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         ] = None,
         deserializer: typing.Optional["FieldDeserializer[Self, _T]"] = None,
         _cache_size: Annotated[
-            int, annot.Interval(ge=1, le=3), annot.MultipleOf(1)
-        ] = 1,
+            float, annot.Interval(ge=0.5, le=3.0), annot.MultipleOf(0.5)
+        ] = 1.0,
     ) -> None:
         """
         Initialize the field.
@@ -346,8 +346,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         :param _cache_size: Multiplier for the base cache size for serialized and validated values, defaults to 1.
             Base cache size is 128, so the effective cache size will be 128 * _cache_size.
         """
-        assert type(_cache_size) is int, "Cache size must be an integer"
-        assert 1 <= _cache_size <= 3, "Cache size must be between 1 and 3"
+        assert 0.5 <= _cache_size <= 3.0, "Cache size must be between 1 and 3"
 
         if isinstance(field_type, str):
             self.field_type = typing.ForwardRef(field_type)
@@ -382,8 +381,9 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         self.default = default
         self._init_args = ()
         self._init_kwargs = {}
-        self._serialized_cache = _LRUCache(maxsize=128 * _cache_size)
-        self._validated_cache = _LRUCache(maxsize=128 * _cache_size)
+        effective_cache_size = int(128 * _cache_size)
+        self._serialized_cache = _LRUCache(maxsize=effective_cache_size)
+        self._validated_cache = _LRUCache(maxsize=effective_cache_size)
 
     def post_init_validate(self) -> None:
         """

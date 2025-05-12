@@ -1,6 +1,7 @@
 """Data description classes"""
 
 import typing
+from functools import cache
 from types import MappingProxyType
 from typing_extensions import Unpack
 
@@ -67,12 +68,11 @@ def _setitem(instance: "Dataclass", key: str, value: typing.Any) -> None:
 
 def _frozen_setattr(instance: "Dataclass", key: str, value: Value) -> None:
     """Set an attribute on a frozen dataclass instance."""
-    if key in instance._set_attributes:
+    if not getattr(instance, "__initializing", False):
         raise FrozenInstanceError(
             f"Cannot modify '{type(instance).__name__}.{key}'. "
-            f"Instance is frozen and field '{key}' has already been set."
+            f"Instance is frozen and cannot be modified after instantiation."
         ) from None
-
     return object.__setattr__(instance, key, value)
 
 
@@ -86,49 +86,80 @@ def _frozen_delattr(instance: "Dataclass", key: str) -> None:
     return object.__delattr__(instance, key)
 
 
-def _get_slotted_instance_state(
-    slotted_instance: "Dataclass",
+def _getstate(
+    instance: "Dataclass",
 ) -> typing.Tuple[typing.Dict[str, typing.Any], typing.Dict[str, typing.Any]]:
-    """Get the state of the slotted dataclass instance."""
-    fields = slotted_instance.__fields__
+    """Get the state of the dataclass instance."""
+    fields = instance.__fields__
     field_values = {}
-    instance_type = type(slotted_instance)
+    instance_type = type(instance)
     for key, field in fields.items():
-        value = field.__get__(slotted_instance, owner=instance_type)
+        value = field.__get__(instance, owner=instance_type)
         field_values[key] = value
 
+    pickleable_attribute_names = getattr(instance, "__state_attributes__", [])
+    if not pickleable_attribute_names:
+        return field_values, {}
+
     attributes = {}
-    pickleable_attributes = set(
-        getattr(slotted_instance, "__slots__", [])
-        + getattr(slotted_instance, "__state_attributes__", [])
-    )
-    for attr_name in pickleable_attributes:
+    for attr_name in pickleable_attribute_names:
         if attr_name in fields:
             continue
-        if not hasattr(slotted_instance, attr_name):
+        if not hasattr(instance, attr_name):
             continue
-        value = getattr(slotted_instance, attr_name)
+        value = getattr(instance, attr_name)
         attributes[attr_name] = value
+
     return field_values, attributes
 
 
-def _set_slotted_instance_state(
-    slotted_instance: "Dataclass",
+def _setstate(
+    instance: "Dataclass",
     state: typing.Tuple[typing.Dict[str, typing.Any], typing.Dict[str, typing.Any]],
 ) -> "Dataclass":
-    """Set the state of the slotted dataclass."""
+    """Set the state of the dataclass instance."""
     field_values, attributes = state
-    load(slotted_instance, field_values)
+    load(instance, field_values)
     for key, value in attributes.items():
-        if key in slotted_instance.__fields__:
+        if key in instance.__fields__:
             continue
-        setattr(slotted_instance, key, value)
-    return slotted_instance
+        setattr(instance, key, value)
+    return instance
 
 
 def _getnewargs(instance: "Dataclass") -> typing.Tuple:
     """Get the __new__ arguments for the dataclass instance."""
     return (), instance.__getstate__()  # type: ignore[return-value]
+
+
+def _hash(instance: "Dataclass") -> int:
+    """Compute the hash of the dataclass instance based on descriptor fields."""
+    fields = instance.__fields__
+    instance_type = type(instance)
+    try:
+        return hash(
+            tuple(
+                hash(field.__get__(instance, instance_type))
+                for field in fields.values()
+            )
+        )
+    except TypeError as exc:
+        raise TypeError(f"Unhashable field value in {instance}: {exc}")
+
+
+def _eq(instance: "Dataclass", other: typing.Any) -> bool:
+    """Compare two dataclass instances for equality."""
+    if not isinstance(other, instance.__class__):
+        return NotImplemented
+    if instance is other:
+        return True
+
+    for field in instance.__fields__.values():
+        if field.__get__(instance, type(instance)) != field.__get__(
+            other, type(instance)
+        ):
+            return False
+    return True
 
 
 def _get_slot_attribute_name(
@@ -173,14 +204,6 @@ def _build_slotted_namespace(
         else:
             slots.update(defined_slots)
 
-    # Add __getstate__ and __setstate__ methods for pickling support
-    if "__getstate__" not in namespace:
-        namespace["__getstate__"] = _get_slotted_instance_state
-    if "__setstate__" not in namespace:
-        namespace["__setstate__"] = _set_slotted_instance_state
-    if "__getnewargs__" not in namespace:
-        namespace["__getnewargs__"] = _getnewargs
-
     namespace["__slots__"] = tuple(slots)
     if parent_slotted_attributes:
         slotted_attributes_names |= parent_slotted_attributes
@@ -191,37 +214,7 @@ def _build_slotted_namespace(
     return namespace
 
 
-def _hash(instance: "Dataclass") -> int:
-    """Compute the hash of the dataclass instance based on descriptor fields."""
-    fields = instance.__fields__
-    instance_type = type(instance)
-    try:
-        return hash(
-            tuple(
-                hash(field.__get__(instance, instance_type))
-                for field in fields.values()
-            )
-        )
-    except TypeError as exc:
-        raise TypeError(f"Unhashable field value in {instance}: {exc}")
-
-
-def _eq(instance: "Dataclass", other: typing.Any) -> bool:
-    """Compare two dataclass instances for equality."""
-    if not isinstance(other, instance.__class__):
-        return NotImplemented
-    if instance is other:
-        return True
-
-    for field in instance.__fields__.values():
-        if field.__get__(instance, type(instance)) != field.__get__(
-            other, type(instance)
-        ):
-            return False
-    return True
-
-
-str_type = str
+StrType = str
 
 
 class ConfigSchema(typing.TypedDict, total=False):
@@ -235,22 +228,26 @@ class ConfigSchema(typing.TypedDict, total=False):
         If False, use __dict__ for instance attribute storage."""
 
     repr: bool
-    """If True, add __repr__ method to the class."""
+    """If True, add __repr__ method to the class, if it does not exist."""
     str: bool
-    """If True, add __str__ method to the class."""
+    """If True, add __str__ method to the class, if it does not exist."""
     sort: typing.Union[
-        bool, typing.Callable[[typing.Tuple[str_type, Field]], typing.Any]
+        bool, typing.Callable[[typing.Tuple[StrType, Field]], typing.Any]
     ]
     """If True, sort fields by name. If a callable, use as the sort key.
         If False, do not sort fields."""
     hash: bool
-    """If True, add __hash__ method to the class. Should be used with `frozen=True`."""
+    """If True, add __hash__ method to the class, if it does not exist. Should be used with `frozen=True`."""
     eq: bool
-    """If True, add __eq__ method to the class."""
+    """If True, add __eq__ method to the class, if it does not exist."""
     getitem: bool
-    """If True, add __getitem__ method to the class."""
+    """If True, add __getitem__ method to the class, if it does not exist."""
     setitem: bool
-    """If True, add __setitem__ method to the class."""
+    """If True, add __setitem__ method to the class, if it does not exist."""
+    pickleable: bool
+    """If True, adds __getstate__, __setstate__, and __getnewargs__ methods to the class, 
+    if it does not exist. If False, do not add these methods.
+    If None, use the default behavior of the dataclass."""
 
 
 class Config(typing.NamedTuple):
@@ -263,22 +260,26 @@ class Config(typing.NamedTuple):
         If a tuple, use as additional slots.
         If False, use __dict__ for instance attribute storage."""
     repr: bool = False
-    """If True, add __repr__ method to the class."""
+    """If True, add __repr__ method to the class, if it does not exist."""
     str: bool = False
-    """If True, add __str__ method to the class."""
+    """If True, add __str__ method to the class, if it does not exist."""
     sort: typing.Union[
-        bool, typing.Callable[[typing.Tuple[str_type, Field]], typing.Any]
+        bool, typing.Callable[[typing.Tuple[StrType, Field]], typing.Any]
     ] = False
     """If True, sort fields by name. If a callable, use as the sort key.
         If False, do not sort fields."""
     hash: bool = False
-    """If True, add __hash__ method to the class. Should be used with `frozen=True`."""
+    """If True, add __hash__ method to the class, if it does not exist. Should be used with `frozen=True`."""
     eq: bool = False
-    """If True, add __eq__ method to the class."""
+    """If True, add __eq__ method to the class, if it does not exist."""
     getitem: bool = False
-    """If True, add __getitem__ method to the class."""
+    """If True, add __getitem__ method to the class, if it does not exist."""
     setitem: bool = False
-    """If True, add __setitem__ method to the class."""
+    """If True, add __setitem__ method to the class, if it does not exist."""
+    pickleable: bool = False
+    """If True, adds __getstate__, __setstate__, and __getnewargs__ methods to the class, 
+    if they do not exist. If False, do not add these methods.
+    If None, use the default behavior of the dataclass."""
 
 
 def build_config(
@@ -289,7 +290,7 @@ def build_config(
     """
     Build a configuration for Dataclass types.
 
-    Orders of precedence (from lowest to highest):
+    Order of precedence (from lowest to highest):
     1. Base class(es) configuration
     2. Class configuration
     3. Meta configuration
@@ -301,12 +302,12 @@ def build_config(
     """
     config = {}
 
-    if class_config:
-        config.update(class_config._asdict())
     if bases:
         for base in bases:
             if isinstance(getattr(base, "__config__", None), Config):
                 config.update(base.__config__._asdict())
+    if class_config:
+        config.update(class_config._asdict())
     config.update(meta_config)
     return Config(**config)
 
@@ -386,18 +387,32 @@ class DataclassMeta(type):
         if config.frozen:
             attrs["__setattr__"] = _frozen_setattr
             attrs["__delattr__"] = _frozen_delattr
-        if config.repr:
+        if config.repr and "__repr__" not in attrs:
             attrs["__repr__"] = _repr
-        if config.str:
+        if config.str and "__str__" not in attrs:
             attrs["__str__"] = _str
-        if config.getitem:
+        if config.getitem and "__getitem__" not in attrs:
             attrs["__getitem__"] = _getitem
-        if config.setitem:
+        if config.setitem and "__setitem__" not in attrs:
             attrs["__setitem__"] = _setitem
-        if config.hash:
-            attrs["__hash__"] = _hash
-        if config.eq:
+        if config.hash and "__hash__" not in attrs:
+            if not config.frozen:
+                raise TypeError(
+                    "Cannot use __hash__ without frozen=True. Hashing is unsafe for mutable objects."
+                    " Set frozen=True to enable hashing."
+                )
+            attrs["__hash__"] = cache(
+                _hash
+            )  # Cache the hash value since the instance is frozen
+        if config.eq and "__eq__" not in attrs:
             attrs["__eq__"] = _eq
+        if config.pickleable:
+            if "__getstate__" not in attrs:
+                attrs["__getstate__"] = _getstate
+            if "__setstate__" not in attrs:
+                attrs["__setstate__"] = _setstate
+            if "__getnewargs__" not in attrs:
+                attrs["__getnewargs__"] = _getnewargs
 
         if config.sort:
             sort_key = config.sort if callable(config.sort) else _sort_by_name
@@ -501,19 +516,22 @@ class Dataclass(metaclass=DataclassMeta):
     ```
     """
 
-    __slots__ = ("__weakref__", "_set_attributes")
-    __state_attributes__ = ()
+    __slots__: typing.ClassVar[typing.Tuple[str, ...]] = (
+        "__weakref__",
+        "__initializing",
+    )
+    __state_attributes__: typing.ClassVar[typing.Tuple[str, ...]] = ()
     """
     Attributes to be included in the state of the dataclass when __getstate__ is called,
     usually during pickling
     """
-    __config__: Config = Config(slots=True)
+    __config__: typing.ClassVar[Config] = Config(slots=True)
     """Configuration for the dataclass."""
-    __fields__: typing.Mapping[str, Field[typing.Any]] = {}
+    __fields__: typing.ClassVar[typing.Mapping[str, Field[typing.Any]]] = {}
     """Mapping of field names to their corresponding Field instances."""
-    base_to_effective_name_map: typing.Mapping[str, str] = {}
+    base_to_effective_name_map: typing.ClassVar[typing.Mapping[str, str]] = {}
     """Mapping of base field names to effective field names."""
-    effective_to_base_name_map: typing.Mapping[str, str] = {}
+    effective_to_base_name_map: typing.ClassVar[typing.Mapping[str, str]] = {}
     """Mapping of effective field names to base field names."""
 
     @typing.overload
@@ -545,10 +563,11 @@ class Dataclass(metaclass=DataclassMeta):
         :param data: Raw data to initialize the dataclass with.
         :param kwargs: Additional keyword arguments to initialize the dataclass with.
         """
-        self._set_attributes = set()
+        object.__setattr__(self, "__initializing", True)
         combined = {**(data or {}), **kwargs}
         if combined:
             load(self, combined)
+        object.__setattr__(self, "__initializing", False)
 
     def __init_subclass__(cls) -> None:
         """Ensure that subclasses define fields."""

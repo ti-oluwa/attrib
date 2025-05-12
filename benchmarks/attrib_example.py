@@ -53,10 +53,10 @@ class PersonalInfo(attrib.Dataclass):
     email = attrib.Email(allow_null=True, default=None)
     phone = attrib.PhoneNumber(allow_null=True, default=None)
 
-    __config__ = attrib.Config(slots=False)
+    __config__ = attrib.Config(slots=False, pickleable=True)
 
 
-class Student(PersonalInfo, slots=False):
+class Student(PersonalInfo, slots=True, hash=True):
     """Student data class with multiple fields and a list of enrolled courses"""
 
     id = attrib.Integer(required=True)
