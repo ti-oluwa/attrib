@@ -224,7 +224,7 @@ def _eq(instance: "Dataclass", other: typing.Any) -> bool:
 str_type = str
 
 
-class DataclassConfigSchema(typing.TypedDict, total=False):
+class ConfigSchema(typing.TypedDict, total=False):
     """Configuration schema for Dataclass types"""
 
     frozen: bool
@@ -253,7 +253,7 @@ class DataclassConfigSchema(typing.TypedDict, total=False):
     """If True, add __setitem__ method to the class."""
 
 
-class DataclassConfig(typing.NamedTuple):
+class Config(typing.NamedTuple):
     """Configuration for Dataclass types"""
 
     frozen: bool = False
@@ -282,9 +282,9 @@ class DataclassConfig(typing.NamedTuple):
 
 
 def build_config(
-    class_config: typing.Optional[DataclassConfig] = None,
+    class_config: typing.Optional[Config] = None,
     bases: typing.Optional[typing.Tuple[typing.Type]] = None,
-    **meta_config: Unpack[DataclassConfigSchema],
+    **meta_config: Unpack[ConfigSchema],
 ):
     """
     Build a configuration for Dataclass types.
@@ -297,7 +297,7 @@ def build_config(
     :param class_config: Configuration defined directly in the class using `__config__` class variable.
     :param bases: Base classes to inspect for configuration.
     :param meta_config: Additional configuration options defined in the metaclass.
-    :return: A DataclassConfig instance with the combined configuration.
+    :return: A Config instance with the combined configuration.
     """
     config = {}
 
@@ -305,10 +305,10 @@ def build_config(
         config.update(class_config._asdict())
     if bases:
         for base in bases:
-            if isinstance(getattr(base, "__config__", None), DataclassConfig):
+            if isinstance(getattr(base, "__config__", None), Config):
                 config.update(base.__config__._asdict())
     config.update(meta_config)
-    return DataclassConfig(**config)
+    return Config(**config)
 
 
 class DataclassMeta(type):
@@ -319,7 +319,7 @@ class DataclassMeta(type):
         name: str,
         bases: typing.Tuple[typing.Type],
         attrs: typing.Dict[str, typing.Any],
-        **meta_config: Unpack[DataclassConfigSchema],
+        **meta_config: Unpack[ConfigSchema],
     ):
         """
         Create a new Dataclass type.
@@ -507,7 +507,7 @@ class Dataclass(metaclass=DataclassMeta):
     Attributes to be included in the state of the dataclass when __getstate__ is called,
     usually during pickling
     """
-    __config__: DataclassConfig = DataclassConfig(slots=True)
+    __config__: Config = Config(slots=True)
     """Configuration for the dataclass."""
     __fields__: typing.Mapping[str, Field[typing.Any]] = {}
     """Mapping of field names to their corresponding Field instances."""

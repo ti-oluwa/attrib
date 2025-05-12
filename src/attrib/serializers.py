@@ -99,12 +99,10 @@ def _serialize_instance_recursive(
         options_map[instance_type] = option  # Cache resolved option
 
     field_names = instance.__fields__.keys()
-    if option.include or option.exclude:
-        field_names = set(field_names)
-        if option.include:
-            field_names &= option.include
-        if option.exclude:
-            field_names -= option.exclude
+    if option.include:
+        field_names = set(field_names) & option.include
+    elif option.exclude:
+        field_names = set(field_names) - option.exclude
 
     if context is None:
         context = {}
@@ -197,15 +195,13 @@ def _serialize_instance_iterative(
                 option = resolve_option(instance_type, local_options_map)
                 local_options_map[instance_type] = option  # Cache resolved option
 
-            fields = current_instance.__fields__.keys()
-            if option.include or option.exclude:
-                fields = set(fields)
-                if option.include:
-                    fields &= option.include
-                if option.exclude:
-                    fields -= option.exclude
+            field_names = current_instance.__fields__.keys()
+            if option.include:
+                field_names = set(field_names) & option.include
+            elif option.exclude:
+                field_names = set(field_names) - option.exclude
 
-            for name in fields:
+            for name in field_names:
                 field = current_instance.__fields__[name]
                 key = field.effective_name
 
@@ -221,7 +217,7 @@ def _serialize_instance_iterative(
 
                         nested_output = {}
                         current_output[key] = nested_output
-                        stack.append((value, current_depth + 1, nested_output))
+                        stack.appendleft((value, current_depth + 1, nested_output))
                     else:
                         current_output[key] = field.serialize(
                             value, fmt=fmt, context=context

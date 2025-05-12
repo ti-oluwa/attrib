@@ -120,16 +120,16 @@ Takes three arguments - the value, the field instance, and optional context, and
 Should raise a SerializationError if serialization fails.
 """
 FieldDeserializer: typing.TypeAlias = typing.Callable[
-    [
-        typing.Union["_Field_co", typing.Any],
+    [   
         typing.Any,
+        typing.Union["_Field_co", typing.Any],
     ],
     _T,
 ]
 """
 Type alias for deserializers.
 
-Takes a three arguments - the field type, the value to deserialize, and the field instance.
+Takes a two arguments - the value to deserialize, and the field instance.
 Returns the deserialized value.
 Should raise a DeserializationError if deserialization fails.
 """
@@ -174,7 +174,7 @@ def _unsupported_serializer_factory():
     return unsupported_serializer
 
 
-def unsupported_deserializer(field: "Field", value: typing.Any) -> None:
+def unsupported_deserializer(value: typing.Any, field: "Field") -> None:
     """Raise an error for unsupported deserialization."""
     raise DeserializationError(
         f"'{type(field).__name__}' does not support deserialization '{value}'.",
@@ -198,13 +198,12 @@ DEFAULT_FIELD_SERIALIZERS: typing.Dict[str, FieldSerializer] = {
 
 
 def default_deserializer(
-    field: "Field[_T]",
     value: typing.Any,
+    field: "Field[_T]",
 ) -> typing.Union[_T, typing.Any]:
     """
     Deserialize a value to the specified field type.
 
-    :param field_type: The type to which the value should be deserialized.
     :param value: The value to deserialize.
     :param field: The field instance to which the value belongs.
     :return: The deserialized value.
@@ -674,7 +673,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
             self.field_type,
         )
         try:
-            return self.deserializer(self, value)
+            return self.deserializer(value, self)
         except (ValueError, TypeError) as exc:
             raise DeserializationError(
                 f"Failed to deserialize value '{value}' to type '{field_type}'.",
@@ -756,7 +755,7 @@ class Any(Field[typing.Any]):
         super().__init__(field_type=AnyType, **kwargs)
 
 
-def boolean_deserializer(field: "Boolean", value: typing.Any) -> bool:
+def boolean_deserializer(value: typing.Any, field: "Boolean") -> bool:
     if value in field.TRUTHY_VALUES:
         return True
     if value in field.FALSY_VALUES:
@@ -847,8 +846,8 @@ class Float(Field[float]):
 
 
 def integer_deserializer(
-    field: "Integer",
     value: typing.Any,
+    field: "Integer",
 ) -> int:
     """
     Deserialize a value to an integer.
@@ -906,9 +905,9 @@ def build_min_max_length_validators(
 
     validators = []
     if min_length is not None:
-        validators.append(field_validators.min_len(min_length))
+        validators.append(field_validators.min_length(min_length))
     if max_length is not None:
-        validators.append(field_validators.max_len(max_length))
+        validators.append(field_validators.max_length(max_length))
     return validators
 
 
@@ -1056,13 +1055,12 @@ def iterable_json_serializer(
 
 
 def iterable_deserializer(
-    field: "Iterable[IterType, _V]",
     value: typing.Any,
+    field: "Iterable[IterType, _V]",
 ) -> IterType:
     """
     Deserialize an iterable value to the specified field type.
 
-    :param field_type: The type to which the value should be deserialized.
     :param value: The value to deserialize.
     :param field: The field instance to which the value belongs.
     :return: The deserialized value.
@@ -1130,7 +1128,7 @@ class Iterable(typing.Generic[IterType, _V], Field[IterType]):
             )
             validators = [
                 *validators,
-                field_validators.max_len(size),
+                field_validators.max_length(size),
             ]
             kwargs["validators"] = validators
         super().__init__(field_type=field_type, **kwargs)
@@ -1283,8 +1281,8 @@ if has_package("urllib3"):
     from urllib3.util import Url, parse_url  # type: ignore[import]
 
     def url_deserializer(
-        field: Field,
         value: typing.Any,
+        field: Field,
     ) -> typing.Any:
         """Deserialize URL data to the specified type."""
         return parse_url(str(value))
@@ -1365,7 +1363,7 @@ def json_serializer(
     return value
 
 
-def json_deserializer(field: Field, value: typing.Any) -> typing.Any:
+def json_deserializer(value: typing.Any, field: Field) -> typing.Any:
     """Deserialize JSON data to the specified type."""
     return make_jsonable(value)
 
@@ -1467,7 +1465,7 @@ class Slug(String):
     default_validators = (slug_validator,)
 
 
-def ip_address_deserializer(field: Field, value: typing.Any) -> typing.Any:
+def ip_address_deserializer(value: typing.Any, field: Field) -> typing.Any:
     """Deserialize IP address data to an IP address object."""
     return ipaddress.ip_address(value)
 
@@ -1493,7 +1491,7 @@ class IPAddress(Field[typing.Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
         )
 
 
-def timedelta_deserializer(field: Field, value: typing.Any) -> datetime.timedelta:
+def timedelta_deserializer(value: typing.Any, field: Field) -> datetime.timedelta:
     """Deserialize duration data to time delta."""
     duration = parse_duration(value)
     if duration is None:
@@ -1516,7 +1514,7 @@ class Duration(Field[datetime.timedelta]):
 TimeDelta = Duration
 
 
-def timezone_deserializer(field: Field, value: typing.Any) -> zoneinfo.ZoneInfo:
+def timezone_deserializer(value: typing.Any, field: Field) -> zoneinfo.ZoneInfo:
     """Deserialize timezone data to `zoneinfo.ZoneInfo` object."""
     return zoneinfo.ZoneInfo(value)
 
@@ -1596,16 +1594,16 @@ def cached_iso_parse(
 
 
 def iso_date_deserializer(
-    field: DateTimeBase[datetime.date],
     value: str,
+    field: DateTimeBase[datetime.date],
 ) -> datetime.date:
     """Parse a date string in ISO format."""
     return cached_iso_parse(value, fmt=field.input_formats).date()
 
 
 def iso_time_deserializer(
-    field: DateTimeBase[datetime.time],
     value: str,
+    field: DateTimeBase[datetime.time],
 ) -> datetime.time:
     """Parse a time string in ISO format."""
     return cached_iso_parse(value, fmt=field.input_formats).time()
@@ -1654,8 +1652,8 @@ class Time(DateTimeBase[datetime.time]):
 
 
 def datetime_deserializer(
-    field: DateTimeBase[datetime.datetime],
     value: str,
+    field: DateTimeBase[datetime.datetime],
 ) -> datetime.datetime:
     """Parse a datetime string in ISO format."""
     return cached_iso_parse(value, fmt=field.input_formats)
@@ -1694,7 +1692,7 @@ class DateTime(DateTimeBase[datetime.datetime]):
             output_format=output_format,
             **kwargs,
         )
-        self.tz = timezone_deserializer(self, tz) if tz else None
+        self.tz = timezone_deserializer(tz, self) if tz else None
 
     def deserialize(self, value: typing.Any) -> datetime.datetime:
         deserialized = super().deserialize(value)
@@ -1715,8 +1713,8 @@ def bytes_serializer(
 
 
 def bytes_deserializer(
-    field: "Bytes",
     value: typing.Any,
+    field: "Bytes",
 ) -> bytes:
     """Deserialize an object or base64-encoded string to bytes."""
     if isinstance(value, str):
@@ -1761,8 +1759,8 @@ class IOBase(Field[IOType]):
 
 
 def path_deserializer(
-    field: "Path",
     value: typing.Any,
+    field: "Path",
 ) -> pathlib.Path:
     """Deserialize a value to a `pathlib.Path` object."""
     if field.resolve:
@@ -1826,8 +1824,8 @@ else:
         return format_number(value, output_format)
 
     def phone_number_deserializer(
-        field: "PhoneNumber",
         value: typing.Any,
+        field: "PhoneNumber",
     ) -> PhoneNumberType:
         """Deserialize a string to a phone number object."""
         return parse_number(value)
@@ -1866,8 +1864,8 @@ else:
         return format_number(value, field.output_format)
 
     def phone_number_string_deserializer(
-        field: "PhoneNumberString",
         value: typing.Any,
+        field: "PhoneNumberString",
     ) -> str:
         """Deserialize a string to a phone number object."""
         return format_number(parse_number(value), field.output_format)

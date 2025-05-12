@@ -72,6 +72,11 @@ def is_iterable(
     return is_iterable_type(type(obj), exclude=exclude)
 
 
+def is_mapping(obj: typing.Any) -> typing.TypeGuard[collections.abc.Mapping]:
+    """Check if an object is a mapping (like dict)."""
+    return isinstance(obj, collections.abc.Mapping)
+
+
 def is_concrete_type(o: typing.Any, /) -> bool:
     """Check if an object is a concrete type."""
     if isinstance(o, typing._SpecialForm):

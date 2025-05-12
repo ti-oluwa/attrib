@@ -1,15 +1,16 @@
 import enum
 import random
-from tkinter import E
 import typing
 from datetime import datetime
 import tracemalloc
 import gc
+import attrs
 from memory_profiler import profile
 
 import attrib
 from utils import timeit, profileit, log
 from mock_data import course_data, student_data, year_data
+from attrs_example import Student as AttrsStudent
 
 
 _Dataclass_co = typing.TypeVar("_Dataclass_co", bound=attrib.Dataclass, covariant=True)
@@ -23,7 +24,7 @@ class Term(enum.Enum):
     THIRD = "Third"
 
 
-class AcademicYear(attrib.Dataclass, slots=True):
+class AcademicYear(attrib.Dataclass, slots=False):
     """Academic year data class"""
 
     id = attrib.Field(int, required=True)
@@ -34,7 +35,7 @@ class AcademicYear(attrib.Dataclass, slots=True):
     created_at = attrib.DateTime(default=datetime.now, tz="Africa/Lagos")
 
 
-class Course(attrib.Dataclass, slots=True):
+class Course(attrib.Dataclass, slots=False):
     """Course data class"""
 
     id = attrib.Field(int, required=True, allow_null=True)
@@ -44,7 +45,7 @@ class Course(attrib.Dataclass, slots=True):
     created_at = attrib.DateTime(default=datetime.now)
 
 
-class PersonalInfo(attrib.Dataclass, slots=True, sort=True):
+class PersonalInfo(attrib.Dataclass):
     """Personal information data class"""
 
     name = attrib.String(max_length=100)
@@ -52,23 +53,32 @@ class PersonalInfo(attrib.Dataclass, slots=True, sort=True):
     email = attrib.Email(allow_null=True, default=None)
     phone = attrib.PhoneNumber(allow_null=True, default=None)
 
+    __config__ = attrib.Config(slots=False)
 
-class Student(PersonalInfo, slots=True, sort=True):
+
+class Student(PersonalInfo, slots=False):
     """Student data class with multiple fields and a list of enrolled courses"""
 
     id = attrib.Integer(required=True)
     year = attrib.Nested(AcademicYear, lazy=False, allow_null=True)
     courses = attrib.List(
         child=attrib.Nested(Course, lazy=False),
+        validators=[
+            attrib.validators.min_length(1),
+            attrib.validators.iterable(attrib.validators.instance_of(Course)),
+        ],
     )
     gpa = attrib.Float(
         allow_null=True, default=attrib.Factory(random.uniform, a=1.5, b=5.0)
     )
-    friend: attrib.Field["Student"] = attrib.Nested(
-        "Self",
+    friend: attrib.Field["AttrsStudent"] = attrib.Field(
+        AttrsStudent,
         lazy=False,
-        default=lambda: dummy_student,
+        default=lambda: attrib.serialize(dummy_student, fmt="json"),
         allow_null=True,
+        serializers={"json": lambda x, *_: attrib.make_jsonable(x)},
+        deserializer=lambda x, _: AttrsStudent(**x),
+        validators=[attrib.validators.instance_of(AttrsStudent)],
     )
     joined_at = attrib.DateTime(allow_null=True, tz="Africa/Lagos")
     created_at = attrib.DateTime(default=datetime.now, tz="Africa/Lagos")
@@ -110,7 +120,7 @@ def example():
     for student in students:
         attrib.serialize(
             student,
-            fmt="python",
+            fmt="json",
             # options=[
             #     attrib.Option(Course, depth=0, strict=True),
             #     attrib.Option(depth=1),
