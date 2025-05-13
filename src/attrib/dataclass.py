@@ -5,7 +5,7 @@ from functools import cache
 from types import MappingProxyType
 from typing_extensions import Unpack
 
-from attrib.descriptors import Field, Value
+from attrib.descriptors.base import Field, Value
 from attrib.exceptions import FrozenInstanceError
 
 

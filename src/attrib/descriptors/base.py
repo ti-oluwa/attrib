@@ -27,7 +27,7 @@ from attrib.exceptions import (
     FieldError,
     SerializationError,
     DeserializationError,
-    FieldValidationError,
+    ValidationError,
 )
 from attrib._utils import (
     iexact,
@@ -35,22 +35,22 @@ from attrib._utils import (
     is_iterable_type,
     is_iterable,
     is_generic_type,
-    SerializerRegistry,
     iso_parse,
     parse_duration,
-    has_package,
     resolve_forward_ref,
     _LRUCache,
     get_cache_key,
     make_jsonable,
 )
-from attrib._typing import P, SupportsRichComparison, R
+from attrib._typing import P, R, SupportsRichComparison, Validator
+from attrib.adapters import SerializerRegistry
 
 
 _T = typing.TypeVar("_T")
 _V = typing.TypeVar("_V")
 
 
+@typing.final
 class _empty:
     """Class to represent missing/empty values."""
 
@@ -91,18 +91,6 @@ NonForwardRefFieldType: typing.TypeAlias = typing.Union[
     typing.Tuple[typing.Type[_T], ...],
 ]
 
-
-FieldValidator: typing.TypeAlias = typing.Callable[
-    [
-        _T,
-        typing.Optional["Field[_T]"],
-        typing.Optional[typing.Any],
-    ],
-    None,
-]
-"""Field validator type alias. 
-Takes 3 arguments - value, field_instance, instance
-"""
 DefaultFactory = typing.Callable[[], typing.Union[_T, typing.Any]]
 """Type alias for default value factories."""
 FieldSerializer: typing.TypeAlias = typing.Callable[
@@ -293,9 +281,7 @@ class FieldMeta(type):
     def __init__(cls, name, bases, attrs):
         default_validators = getattr(cls, "default_validators", [])
         default_serializers = getattr(cls, "default_serializers", {})
-        cls.default_validators = frozenset(
-            field_validators.load_validators(*default_validators)
-        )
+        cls.default_validators = field_validators.load(*default_validators)
         cls.default_serializers = {
             **DEFAULT_FIELD_SERIALIZERS,
             **default_serializers,
@@ -303,11 +289,15 @@ class FieldMeta(type):
 
 
 class Field(typing.Generic[_T], metaclass=FieldMeta):
-    """Attribute descriptor."""
+    """
+    Attribute descriptor.
+
+    Implements the `TypeAdapter` protocol.
+    """
 
     default_serializers: typing.ClassVar[typing.Mapping[str, FieldSerializer]] = {}
     default_deserializer: typing.ClassVar[FieldDeserializer] = default_deserializer
-    default_validators: typing.Iterable[FieldValidator[_T]] = []
+    default_validators: typing.Iterable[Validator[_T]] = []
 
     def __init__(
         self,
@@ -318,7 +308,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         allow_null: bool = False,
         required: bool = False,
         strict: bool = False,
-        validators: typing.Optional[typing.Iterable[FieldValidator[_T]]] = None,
+        validators: typing.Optional[typing.Iterable[Validator[_T]]] = None,
         serializers: typing.Optional[
             typing.Mapping[str, "FieldSerializer[_T, Self]"]
         ] = None,
@@ -610,16 +600,14 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         if self.check_type(value):
             deserialized = value
         elif self.strict:
-            raise FieldValidationError(
-                f"'{type(self).__name__}' expected type '{self.field_type}', but got '{type(value)}'.",
-                self.effective_name,
+            raise ValidationError(
+                f"'{type(self).__name__}', {self.effective_name!r} expected type '{self.field_type}', but got '{type(value)}'.",
             )
         else:
             deserialized = self.deserialize(value)
             if not self.check_type(deserialized):
-                raise FieldValidationError(
-                    f"'{type(self).__name__}' expected type '{self.field_type}', but got '{type(deserialized)}'.",
-                    self.effective_name,
+                raise ValidationError(
+                    f"'{type(self).__name__}', {self.effective_name!r} expected type '{self.field_type}', but got '{type(deserialized)}'.",
                 )
 
         if self.validator:
@@ -631,7 +619,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
 
     def serialize(
         self,
-        value: typing.Any,
+        value: _T,
         fmt: str,
         context: typing.Optional[typing.Dict[str, typing.Any]] = None,
     ) -> typing.Optional[typing.Any]:
@@ -653,8 +641,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
             serialiazed = self.serializer(fmt, value, self, context)
         except (ValueError, TypeError) as exc:
             raise SerializationError(
-                f"Failed to serialize '{type(self).__name__}' value {value!r} to '{fmt}'.",
-                self.effective_name,
+                f"Failed to serialize '{type(self).__name__}', {self.effective_name} to '{fmt}'.",
             ) from exc
 
         if serialiazed is not None:
@@ -676,8 +663,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
             return self.deserializer(value, self)
         except (ValueError, TypeError) as exc:
             raise DeserializationError(
-                f"Failed to deserialize value '{value}' to type '{field_type}'.",
-                self.effective_name,
+                f"Failed to deserialize value, '{value}' for {self.effective_name} to type '{field_type}'.",
             ) from exc
 
     COPY_EXCLUDED_ARGS: typing.Set[int] = {0}
@@ -736,7 +722,7 @@ class FieldInitKwargs(typing.TypedDict, total=False):
     If True, the field will only accept values of the specified type,
     and will not attempt to coerce them.
     """
-    validators: typing.Optional[typing.Iterable[FieldValidator]]
+    validators: typing.Optional[typing.Iterable[Validator]]
     """A list of validation functions to apply to the field's value."""
     serializers: typing.Optional[typing.Dict[str, FieldSerializer]]
     """A mapping of serialization formats to their respective serializer functions."""
@@ -807,7 +793,7 @@ class Boolean(Field[bool]):
 def build_min_max_value_validators(
     min_value: typing.Optional[SupportsRichComparison],
     max_value: typing.Optional[SupportsRichComparison],
-) -> typing.List[FieldValidator[typing.Any]]:
+) -> typing.List[Validator[typing.Any]]:
     """Construct min and max value validators."""
     if min_value is None and max_value is None:
         return []
@@ -833,7 +819,7 @@ class Float(Field[float]):
         **kwargs: Unpack[FieldInitKwargs],
     ):
         validators = kwargs.get("validators", [])
-        validators = typing.cast(typing.Iterable[FieldValidator[float]], validators)
+        validators = typing.cast(typing.Iterable[Validator[float]], validators)
         validators = [
             *validators,
             *build_min_max_value_validators(min_value, max_value),
@@ -873,7 +859,7 @@ class Integer(Field[int]):
         **kwargs: Unpack[FieldInitKwargs],
     ):
         validators = kwargs.get("validators", [])
-        validators = typing.cast(typing.Iterable[FieldValidator[int]], validators)
+        validators = typing.cast(typing.Iterable[Validator[int]], validators)
         validators = [
             *validators,
             *build_min_max_value_validators(min_value, max_value),
@@ -896,7 +882,7 @@ class Integer(Field[int]):
 def build_min_max_length_validators(
     min_length: typing.Optional[int],
     max_length: typing.Optional[int],
-) -> typing.List[FieldValidator[typing.Any]]:
+) -> typing.List[Validator[typing.Any]]:
     """Construct min and max length validators."""
     if min_length is None and max_length is None:
         return []
@@ -942,7 +928,7 @@ class String(Field[str]):
         :param kwargs: Additional keyword arguments for the field.
         """
         validators = kwargs.get("validators", [])
-        validators = typing.cast(typing.Iterable[FieldValidator[str]], validators)
+        validators = typing.cast(typing.Iterable[Validator[str]], validators)
         validators = [
             *validators,
             *build_min_max_length_validators(min_length, max_length),
@@ -1123,9 +1109,7 @@ class Iterable(typing.Generic[IterType, _V], Field[IterType]):
 
         validators = kwargs.get("validators", [])
         if size is not None:
-            validators = typing.cast(
-                typing.Iterable[FieldValidator[IterType]], validators
-            )
+            validators = typing.cast(typing.Iterable[Validator[IterType]], validators)
             validators = [
                 *validators,
                 field_validators.max_length(size),
@@ -1277,36 +1261,6 @@ class Email(String):
         )
 
 
-if has_package("urllib3"):
-    from urllib3.util import Url, parse_url  # type: ignore[import]
-
-    def url_deserializer(
-        value: typing.Any,
-        field: Field,
-    ) -> typing.Any:
-        """Deserialize URL data to the specified type."""
-        return parse_url(str(value))
-
-    class URL(Field[Url]):  # type: ignore
-        """Field for handling URL values."""
-
-        default_serializers = {
-            "json": to_string_serializer,
-        }
-        default_deserializer = url_deserializer
-
-        def __init__(self, **kwargs: Unpack[FieldInitKwargs]):
-            super().__init__(field_type=Url, **kwargs)
-
-else:
-
-    def URL(**kwargs):
-        """Ghost field for URLField. Install `urllib3` package to use this field."""
-        raise ImportError(
-            "The 'urllib3' package is required for URLField. Please install it to use this field."
-        )
-
-
 class Choice(Field[_T]):
     """Field with predefined choices for values."""
 
@@ -1343,7 +1297,7 @@ class Choice(Field[_T]):
 
         if choices:
             validators = kwargs.get("validators", [])
-            validators = typing.cast(typing.Iterable[FieldValidator[_T]], validators)
+            validators = typing.cast(typing.Iterable[Validator[_T]], validators)
             validators = [
                 *validators,
                 field_validators.in_(choices),
@@ -1735,7 +1689,9 @@ class Bytes(Field[bytes]):
     }
     default_deserializer = bytes_deserializer
 
-    def __init__(self, encoding: str = "utf-8", **kwargs: Unpack[FieldInitKwargs]):
+    def __init__(
+        self, encoding: str = "utf-8", **kwargs: Unpack[FieldInitKwargs]
+    ) -> NoneType:
         """
         Initialize the field.
 
@@ -1789,113 +1745,6 @@ class Path(Field[pathlib.Path]):
         self.resolve = resolve
 
 
-if not has_package("phonenumbers"):
-
-    def PhoneNumber(**kwargs):  # type: ignore
-        """Ghost `PhoneNumber`. Install the `phonenumbers` package to use this field."""
-        raise ImportError(
-            "The 'phonenumbers' package is required for `PhoneNumber`. "
-            "Please install it to use this field."
-        )
-
-    def PhoneNumberString(**kwargs):  # type: ignore
-        """Ghost `PhoneNumberString`. Install the `phonenumbers` package to use this field."""
-        raise ImportError(
-            "The 'phonenumbers' package is required for `PhoneNumberString`. "
-            "Please install it to use this field."
-        )
-
-
-else:
-    from phonenumbers import (  # type: ignore[import]
-        PhoneNumber as PhoneNumberType,
-        parse as parse_number,
-        format_number,
-        PhoneNumberFormat,
-    )
-
-    def phone_number_serializer(
-        value: PhoneNumberType,
-        field: "PhoneNumber",
-        context: typing.Optional[typing.Dict[str, typing.Any]],
-    ) -> str:
-        """Serialize a phone number object to a string format."""
-        output_format = typing.cast(int, field.output_format)
-        return format_number(value, output_format)
-
-    def phone_number_deserializer(
-        value: typing.Any,
-        field: "PhoneNumber",
-    ) -> PhoneNumberType:
-        """Deserialize a string to a phone number object."""
-        return parse_number(value)
-
-    class PhoneNumber(Field[PhoneNumberType]):
-        """Phone number object field."""
-
-        default_output_format: typing.ClassVar[int] = PhoneNumberFormat.E164
-        default_serializers = {
-            "json": phone_number_serializer,
-        }
-        default_deserializer = phone_number_deserializer
-
-        def __init__(
-            self,
-            output_format: typing.Optional[int] = None,
-            **kwargs: Unpack[FieldInitKwargs],
-        ):
-            """
-            Initialize the field.
-
-            :param output_format: The preferred output format for the phone number value.
-                E.g. PhoneNumberFormat.E164, PhoneNumberFormat.INTERNATIONAL, etc.
-                See the `phonenumbers` library for more details.
-            :param kwargs: Additional keyword arguments for the field.
-            """
-            super().__init__(field_type=PhoneNumberType, **kwargs)
-            self.output_format = output_format or self.default_output_format
-
-    def phone_number_string_serializer(
-        value: PhoneNumberType,
-        field: "PhoneNumberString",
-        context: typing.Optional[typing.Dict[str, typing.Any]],
-    ) -> str:
-        """Serialize a phone number object to a string format."""
-        return format_number(value, field.output_format)
-
-    def phone_number_string_deserializer(
-        value: typing.Any,
-        field: "PhoneNumberString",
-    ) -> str:
-        """Deserialize a string to a phone number object."""
-        return format_number(parse_number(value), field.output_format)
-
-    class PhoneNumberString(String):
-        """Phone number string field"""
-
-        default_output_format: typing.ClassVar[int] = PhoneNumberFormat.E164
-        default_serializers = {
-            "json": phone_number_string_serializer,
-        }
-        default_deserializer = phone_number_string_deserializer
-
-        def __init__(
-            self,
-            output_format: typing.Optional[int] = None,
-            **kwargs: Unpack[FieldInitKwargs],
-        ):
-            """
-            Initialize the field.
-
-            :param output_format: The preferred output format for the phone number value.
-                E.g. PhoneNumberFormat.E164, PhoneNumberFormat.INTERNATIONAL, etc.
-                See the `phonenumbers` library for more details.
-            :param kwargs: Additional keyword arguments for the field.
-            """
-            super().__init__(max_length=20, **kwargs)
-            self.output_format = output_format or self.default_output_format
-
-
 __all__ = [
     "EMPTY",
     "AnyType",
@@ -1914,7 +1763,6 @@ __all__ = [
     "Tuple",
     "Decimal",
     "Email",
-    "URL",
     "Choice",
     "JSON",
     "HexColor",
@@ -1930,6 +1778,4 @@ __all__ = [
     "Bytes",
     "IOBase",
     "Path",
-    "PhoneNumber",
-    "PhoneNumberString",
 ]

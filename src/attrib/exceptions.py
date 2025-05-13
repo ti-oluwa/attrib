@@ -1,40 +1,34 @@
-class FieldError(Exception):
-    """Exception raised for field-related errors."""
+class AttribError(Exception):
+    """Base exception for all attrib-related errors."""
 
     pass
 
 
-class FieldValidationError(FieldError):
-    """Exception raised for validation errors."""
+class FieldError(AttribError):
+    """Raised for field-related errors."""
 
     pass
 
 
-class SerializationError(Exception):
-    """Exception raised for serialization errors."""
+class ValidationError(AttribError):
+    """Raised when validation fails."""
 
     pass
 
 
-class DeserializationError(Exception):
-    """Exception raised for deserialization errors."""
+class SerializationError(AttribError):
+    """Raised for serialization errors."""
 
     pass
 
 
-class FrozenError(Exception):
-    """Exception raised for frozen data classes."""
+class DeserializationError(AttribError):
+    """Raised for deserialization errors."""
 
     pass
 
 
-class FrozenFieldError(FrozenError):
-    """Exception raised for frozen fields."""
-
-    pass
-
-
-class FrozenInstanceError(FrozenError):
-    """Exception raised for frozen instances."""
+class FrozenInstanceError(AttribError):
+    """Raised when trying to modify a frozen instance."""
 
     pass

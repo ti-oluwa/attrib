@@ -8,6 +8,7 @@ import attrs
 from memory_profiler import profile
 
 import attrib
+from attrib.descriptors.phonenumbers import PhoneNumber
 from utils import timeit, profileit, log
 from mock_data import course_data, student_data, year_data
 from attrs_example import Student as AttrsStudent
@@ -51,9 +52,13 @@ class PersonalInfo(attrib.Dataclass):
     name = attrib.String(max_length=100)
     age = attrib.Integer(min_value=0, max_value=30)
     email = attrib.Email(allow_null=True, default=None)
-    phone = attrib.PhoneNumber(allow_null=True, default=None)
+    phone = PhoneNumber(allow_null=True, default=None)
 
-    __config__ = attrib.Config(slots=False, pickleable=True)
+    __config__ = attrib.Config(
+        slots=False,
+        frozen=True,
+        pickleable=True,
+    )
 
 
 class Student(PersonalInfo, slots=True, hash=True):
@@ -96,6 +101,7 @@ dummy_student = Student(
     friend=None,
 )
 
+dummy_student.age
 
 def load_data(
     data_list: typing.List[typing.Dict[str, typing.Any]],

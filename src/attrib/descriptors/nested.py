@@ -1,7 +1,7 @@
 import typing
 from typing_extensions import Unpack
 
-from attrib.descriptors import Field, FieldInitKwargs, NonTupleFieldType
+from attrib.descriptors.base import Field, FieldInitKwargs, NonTupleFieldType
 from attrib.dataclass import Dataclass
 from attrib.serializers import _serialize_instance
 from attrib._utils import is_iterable
