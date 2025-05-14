@@ -35,11 +35,12 @@ class Pipeline(typing.NamedTuple):
         self,
         value: typing.Any,
         adapter: typing.Optional[TypeAdapter] = None,
-        instance: typing.Optional[typing.Any] = None,
+        *args: typing.Any,
+        **kwargs: typing.Any,
     ) -> None:
         try:
             for validator in self.validators:
-                validator(value, adapter, instance)
+                validator(value, adapter, *args, **kwargs)
         except (ValueError, ValidationError) as exc:
             name = adapter.name if adapter and adapter.name else "value"
             msg = self.message or "Validation pipeline failed for {name} - {value!r}"
@@ -97,12 +98,13 @@ class Or(typing.NamedTuple):
         self,
         value: typing.Any,
         adapter: typing.Optional[TypeAdapter] = None,
-        instance: typing.Optional[typing.Any] = None,
+        *args: typing.Any,
+        **kwargs: typing.Any,
     ) -> None:
         error: typing.Optional[Exception] = None
         for validator in self.validators:
             try:
-                validator(value, adapter, instance)
+                validator(value, adapter, *args, **kwargs)
                 return
             except (ValueError, ValidationError) as exc:
                 error = exc
@@ -111,8 +113,8 @@ class Or(typing.NamedTuple):
         name = adapter.name if adapter and adapter.name else "value"
         msg = (
             self.message
-            or "All validators failed for {name} - {value!r}. Last failure was: "
-            + str(error)
+            or "All validators failed for {name} - {value!r}. Last failure: "
+            + str(error or "Unknown error")
         )
         raise ValidationError(
             msg.format_map(
@@ -148,6 +150,11 @@ class Or(typing.NamedTuple):
         return NotImplemented
 
 
+#######################################
+###### Field Specific Validators ######
+#######################################
+
+
 @typing.final
 class FieldValidator(typing.NamedTuple):
     """Field validator."""
@@ -170,7 +177,7 @@ class FieldValidator(typing.NamedTuple):
         value: typing.Any,
         adapter: typing.Optional[TypeAdapter] = None,
         instance: typing.Optional[typing.Any] = None,
-    ):
+    ) -> None:
         try:
             self.func(value, adapter, instance)
         except (ValueError, TypeError) as exc:
@@ -211,11 +218,11 @@ class FieldValidator(typing.NamedTuple):
         return NotImplemented
 
     def __not__(self) -> "FieldValidator":
-        return not_(self)
+        return FieldValidator(not_(self))
 
 
 def load(*validators: Validator) -> typing.Tuple[FieldValidator, ...]:
-    """Load the validators as `FieldValidator` instances."""
+    """Load the validators as `FieldValidator`s."""
     loaded = deque()
     for validator in validators:
         if isinstance(validator, FieldValidator):
@@ -239,7 +246,7 @@ def pipe(
 
     :param validators: A sequence of validator functions
     :param message: Optional message for validation errors
-    :return: A validator function that applies the sequence of validators
+    :return: A field validator that applies the sequence of validators
     """
     if not validators:
         raise ValueError("At least one validator must be provided.")
@@ -285,6 +292,11 @@ def or_(*validators: Validator, message: typing.Optional[str] = None) -> FieldVa
     return FieldValidator(Or(tuple(aggregate)), message)
 
 
+#######################################
+###### Field Specific Validators ######
+#######################################
+
+
 def number_validator_factory(
     comparison_func: typing.Callable[[ComparableValue, Bound], bool],
     symbol: str,
@@ -302,16 +314,13 @@ def number_validator_factory(
     def validator_factory(
         bound: Bound,
         message: typing.Optional[str] = None,
-        pre_validation_hook: typing.Optional[
-            typing.Callable[[typing.Any], ComparableValue]
-        ] = None,
-    ) -> FieldValidator:
+    ) -> Validator:
         """
         Builds a validator for numeric comparisons.
 
         :param bound: The bound to compare against
         :param message: Error message template
-        :param pre_validation_hook: A function to preprocess the value before validation
+
         :return: A validator function
         """
         msg = message or "'{value} {symbol} {bound}' is not True for {name!r}"
@@ -319,7 +328,8 @@ def number_validator_factory(
         def validator(
             value: typing.Any,
             adapter: typing.Optional[typing.Any] = None,
-            instance: typing.Optional[typing.Any] = None,
+            *args: typing.Any,
+            **kwargs: typing.Any,
         ) -> None:
             """
             Numeric comparison validator.
@@ -329,15 +339,10 @@ def number_validator_factory(
 
             :param value: The value to validate
             :param adapter: The type adapter being used
-            :param instance: The instance being validated
             :raises ValidationError: If the value does not pass the comparison
             :return: None if the comparison passes
             """
             nonlocal msg
-
-            if pre_validation_hook:
-                value = pre_validation_hook(value)
-
             if isinstance(value, (int, float)) and comparison_func(value, bound):
                 return
 
@@ -355,7 +360,7 @@ def number_validator_factory(
             )
 
         validator.__name__ = f"number({symbol}{bound})"
-        return FieldValidator(validator)
+        return validator
 
     validator_factory.__name__ = f"number_validator_factory({symbol})"
     return validator_factory
@@ -377,10 +382,7 @@ def number_range(
     min_val: SupportsRichComparison,
     max_val: SupportsRichComparison,
     message: typing.Optional[str] = None,
-    pre_validation_hook: typing.Optional[
-        typing.Callable[[typing.Any], ComparableValue]
-    ] = None,
-) -> FieldValidator:
+) -> Validator:
     """
     Number range validator.
 
@@ -389,7 +391,6 @@ def number_range(
     :param min_val: Minimum allowed value
     :param max_val: Maximum allowed value
     :param message: Error message template
-    :param pre_validation_hook: A function to preprocess the value before validation
     :return: A validator function
     """
     msg = message or "'{name}' must be between {min} and {max}, got {value!r}"
@@ -397,7 +398,8 @@ def number_range(
     def validator(
         value: typing.Any,
         adapter: typing.Optional[typing.Any] = None,
-        instance: typing.Optional[typing.Any] = None,
+        *args: typing.Any,
+        **kwargs: typing.Any,
     ) -> None:
         """
         Range validator.
@@ -406,7 +408,6 @@ def number_range(
 
         :param value: The value to validate
         :param adapter: The type adapter being used
-        :param instance: The instance being validated
         :raises ValidationError: If the value is not within the range
         :return: None if the value is within the range
         """
@@ -419,7 +420,7 @@ def number_range(
             )
 
     validator.__name__ = f"number_range({min_val},{max_val})"
-    return FieldValidator(validator)
+    return validator
 
 
 def length_validator_factory(
@@ -439,24 +440,22 @@ def length_validator_factory(
     def validator_factory(
         bound: Bound,
         message: typing.Optional[str] = None,
-        pre_validation_hook: typing.Optional[
-            typing.Callable[[typing.Any], CountableValue]
-        ] = None,
-    ) -> FieldValidator:
+    ) -> Validator:
         """
         Builds a validator for length comparisons.
 
         :param bound: The bound to compare against
         :param message: Error message template
-        :param pre_validation_hook: A function to preprocess the value before validation
+
         :return: A validator function
         """
         msg = message or "'len({name}) {symbol} {bound}' is not True, got {length}"
 
         def validator(
-            value: typing.Union[CountableValue, typing.Any],
+            value: CountableValue,
             adapter: typing.Optional[typing.Any] = None,
-            instance: typing.Optional[typing.Any] = None,
+            *args: typing.Any,
+            **kwargs: typing.Any,
         ) -> None:
             """
             Length comparison validator.
@@ -466,14 +465,11 @@ def length_validator_factory(
 
             :param value: The value to validate
             :param adapter: The type adapter being used
-            :param instance: The instance being validated
             :raises ValidationError: If the length of the value does not pass the comparison
             :return: None if the comparison passes
             """
             nonlocal msg
 
-            if pre_validation_hook:
-                value = pre_validation_hook(value)
             if comparison_func(len(value), bound):
                 return
             name = adapter.name if adapter and adapter.name else "value"
@@ -492,7 +488,7 @@ def length_validator_factory(
             )
 
         validator.__name__ = f"length({symbol}{bound})"
-        return FieldValidator(validator)
+        return validator
 
     validator_factory.__name__ = f"length_validator_factory({symbol})"
     return validator_factory
@@ -511,7 +507,7 @@ def pattern(
     flags: typing.Union[re.RegexFlag, typing.Literal[0]] = 0,
     func: typing.Optional[typing.Callable] = None,
     message: typing.Optional[str] = None,
-) -> FieldValidator:
+) -> Validator:
     """
     Builds a validator that checks if a value matches a given regex pattern.
 
@@ -552,7 +548,8 @@ def pattern(
     def validator(
         value: typing.Any,
         adapter: typing.Optional[typing.Any] = None,
-        instance: typing.Optional[typing.Any] = None,
+        *args: typing.Any,
+        **kwargs: typing.Any,
     ) -> None:
         """
         Regex pattern validator.
@@ -561,7 +558,6 @@ def pattern(
 
         :param value: The value to validate
         :param adapter: The type adapter being used
-        :param instance: The instance being validated
         :raises ValidationError: If the value does not match the pattern
         :return: None if the value matches the pattern
         """
@@ -580,7 +576,7 @@ def pattern(
             )
 
     validator.__name__ = f"pattern({pattern.pattern!r})"
-    return FieldValidator(validator)
+    return validator
 
 
 def instance_of(
@@ -588,13 +584,12 @@ def instance_of(
         typing.Type[typing.Any], typing.Tuple[typing.Type[typing.Any], ...]
     ],
     message: typing.Optional[str] = None,
-) -> FieldValidator:
+) -> Validator:
     """
     Builds a validator that checks if a value is an instance of a given type.
 
     :param cls: A type or tuple of types to check against
     :param message: Error message template
-    :param pre_validation_hook: A function to preprocess the value before validation
     :return: A validator function
     """
     msg = message or "Value must be an instance of {cls!r}, not {value_type!r}"
@@ -602,7 +597,8 @@ def instance_of(
     def validator(
         value: typing.Any,
         adapter: typing.Optional[typing.Any] = None,
-        instance: typing.Optional[typing.Any] = None,
+        *args: typing.Any,
+        **kwargs: typing.Any,
     ) -> None:
         """
         Instance check validator.
@@ -611,11 +607,13 @@ def instance_of(
 
         :param value: The value to validate
         :param adapter: The type adapter being used
-        :param instance: The instance being validated
         :raises ValidationError: If the value is not an instance of the class
         :return: None if the value is an instance of the class
         """
         nonlocal msg
+
+        if cls is typing.Any:
+            return
 
         if not isinstance(value, cls):
             name = adapter.name if adapter and adapter.name else "value"
@@ -632,7 +630,7 @@ def instance_of(
             )
 
     validator.__name__ = f"instance_of({cls!r})"
-    return FieldValidator(validator)
+    return validator
 
 
 def subclass_of(
@@ -640,13 +638,12 @@ def subclass_of(
         typing.Type[typing.Any], typing.Tuple[typing.Type[typing.Any], ...]
     ],
     message: typing.Optional[str] = None,
-) -> FieldValidator:
+) -> Validator:
     """
     Builds a validator that checks if a value is a subclass of a given type.
 
     :param cls: A type or tuple of types to check against
     :param message: Error message template
-    :param pre_validation_hook: A function to preprocess the value before validation
     :return: A validator function
     """
     msg = message or "Value must be a subclass of {cls!r}, not {value_type!r}"
@@ -654,7 +651,8 @@ def subclass_of(
     def validator(
         value: typing.Any,
         adapter: typing.Optional[typing.Any] = None,
-        instance: typing.Optional[typing.Any] = None,
+        *args: typing.Any,
+        **kwargs: typing.Any,
     ) -> None:
         """
         Subclass check validator.
@@ -663,7 +661,6 @@ def subclass_of(
 
         :param value: The value to validate
         :param adapter: The type adapter being used
-        :param instance: The instance being validated
         :raises ValidationError: If the value is not a subclass of the class
         :return: None if the value is a subclass of the class
         """
@@ -684,22 +681,24 @@ def subclass_of(
             )
 
     validator.__name__ = f"subclass_of({cls!r})"
-    return FieldValidator(validator)
+    return validator
 
 
-def optional(validator: Validator) -> FieldValidator:
+def optional(validator: Validator) -> Validator:
     """
     Builds a validator that applies the given validator only if the value is not `None`.
 
     :param validator: The validator to apply to the adapter, if the adapter is not `None`
     :return: A validator function that applies the given validator if the value is not `None`
     """
-    _validator = load(validator)[0]
+    if not isinstance(validator, Validator):
+        raise TypeError(f"Invalid validator: {validator!r}")
 
     def optional_validator(
         value: typing.Any,
         adapter: typing.Optional[typing.Any] = None,
-        instance: typing.Optional[typing.Any] = None,
+        *args: typing.Any,
+        **kwargs: typing.Any,
     ) -> None:
         """
         Optional validator.
@@ -708,28 +707,26 @@ def optional(validator: Validator) -> FieldValidator:
 
         :param value: The value to validate
         :param adapter: The type adapter being used
-        :param instance: The instance being validated
         :raises ValidationError: If the value is not `None` and does not pass the validator
         :return: None if the value is `None` or passes the validator
         """
         if value is None:
             return
-        return _validator(value, adapter, instance)
+        return validator(value, adapter, *args, **kwargs)
 
     optional_validator.__name__ = f"optional({validator!r})"
-    return FieldValidator(optional_validator)
+    return optional_validator
 
 
 def member_of(
     choices: typing.Iterable[typing.Any],
     message: typing.Optional[str] = None,
-) -> FieldValidator:
+) -> Validator:
     """
     Builds a validator that checks if a value is a member of a given set of choices.
 
     :param choices: An iterable of valid choices
     :param message: Error message template
-    :param pre_validation_hook: A function to preprocess the value before validation
     :return: A validator function
     """
     msg = message or "{name!r} must be one of {choices!r}, not {value!r}"
@@ -745,7 +742,8 @@ def member_of(
     def validator(
         value: typing.Any,
         adapter: typing.Optional[typing.Any] = None,
-        instance: typing.Optional[typing.Any] = None,
+        *args: typing.Any,
+        **kwargs: typing.Any,
     ) -> None:
         """
         Membership check validator.
@@ -754,7 +752,6 @@ def member_of(
 
         :param value: The value to validate
         :param adapter: The type adapter being used
-        :param instance: The instance being validated
         :raises ValidationError: If the value is not in the choices
         :return: None if the value is in the choices
         """
@@ -774,7 +771,7 @@ def member_of(
             )
 
     validator.__name__ = f"member_of({choices!r})"
-    return FieldValidator(validator)
+    return validator
 
 
 in_ = member_of
@@ -783,23 +780,25 @@ in_ = member_of
 def not_(
     validator: Validator,
     message: typing.Optional[str] = None,
-) -> FieldValidator:
+) -> Validator:
     """
     Builds a validator that raises `ValidationError` if the value
     validates against the specified validator.
 
     :param validator: The validator to check against
     :param message: Error message template
-    :param pre_validation_hook: A function to preprocess the value before validation
     :return: A validator function
     """
+    if not isinstance(validator, Validator):
+        raise TypeError(f"Invalid validator: {validator!r}")
+
     msg = message or "{name!r} - {value!r} must not validate {validator!r}"
-    _validator = load(validator)[0]
 
     def negate_validator(
         value: typing.Any,
         adapter: typing.Optional[typing.Any] = None,
-        instance: typing.Optional[typing.Any] = None,
+        *args: typing.Any,
+        **kwargs: typing.Any,
     ) -> None:
         """
         Negation validator. Applies logical NOT to the specified validator.
@@ -808,14 +807,13 @@ def not_(
 
         :param value: The value to validate
         :param adapter: The type adapter being used
-        :param instance: The instance being validated
         :raises ValidationError: If the value validates against the specified validator
         :return: None if the value does not validate against the specified validator
         """
         nonlocal msg
 
         try:
-            _validator(value, adapter, instance)
+            validator(value, adapter, *args, **kwargs)
         except (ValueError, ValidationError):
             return
         name = adapter.name if adapter and adapter.name else "value"
@@ -830,8 +828,8 @@ def not_(
             )
         )
 
-    negate_validator.__name__ = f"negate({_validator.name})"
-    return FieldValidator(negate_validator)
+    negate_validator.__name__ = f"negate({validator!r})"
+    return negate_validator
 
 
 and_ = pipe
@@ -841,14 +839,14 @@ and_ = pipe
 def is_callable(
     value: typing.Any,
     adapter: typing.Optional[typing.Any] = None,
-    instance: typing.Optional[typing.Any] = None,
+    *args: typing.Any,
+    **kwargs: typing.Any,
 ) -> None:
     """
     Checks if the value is callable.
 
     :param value: The value to check
     :param adapter: The type adapter being used
-    :param instance: The instance being validated
     :raises ValidationError: If the value is not callable
     :return: None if the value is callable
     """
@@ -857,13 +855,10 @@ def is_callable(
         raise ValidationError(f"'{name}' must be a callable")
 
 
-is_callable = FieldValidator(is_callable)
-
-
 def value_validator(
     func: typing.Callable[[typing.Any], typing.Any],
     message: typing.Optional[str] = None,
-) -> FieldValidator:
+) -> Validator:
     """
     Wraps a validator function that only accepts a value and returns a boolean
     indicating whether the value is valid or not such that it can be used
@@ -885,7 +880,8 @@ def value_validator(
     def validator_wrapper(
         value: typing.Any,
         adapter: typing.Optional[typing.Any] = None,
-        instance: typing.Optional[typing.Any] = None,
+        *args: typing.Any,
+        **kwargs: typing.Any,
     ) -> None:
         """
         Validator wrapper.
@@ -893,7 +889,6 @@ def value_validator(
         Checks if the value is valid according to the specified function.
         :param value: The value to validate
         :param adapter: The type adapter being used
-        :param instance: The instance being validated
         :raises ValidationError: If the value does not pass the validation
         :return: None if the value is valid
         """
@@ -915,7 +910,7 @@ def value_validator(
 
     validator_wrapper.__name__ = f"value_validator({func.__name__})"
     validator_wrapper.__doc__ = func.__doc__
-    return FieldValidator(validator_wrapper)
+    return validator_wrapper
 
 
 @typing.overload
@@ -924,7 +919,7 @@ def path(
     is_absolute: bool = ...,
     is_relative: bool = ...,
     exists: typing.Literal[False] = False,
-) -> FieldValidator: ...
+) -> Validator: ...
 
 
 @typing.overload
@@ -940,7 +935,7 @@ def path(
     is_writable: bool = ...,
     is_executable: bool = ...,
     is_empty: bool = ...,
-) -> FieldValidator: ...
+) -> Validator: ...
 
 
 @typing.overload
@@ -956,7 +951,7 @@ def path(
     is_writable: bool = ...,
     is_executable: bool = ...,
     is_empty: bool = ...,
-) -> FieldValidator: ...
+) -> Validator: ...
 
 
 @typing.overload
@@ -972,7 +967,7 @@ def path(
     is_writable: bool = ...,
     is_executable: bool = ...,
     is_empty: bool = ...,
-) -> FieldValidator: ...
+) -> Validator: ...
 
 
 def path(
@@ -987,7 +982,7 @@ def path(
     is_writable: bool = False,
     is_executable: bool = False,
     is_empty: bool = False,
-) -> FieldValidator:
+) -> Validator:
     """
     `pathlib.Path` validator factory
 
@@ -1066,7 +1061,7 @@ def path(
     if is_writable:
         validators.append(value_validator(lambda path: os.access(path, os.W_OK)))
 
-    return pipe(*validators) if len(validators) > 1 else validators[0]
+    return Pipeline(tuple(validators)) if len(validators) > 1 else validators[0]
 
 
 def mapping(
@@ -1075,7 +1070,7 @@ def mapping(
     *,
     deep: bool = False,
     message: typing.Optional[str] = None,
-) -> FieldValidator:
+) -> Validator:
     """
     Builds a validator that checks if a value is a mapping (e.g., dict) and validates its keys
     and values using the provided validators.
@@ -1088,16 +1083,15 @@ def mapping(
     :param value_validator: A validator for the values of the mapping
     :param deep: If True, applies the validators iteratively to nested mappings
     :param message: Error message template
-    :param pre_validation_hook: A function to preprocess the value before validation
     :return: A validator function
     """
     msg = message or "'{name}' must be a valid mapping, got {value!r}"
-    _key_validator, _value_validator = load(key_validator, value_validator)
 
     def validate_mapping(
         value: typing.Any,
         adapter: typing.Optional[typing.Any] = None,
-        instance: typing.Optional[typing.Any] = None,
+        *args: typing.Any,
+        **kwargs: typing.Any,
     ) -> None:
         """
         Mapping validator.
@@ -1106,11 +1100,10 @@ def mapping(
 
         :param value: The value to validate
         :param adapter: The type adapter being used
-        :param instance: The instance being validated
         :raises ValidationError: If the value is not a mapping or if any key/value fails validation
         :return: None if the value is a valid mapping
         """
-        nonlocal msg, _key_validator, _value_validator
+        nonlocal msg
 
         if not is_mapping(value):
             name = adapter.name if adapter and adapter.name else "value"
@@ -1119,13 +1112,14 @@ def mapping(
             )
 
         for key, val in value.items():
-            _key_validator(key, adapter, instance)
-            _value_validator(val, adapter, instance)
+            key_validator(key, adapter, *args, **kwargs)
+            value_validator(val, adapter, *args, **kwargs)
 
     def deep_validate_mapping(
         value: typing.Any,
         adapter: typing.Optional[typing.Any] = None,
-        instance: typing.Optional[typing.Any] = None,
+        *args: typing.Any,
+        **kwargs: typing.Any,
     ) -> None:
         """
         Deep mapping validator.
@@ -1135,11 +1129,10 @@ def mapping(
 
         :param value: The value to validate
         :param adapter: The type adapter being used
-        :param instance: The instance being validated
         :raises ValidationError: If the value is not a mapping or if any key/value fails validation
         :return: None if the value is a valid mapping
         """
-        nonlocal msg, _key_validator, _value_validator
+        nonlocal msg
 
         if not is_mapping(value):
             name = adapter.name if adapter and adapter.name else "value"
@@ -1154,12 +1147,12 @@ def mapping(
         while stack:
             current_value = stack.pop()
             for key, val in current_value.items():
-                _key_validator(key, adapter, instance)
-                _value_validator(val, adapter, instance)
+                key_validator(key, adapter, *args, **kwargs)
+                value_validator(val, adapter, *args, **kwargs)
                 if is_mapping(val):
                     stack.appendleft(val)
 
-    return FieldValidator(deep_validate_mapping if deep else validate_mapping)
+    return deep_validate_mapping if deep else validate_mapping
 
 
 def iterable(
@@ -1167,7 +1160,7 @@ def iterable(
     *,
     deep: bool = False,
     message: typing.Optional[str] = None,
-) -> FieldValidator:
+) -> Validator:
     """
     Builds a validator that checks if a value is an iterable (e.g., list, tuple) and validates
     its elements using the provided validator.
@@ -1179,16 +1172,15 @@ def iterable(
     :param child_validator: A validator for the elements of the iterable
     :param deep: If True, applies the validators recursively to nested iterables
     :param message: Error message template
-    :param pre_validation_hook: A function to preprocess the value before validation
     :return: A validator function
     """
     msg = message or "'{name}' must be a valid iterable, got {value!r}"
-    _child_validator = load(child_validator)[0]
 
     def validate_iterable(
         value: typing.Any,
         adapter: typing.Optional[typing.Any] = None,
-        instance: typing.Optional[typing.Any] = None,
+        *args: typing.Any,
+        **kwargs: typing.Any,
     ) -> None:
         """
         Iterable validator.
@@ -1197,11 +1189,10 @@ def iterable(
 
         :param value: The value to validate
         :param adapter: The type adapter being used
-        :param instance: The instance being validated
         :raises ValidationError: If the value is not an iterable or if any element fails validation
         :return: None if the value is a valid iterable
         """
-        nonlocal msg, _child_validator
+        nonlocal msg
 
         if not is_iterable(value):
             name = adapter.name if adapter and adapter.name else "value"
@@ -1210,12 +1201,13 @@ def iterable(
             )
 
         for item in value:
-            _child_validator(item, adapter, instance)
+            child_validator(item, adapter, *args, **kwargs)
 
     def deep_validate_iterable(
         value: typing.Any,
         adapter: typing.Optional[typing.Any] = None,
-        instance: typing.Optional[typing.Any] = None,
+        *args: typing.Any,
+        **kwargs: typing.Any,
     ) -> None:
         """
         Deep iterable validator.
@@ -1224,11 +1216,10 @@ def iterable(
 
         :param value: The value to validate
         :param adapter: The type adapter being used
-        :param instance: The instance being validated
         :raises ValidationError: If the value is not an iterable or if any element fails validation
         :return: None if the value is a valid iterable
         """
-        nonlocal msg, _child_validator
+        nonlocal msg
 
         if not is_iterable(value):
             name = adapter.name if adapter and adapter.name else "value"
@@ -1243,8 +1234,8 @@ def iterable(
         while stack:
             current_value = stack.pop()
             for item in current_value:
-                _child_validator(item, adapter, instance)
+                child_validator(item, adapter, *args, **kwargs)
                 if is_iterable(item):
                     stack.appendleft(item)
 
-    return FieldValidator(deep_validate_iterable if deep else validate_iterable)
+    return deep_validate_iterable if deep else validate_iterable

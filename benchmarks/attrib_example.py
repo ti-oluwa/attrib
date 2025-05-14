@@ -17,6 +17,30 @@ from attrs_example import Student as AttrsStudent
 _Dataclass_co = typing.TypeVar("_Dataclass_co", bound=attrib.Dataclass, covariant=True)
 
 
+class Person(attrib.Dataclass, slots=False):
+    """Person data class"""
+
+    name = attrib.String(max_length=100)
+    age = attrib.Integer(min_value=0, max_value=30)
+
+
+adapter = attrib.build_adapter(
+    typing.Mapping[str, Person], strict=False
+)
+print(
+    adapter.serialize(
+        adapter(
+            {
+                "john": Person(name="John", age=25),
+                "doe": {"name": "Doe", "age": 30},
+                "jane": "Jane",
+            }
+        ),
+        fmt="json",
+    )
+)
+
+
 class Term(enum.Enum):
     """Academic term enumeration"""
 
@@ -102,6 +126,7 @@ dummy_student = Student(
 )
 
 dummy_student.age
+
 
 def load_data(
     data_list: typing.List[typing.Dict[str, typing.Any]],

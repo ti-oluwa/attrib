@@ -1,10 +1,10 @@
 """Dataclass serialization module."""
 
-from collections import deque
+from collections import deque, defaultdict
 import typing
 import os
 
-from attrib.descriptors import EMPTY
+from attrib._typing import Serializer, EMPTY
 from attrib.exceptions import SerializationError
 from attrib.dataclass import Dataclass
 
@@ -315,3 +315,4 @@ def serialize(
         raise SerializationError(
             f"Failed to serialize '{obj.__class__.__name__}'.", exc
         ) from exc
+

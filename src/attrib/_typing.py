@@ -6,6 +6,8 @@ R = typing.TypeVar("R")
 T = typing.TypeVar("T")
 
 
+IterType = typing.TypeVar("IterType", bound=typing.Iterable[typing.Any])
+
 @typing.runtime_checkable
 class SupportsRichComparison(typing.Protocol):
     def __lt__(self, other: typing.Any, /) -> bool: ...
@@ -80,3 +82,17 @@ class Validator(typing.Generic[T], typing.Protocol):
         :param adapter: The type adapter being used
         """
         ...
+
+
+@typing.final
+class _empty:
+    """Class to represent missing/empty values."""
+
+    def __bool__(self):
+        return False
+
+    def __hash__(self) -> int:
+        return id(self)
+
+
+EMPTY = _empty()

@@ -1,6 +1,7 @@
 import pathlib
 import typing
 import io
+import inspect
 import base64
 import decimal
 import ipaddress
@@ -10,17 +11,18 @@ import enum
 import zoneinfo
 import sys
 import datetime
-from collections import defaultdict
 import collections.abc
 import importlib.util
 import uuid
+from collections import defaultdict
 
 try:
     import orjson as json  # type: ignore[import]
 except ImportError:
     import json
 
-from .exceptions import SerializationError
+from attrib._typing import IterType, Serializer
+from attrib.exceptions import SerializationError
 
 
 def has_package(package_name) -> bool:
@@ -43,9 +45,9 @@ def is_iterable_type(
     /,
     *,
     exclude: typing.Optional[typing.Tuple[typing.Type[typing.Any], ...]] = None,
-) -> typing.TypeGuard[typing.Type[collections.abc.Iterable]]:
+) -> typing.TypeGuard[typing.Type[typing.Iterable[typing.Any]]]:
     """
-    Check if a given type is an iterable. A subclass of `collections.abc.Iterable`.
+    Check if a given type is an iterable type. A subclass of `collections.abc.Iterable`.
 
     :param tp: The type to check.
     :param exclude: A tuple of types to return False for, even if they are iterable types.
@@ -67,12 +69,12 @@ def is_iterable(
     obj: typing.Any,
     *,
     exclude: typing.Optional[typing.Tuple[typing.Type[typing.Any], ...]] = None,
-) -> typing.TypeGuard[collections.abc.Iterable]:
+) -> typing.TypeGuard[typing.Iterable]:
     """Check if an object is an iterable."""
     return is_iterable_type(type(obj), exclude=exclude)
 
 
-def is_mapping(obj: typing.Any) -> typing.TypeGuard[collections.abc.Mapping]:
+def is_mapping(obj: typing.Any) -> typing.TypeGuard[typing.Mapping]:
     """Check if an object is a mapping (like dict)."""
     return isinstance(obj, collections.abc.Mapping)
 
@@ -98,9 +100,47 @@ def is_generic_type(o: typing.Any, /) -> bool:
     return typing.get_origin(o) is not None and not isinstance(o, typing._SpecialForm)
 
 
+def is_mapping_type(
+    tp: typing.Type[typing.Any], /
+) -> typing.TypeGuard[typing.Type[typing.Mapping]]:
+    """
+    Check if a given type is a mapping type. A subclass of `collections.abc.Mapping`.
+
+    :param tp: The type to check.
+    :return: True if the type is a mapping type, False otherwise.
+    """
+    return inspect.isclass(tp) and issubclass(tp, collections.abc.Mapping)
+
+
 def is_slotted_cls(cls: typing.Type[typing.Any], /) -> bool:
     """Check if a class has __slots__ defined."""
     return "__slots__" in cls.__dict__
+
+
+def _get_itertype_adder(field_type: typing.Type[IterType]) -> typing.Callable:
+    """
+    Get the appropriate adder function for the specified iterable type.
+    This function returns the method used to add elements to the iterable type.
+
+    Example:
+    ```python
+    adder = _get_itertype_adder(list)
+    adder([], 1)  # Adds 1 to the list
+    ```
+    """
+    if issubclass(field_type, list):
+        return list.append
+    if issubclass(field_type, set):
+        return set.add
+    if issubclass(field_type, tuple):
+        return tuple.__add__
+    if issubclass(field_type, frozenset):
+        # frozenset is immutable, so we need to create a new frozenset
+        # with the new value added
+        return lambda frozenset_, value: frozenset(
+            frozenset(list(frozenset_) + [value])
+        )
+    raise TypeError(f"Unsupported iterable type: {field_type}")
 
 
 HAS_DATEUTIL = has_package("dateutil")
@@ -295,6 +335,42 @@ class _LRUCache(typing.Generic[K, V]):
         self.cache.clear()
 
 
+def _unsupported_serializer(*args, **kwargs) -> None:
+    """Raise an error for unsupported serialization."""
+    raise SerializationError(
+        "Unsupported serialization format. Register a serializer for this format."
+    )
+
+
+def _unsupported_serializer_factory():
+    """Return a function that raises an error for unsupported serialization."""
+    return _unsupported_serializer
+
+
+@typing.final
+class SerializerRegistry(typing.NamedTuple):
+    """
+    Registry class to handle different serialization formats.
+
+    :param serializer_map: A dictionary mapping format names to their respective serializer functions.
+    """
+
+    serializer_map: typing.DefaultDict[str, Serializer] = defaultdict(
+        _unsupported_serializer_factory
+    )
+
+    def __call__(self, fmt: str, *args: typing.Any, **kwargs: typing.Any) -> typing.Any:
+        """
+        Serialize data using the specified format.
+
+        :param fmt: The format to serialize to (e.g., 'json', 'xml').
+        :param args: Positional arguments to pass to the format's serializer.
+        :param kwargs: Keyword arguments to pass to the format's serializer.
+        :return: Serialized data in the specified format.
+        """
+        return self.serializer_map[fmt](*args, **kwargs)
+
+
 HASHABLE_TYPES = (
     int,
     str,
@@ -417,3 +493,33 @@ JSON_ENCODERS = {
     ipaddress.IPv4Interface: str,
     ipaddress.IPv6Interface: str,
 }
+
+
+def any_func(
+    *funcs: typing.Callable[..., typing.Any],
+    target_exception: typing.Optional[
+        typing.Union[typing.Tuple[typing.Type[Exception], ...], typing.Type[Exception]]
+    ] = None,
+) -> typing.Callable[..., typing.Any]:
+    """
+    Build a function that calls a list of functions and returns the first successful call.
+    If all functions fail, it raises a ValueError with the last exception.
+    This is useful for trying multiple functions in a specific order until one succeeds.
+
+    :param funcs: An iterable of functions to call.
+    :param target_exception: The exception type to catch. If None, all exceptions are caught.
+    :return: A function that returns the first successful call from the list of functions.
+    """
+    target_exception = target_exception if target_exception is not None else Exception
+
+    def any(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
+        recent_exc = None
+        for func in funcs:
+            try:
+                return func(*args, **kwargs)
+            except target_exception as exc:
+                recent_exc = exc
+                continue
+        raise ValueError("All functions failed") from recent_exc
+
+    return any

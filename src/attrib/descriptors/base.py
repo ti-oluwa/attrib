@@ -41,27 +41,14 @@ from attrib._utils import (
     _LRUCache,
     get_cache_key,
     make_jsonable,
+    _get_itertype_adder,
+    SerializerRegistry,
 )
-from attrib._typing import P, R, SupportsRichComparison, Validator
-from attrib.adapters import SerializerRegistry
+from attrib._typing import P, R, SupportsRichComparison, Validator, IterType, EMPTY
 
 
 _T = typing.TypeVar("_T")
 _V = typing.TypeVar("_V")
-
-
-@typing.final
-class _empty:
-    """Class to represent missing/empty values."""
-
-    def __bool__(self):
-        return False
-
-    def __hash__(self) -> int:
-        return id(self)
-
-
-EMPTY = _empty()
 
 
 @typing.final
@@ -973,35 +960,6 @@ class UUID(Field[uuid.UUID]):
         super().__init__(field_type=uuid.UUID, **kwargs)
 
 
-IterType = typing.TypeVar("IterType", bound=typing.Iterable[typing.Any])
-
-
-def _get_adder(field_type: typing.Type[IterType]) -> typing.Callable:
-    """
-    Get the appropriate adder function for the specified iterable type.
-    This function returns the method used to add elements to the iterable type.
-
-    Example:
-    ```python
-    adder = _get_adder(list)
-    adder([], 1)  # Adds 1 to the list
-    ```
-    """
-    if issubclass(field_type, list):
-        return list.append
-    if issubclass(field_type, set):
-        return set.add
-    if issubclass(field_type, tuple):
-        return tuple.__add__
-    if issubclass(field_type, frozenset):
-        # frozenset is immutable, so we need to create a new frozenset
-        # with the new value added
-        return lambda frozenset_, value: frozenset(
-            frozenset(list(frozenset_) + [value])
-        )
-    raise TypeError(f"Unsupported iterable type: {field_type}")
-
-
 def iterable_python_serializer(
     value: IterType,
     field: "Iterable[IterType, _V]",
@@ -1117,7 +1075,7 @@ class Iterable(typing.Generic[IterType, _V], Field[IterType]):
             kwargs["validators"] = validators
         super().__init__(field_type=field_type, **kwargs)
         self.child = child or Any()
-        self.adder = _get_adder(field_type)
+        self.adder = _get_itertype_adder(field_type)
 
     def post_init_validate(self):
         super().post_init_validate()

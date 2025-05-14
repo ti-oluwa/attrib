@@ -10,6 +10,7 @@ from .descriptors.nested import Nested  # noqa
 from .serializers import serialize, Option  # noqa
 from . import validators  # noqa
 from ._utils import make_jsonable, iexact  # noqa
+from .adapters import TypeAdapter, build_adapter  # noqa
 
 
 __version__ = "0.0.1"
