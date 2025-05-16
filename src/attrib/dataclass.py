@@ -7,6 +7,7 @@ from typing_extensions import Unpack
 
 from attrib.descriptors.base import Field, Value
 from attrib.exceptions import FrozenInstanceError
+from attrib._typing import RawData
 
 
 def get_fields(cls: typing.Type) -> typing.Dict[str, Field]:
@@ -306,8 +307,10 @@ def build_config(
         for base in bases:
             if isinstance(getattr(base, "__config__", None), Config):
                 config.update(base.__config__._asdict())
+
     if class_config:
         config.update(class_config._asdict())
+
     config.update(meta_config)
     return Config(**config)
 
@@ -542,7 +545,7 @@ class Dataclass(metaclass=DataclassMeta):
     @typing.overload
     def __init__(
         self,
-        data: typing.Mapping[str, typing.Any],
+        data: RawData,
     ) -> None:
         """Initialize the dataclass with raw data."""
         ...
@@ -554,8 +557,8 @@ class Dataclass(metaclass=DataclassMeta):
 
     def __init__(
         self,
-        data: typing.Optional[typing.Mapping[str, typing.Any]] = None,
-        **kwargs,
+        data: typing.Optional[RawData] = None,
+        **kwargs: typing.Any,
     ) -> None:
         """
         Initialize the dataclass with raw data or keyword arguments.
@@ -564,7 +567,7 @@ class Dataclass(metaclass=DataclassMeta):
         :param kwargs: Additional keyword arguments to initialize the dataclass with.
         """
         object.__setattr__(self, "__initializing", True)
-        combined = {**(data or {}), **kwargs}
+        combined = {**dict(data or {}), **kwargs}
         if combined:
             load(self, combined)
         object.__setattr__(self, "__initializing", False)
@@ -605,12 +608,16 @@ def from_attributes(
 ) -> _Dataclass_co:
     """
     Convert an object to a dataclass instance by loading fields using
-    the objects attributes
+    the object's attributes
 
     :param obj: The object to convert.
     :param dataclass_: The dataclass type to convert to.
     :return: The dataclass instance.
     """
+    if dataclass_.__config__.frozen:
+        raise TypeError(
+            "Cannot convert to a frozen dataclass. Use the constructor instead."
+        )
     instance = dataclass_()
     for name, field in dataclass_.__fields__.items():
         key = dataclass_.base_to_effective_name_map[name]

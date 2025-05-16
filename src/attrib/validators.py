@@ -1065,8 +1065,8 @@ def path(
 
 
 def mapping(
-    key_validator: Validator,
-    value_validator: Validator,
+    key_validator: typing.Optional[Validator],
+    value_validator: typing.Optional[Validator],
     *,
     deep: bool = False,
     message: typing.Optional[str] = None,
@@ -1085,6 +1085,10 @@ def mapping(
     :param message: Error message template
     :return: A validator function
     """
+    if not (key_validator or value_validator):
+        raise ValueError(
+            "Either one of `key_validator` or `value_validator` must be provided."
+        )
     msg = message or "'{name}' must be a valid mapping, got {value!r}"
 
     def validate_mapping(
@@ -1112,8 +1116,10 @@ def mapping(
             )
 
         for key, val in value.items():
-            key_validator(key, adapter, *args, **kwargs)
-            value_validator(val, adapter, *args, **kwargs)
+            if key_validator:
+                key_validator(key, adapter, *args, **kwargs)
+            if value_validator:
+                value_validator(val, adapter, *args, **kwargs)
 
     def deep_validate_mapping(
         value: typing.Any,
@@ -1147,8 +1153,11 @@ def mapping(
         while stack:
             current_value = stack.pop()
             for key, val in current_value.items():
-                key_validator(key, adapter, *args, **kwargs)
-                value_validator(val, adapter, *args, **kwargs)
+                if key_validator:
+                    key_validator(key, adapter, *args, **kwargs)
+                if value_validator:
+                    value_validator(val, adapter, *args, **kwargs)
+
                 if is_mapping(val):
                     stack.appendleft(val)
 

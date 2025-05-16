@@ -3,7 +3,10 @@ from typing_extensions import Unpack
 
 from attrib.descriptors.base import Field, FieldInitKwargs, NonTupleFieldType
 from attrib.dataclass import Dataclass
-from attrib.serializers import _serialize_instance
+from attrib.serializers import (
+    serialize_instance_asdict,
+    serialize_instance_asnamedtuple,
+)
 from attrib._utils import is_iterable
 
 
@@ -15,9 +18,18 @@ def nested_json_serializer(
     instance: _Dataclass_co,
     field: Field[_Dataclass_co],
     context: typing.Optional[typing.Dict[str, typing.Any]] = None,
-) -> typing.Dict[str, typing.Any]:
+) -> typing.Union[
+    typing.Dict[str, typing.Any], typing.Tuple[typing.Tuple[str, typing.Any], ...]
+]:
     """Serialize a nested dataclass instance to a dictionary."""
-    return _serialize_instance(
+    if context and context.get("__astuple", False):
+        return serialize_instance_asnamedtuple(
+            fmt="json",
+            instance=instance,
+            options_map=context.get("__options", None),
+            context=context,
+        )
+    return serialize_instance_asdict(
         fmt="json",
         instance=instance,
         options_map=context.get("__options", None) if context else None,
@@ -29,9 +41,18 @@ def nested_python_serializer(
     instance: _Dataclass_co,
     field: Field[_Dataclass_co],
     context: typing.Optional[typing.Dict[str, typing.Any]] = None,
-) -> typing.Dict[str, typing.Any]:
+) -> typing.Union[
+    typing.Dict[str, typing.Any], typing.Tuple[typing.Tuple[str, typing.Any], ...]
+]:
     """Serialize a nested dataclass instance to a dictionary."""
-    return _serialize_instance(
+    if context and context.get("__astuple", False):
+        return serialize_instance_asnamedtuple(
+            fmt="python",
+            instance=instance,
+            options_map=context.get("__options", None),
+            context=context,
+        )
+    return serialize_instance_asdict(
         fmt="python",
         instance=instance,
         options_map=context.get("__options", None) if context else None,
@@ -73,5 +94,5 @@ class Nested(Field[_Dataclass]):
             )
         if not issubclass(field_type, Dataclass):
             raise TypeError(
-                f"{type(self).__name__} must be a subclass of Dataclass. Got {field_type}."
+                f"{field_type} must be a subclass of {Dataclass.__qualname__}. Got {field_type}."
             )

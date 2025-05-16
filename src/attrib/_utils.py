@@ -117,6 +117,18 @@ def is_slotted_cls(cls: typing.Type[typing.Any], /) -> bool:
     return "__slots__" in cls.__dict__
 
 
+def _tuple_adder(
+    tuple_: typing.Tuple[typing.Any, ...], value: typing.Any
+) -> types.NoneType:
+    tuple_ = (*tuple_, value)
+
+
+def _frozenset_adder(
+    frozenset_: typing.FrozenSet[typing.Any], value: typing.Any
+) -> types.NoneType:
+    frozenset_ = frozenset(list(frozenset_) + [value])
+
+
 def _get_itertype_adder(field_type: typing.Type[IterType]) -> typing.Callable:
     """
     Get the appropriate adder function for the specified iterable type.
@@ -133,13 +145,9 @@ def _get_itertype_adder(field_type: typing.Type[IterType]) -> typing.Callable:
     if issubclass(field_type, set):
         return set.add
     if issubclass(field_type, tuple):
-        return tuple.__add__
+        return _tuple_adder
     if issubclass(field_type, frozenset):
-        # frozenset is immutable, so we need to create a new frozenset
-        # with the new value added
-        return lambda frozenset_, value: frozenset(
-            frozenset(list(frozenset_) + [value])
-        )
+        return _frozenset_adder
     raise TypeError(f"Unsupported iterable type: {field_type}")
 
 
@@ -379,7 +387,6 @@ HASHABLE_TYPES = (
     bytes,
     bytearray,
     frozenset,
-    tuple,
     complex,
 )
 

@@ -22,21 +22,88 @@ class Person(attrib.Dataclass, slots=False):
 
     name = attrib.String(max_length=100)
     age = attrib.Integer(min_value=0, max_value=30)
+    friends = attrib.List(
+        child=attrib.Nested("Person", lazy=False),
+        default=attrib.Factory(list),
+        allow_null=True,
+    )
 
 
-adapter = attrib.build_adapter(
-    typing.Mapping[str, Person], strict=False
+Adapter = attrib.build_adapter(
+    typing.Mapping[
+        str,
+        typing.Mapping[
+            str,
+            typing.Optional[typing.Tuple[Person]],
+        ],
+    ],
+    strict=False,
 )
-print(
-    adapter.serialize(
-        adapter(
+log(
+    Adapter.serialize(
+        Adapter(
             {
-                "john": Person(name="John", age=25),
-                "doe": {"name": "Doe", "age": 30},
-                "jane": "Jane",
+                "group1": {
+                    "students": [
+                        {
+                            "name": "John Doe",
+                            "age": "20",
+                            "friends": [
+                                {
+                                    "name": "Jane Smith",
+                                    "age": "22",
+                                    "friends": [
+                                        {
+                                            "name": "Alice Johnson",
+                                            "age": 19,
+                                        }
+                                    ],
+                                },
+                            ],
+                        },
+                        {
+                            "name": "Jane Smith",
+                            "age": "22",
+                            "friends": [
+                                {
+                                    "name": "Alice Johnson",
+                                    "age": "19",
+                                }
+                            ],
+                        },
+                    ],
+                    "teachers": [
+                        {
+                            "name": "Dr. Brown",
+                            "age": "25",
+                        },
+                    ],
+                },
+                "group2": {
+                    "students": [
+                        {
+                            "name": "Alice Johnson",
+                            "age": "19",
+                        },
+                        {
+                            "name": "Bob Lee",
+                            "age": "21",
+                            "friends": [
+                                {
+                                    "name": "Charlie Kim",
+                                    "age": "23",
+                                }
+                            ],
+                        },
+                    ],
+                    "teachers": None,
+                },
             }
         ),
-        fmt="json",
+        options={
+            attrib.Option(Person, depth=0, strict=True),
+        },
+        astuple=True,
     )
 )
 
@@ -103,7 +170,7 @@ class Student(PersonalInfo, slots=True, hash=True):
     friend: attrib.Field["AttrsStudent"] = attrib.Field(
         AttrsStudent,
         lazy=False,
-        default=lambda: attrib.serialize(dummy_student, fmt="json"),
+        default=lambda: attrib.serialize(dummy_student, fmt="python"),
         allow_null=True,
         serializers={"json": lambda x, *_: attrib.make_jsonable(x)},
         deserializer=lambda x, _: AttrsStudent(**x),

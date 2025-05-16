@@ -1,10 +1,12 @@
 """Dataclass serialization module."""
 
-from collections import deque, defaultdict
+from collections import deque
 import typing
 import os
+from annotated_types import Ge, MinLen
+from typing_extensions import Annotated
 
-from attrib._typing import Serializer, EMPTY
+from attrib._typing import EMPTY
 from attrib.exceptions import SerializationError
 from attrib.dataclass import Dataclass
 
@@ -28,11 +30,11 @@ class Option(typing.NamedTuple):
 
     target: typing.Type[Dataclass] = Dataclass
     """Target dataclass type for serialization."""
-    depth: typing.Optional[int] = None
+    depth: Annotated[typing.Optional[int], Ge(0)] = None
     """Depth for nested serialization."""
-    include: typing.Optional[typing.Set[str]] = None
+    include: typing.Optional[Annotated[typing.Set[str], MinLen(1)]] = None
     """Fields to include in serialization."""
-    exclude: typing.Optional[typing.Set[str]] = None
+    exclude: typing.Optional[Annotated[typing.Set[str], MinLen(1)]] = None
     """Fields to exclude from serialization."""
     strict: bool = False
     """If False, instances of subclasses of the target class will be serialized using this
@@ -70,7 +72,7 @@ def resolve_option(
     return DEFAULT_OPTION
 
 
-def _serialize_instance_recursive(
+def _serialize_instance_asdict_recursive(
     fmt: str,
     instance: Dataclass,
     options_map: typing.Optional[OptionsMap] = None,
@@ -136,7 +138,7 @@ def _serialize_instance_recursive(
                 nested_context = context.copy()
                 nested_context["__depth"] = current_depth + 1
 
-                serialized_data[key] = _serialize_instance_recursive(
+                serialized_data[key] = _serialize_instance_asdict_recursive(
                     fmt=fmt,
                     instance=value,
                     options_map=options_map,
@@ -157,7 +159,7 @@ def _serialize_instance_recursive(
     return serialized_data
 
 
-def _serialize_instance_iterative(
+def _serialize_instance_asdict_iterative(
     fmt: str,
     instance: Dataclass,
     options_map: typing.Optional[OptionsMap] = None,
@@ -179,7 +181,9 @@ def _serialize_instance_iterative(
     try:
         serialized_data = {}
         stack = deque([(instance, 0, serialized_data)])
-        context = context or {}
+
+        if context is None:
+            context = {}
         if "__options" not in context:
             context["__options"] = options_map
 
@@ -236,10 +240,219 @@ def _serialize_instance_iterative(
     return serialized_data
 
 
+def _serialize_instance_asnamedtuple_recursive(
+    fmt: str,
+    instance: Dataclass,
+    options_map: typing.Optional[OptionsMap] = None,
+    context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+) -> typing.Tuple[typing.Tuple[str, typing.Any], ...]:
+    """
+    Recursively serialize a dataclass instance into a tuple of (name, value) pairs.
+
+    :param fmt: Serialization format (e.g., 'python', 'json').
+    :param instance: The dataclass instance to serialize.
+    :param options_map: Optional serialization options map.
+    :param context: Optional context dictionary.
+    :return: Serialized tuple of (name, value) pairs.
+    :raises SerializationError: If serialization fails.
+    """
+    instance_type = type(instance)
+
+    if options_map is None:
+        option = DEFAULT_OPTION
+        options_map = {}
+    elif instance_type in options_map:
+        option = options_map[instance_type]
+    else:
+        option = resolve_option(instance_type, options_map)
+        options_map[instance_type] = option  # Cache resolved option
+
+    field_names = instance.__fields__.keys()
+    if option.include:
+        field_names = [fn for fn in field_names if fn in option.include]
+    elif option.exclude:
+        field_names = [fn for fn in field_names if fn not in option.exclude]
+
+    if context is None:
+        context = {}
+    if "__options" not in context:
+        context["__options"] = options_map
+    if "__astuple" not in context:
+        context["__astuple"] = True
+
+    current_depth = context.get("__depth", 0)
+
+    serialized_items = []
+
+    for name in field_names:
+        field = instance.__fields__[name]
+        key = field.effective_name
+        try:
+            value = field.__get__(instance, owner=type(instance))
+            if value is EMPTY:
+                continue
+
+            if isinstance(value, Dataclass):
+                if option.depth is not None and current_depth >= option.depth:
+                    serialized_items.append((key, value))
+                    continue
+
+                nested_option = Option(
+                    target=type(value),
+                    depth=option.depth,
+                    include=option.include,
+                    exclude=option.exclude,
+                    strict=option.strict,
+                )
+                options_map[type(value)] = nested_option
+                nested_context = context.copy()
+                nested_context["__depth"] = current_depth + 1
+
+                nested = _serialize_instance_asnamedtuple_recursive(
+                    fmt=fmt,
+                    instance=value,
+                    options_map=options_map,
+                    context=nested_context,
+                )
+                serialized_items.append((key, nested))
+            else:
+                serialized_value = field.serialize(
+                    value,
+                    fmt=fmt,
+                    context=context,
+                )
+                serialized_items.append((key, serialized_value))
+        except (TypeError, ValueError) as exc:
+            raise SerializationError(
+                f"Failed to serialize '{type(instance).__name__}.{key}'.",
+                key,
+            ) from exc
+
+    return tuple(serialized_items)
+
+
+def _serialize_instance_asnamedtuple_iterative(
+    fmt: str,
+    instance: Dataclass,
+    options_map: typing.Optional[OptionsMap] = None,
+    context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+) -> typing.Tuple[typing.Tuple[str, typing.Any], ...]:
+    """
+    Iteratively serialize a dataclass instance into a tuple of (name, value) pairs.
+
+    *Significantly faster and memory efficient than recursive serialization for*
+    *large/deeply nested dataclass serialization.*
+
+    :param instance: The dataclass instance to serialize.
+    :param fmt: Serialization format (e.g., 'python', 'json').
+    :param options_map: Optional serialization options.
+    :param context: Optional context dictionary.
+    :return: Serialized tuple of (name, value) pairs.
+    :raises SerializationError: If serialization fails.
+    """
+    try:
+        serialized_items = []
+        stack = deque([(instance, 0, serialized_items)])
+        context = context or {}
+        if "__options" not in context:
+            context["__options"] = options_map
+        if "__astuple" not in context:
+            context["__astuple"] = True
+
+        local_options_map = options_map or {}
+
+        while stack:
+            current_instance, current_depth, current_output = stack.pop()
+            instance_type = type(current_instance)
+
+            if instance_type in local_options_map:
+                option = local_options_map[instance_type]
+            else:
+                option = resolve_option(instance_type, local_options_map)
+                local_options_map[instance_type] = option
+
+            field_names = list(current_instance.__fields__.keys())
+            if option.include:
+                field_names = [fn for fn in field_names if fn in option.include]
+            elif option.exclude:
+                field_names = [fn for fn in field_names if fn not in option.exclude]
+
+            for name in field_names:
+                field = current_instance.__fields__[name]
+                key = field.effective_name
+
+                try:
+                    value = field.__get__(current_instance, owner=instance_type)
+                    if value is EMPTY:
+                        continue
+
+                    if isinstance(value, Dataclass):
+                        if option.depth is not None and current_depth >= option.depth:
+                            current_output.append((key, value))
+                            continue
+
+                        nested_output = []
+                        current_output.append((key, nested_output))
+                        stack.appendleft((value, current_depth + 1, nested_output))
+                    else:
+                        serialized_value = field.serialize(
+                            value,
+                            fmt=fmt,
+                            context=context,
+                        )
+                        current_output.append((key, serialized_value))
+
+                except (TypeError, ValueError) as exc:
+                    raise SerializationError(
+                        f"Failed to serialize '{type(current_instance).__name__}.{key}'.",
+                        key,
+                    ) from exc
+    except (TypeError, ValueError) as exc:
+        raise SerializationError(
+            f"Failed to serialize '{type(instance).__name__}'.", exc
+        ) from exc
+
+    return tuple(serialized_items)
+
+
 if SERIALIZATION_STYLE == "recursive":
-    _serialize_instance = _serialize_instance_recursive
+    serialize_instance_asdict = _serialize_instance_asdict_recursive
+    serialize_instance_asnamedtuple = _serialize_instance_asnamedtuple_recursive
 else:
-    _serialize_instance = _serialize_instance_iterative
+    serialize_instance_asdict = _serialize_instance_asdict_iterative
+    serialize_instance_asnamedtuple = _serialize_instance_asnamedtuple_iterative
+
+
+@typing.overload
+def serialize(
+    obj: Dataclass,
+    *,
+    fmt: typing.Union[typing.Literal["python", "json"], str] = ...,
+    options: typing.Optional[typing.Iterable[Option]] = ...,
+    context: typing.Optional[typing.Dict[str, typing.Any]] = ...,
+) -> typing.Dict[str, typing.Any]: ...
+
+
+@typing.overload
+def serialize(
+    obj: Dataclass,
+    *,
+    fmt: typing.Union[typing.Literal["python", "json"], str] = ...,
+    options: typing.Optional[typing.Iterable[Option]] = ...,
+    astuple: typing.Literal[False],
+    context: typing.Optional[typing.Dict[str, typing.Any]] = ...,
+) -> typing.Dict[str, typing.Any]: ...
+
+
+@typing.overload
+def serialize(
+    obj: Dataclass,
+    *,
+    fmt: typing.Union[typing.Literal["python", "json"], str] = ...,
+    options: typing.Optional[typing.Iterable[Option]] = ...,
+    astuple: typing.Literal[True],
+    context: typing.Optional[typing.Dict[str, typing.Any]] = ...,
+) -> typing.Tuple[typing.Tuple[str, typing.Any], ...]: ...
 
 
 def serialize(
@@ -247,8 +460,11 @@ def serialize(
     *,
     fmt: typing.Union[typing.Literal["python", "json"], str] = "python",
     options: typing.Optional[typing.Iterable[Option]] = None,
+    astuple: bool = False,
     context: typing.Optional[typing.Dict[str, typing.Any]] = None,
-) -> typing.Dict[str, typing.Any]:
+) -> typing.Union[
+    typing.Dict[str, typing.Any], typing.Tuple[typing.Tuple[str, typing.Any], ...]
+]:
     """
     Build a serialized representation of the dataclass.
 
@@ -296,23 +512,25 @@ def serialize(
     ```
     """
     try:
+        options_map = None
         if options:
             options_map = {option.target: option for option in options}
-            return _serialize_instance(
+
+        if astuple:
+            return serialize_instance_asnamedtuple(
                 fmt,
                 instance=obj,
                 options_map=options_map,
                 context=context,
             )
 
-        return _serialize_instance(
+        return serialize_instance_asdict(
             fmt,
             instance=obj,
-            options_map=None,
+            options_map=options_map,
             context=context,
         )
     except (TypeError, ValueError) as exc:
         raise SerializationError(
             f"Failed to serialize '{obj.__class__.__name__}'.", exc
         ) from exc
-

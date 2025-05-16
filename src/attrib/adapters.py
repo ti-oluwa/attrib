@@ -1,7 +1,7 @@
 import inspect
 import typing
 import functools
-from collections.abc import Mapping, MutableMapping, Sequence
+from collections.abc import Mapping, MutableMapping, Sequence, Set
 from collections import defaultdict
 
 from attrib._typing import Validator, T, Serializer, Deserializer
@@ -11,7 +11,6 @@ from attrib._utils import (
     is_mapping_type,
     is_iterable,
     make_jsonable,
-    _get_itertype_adder,
     SerializerRegistry,
     _unsupported_serializer_factory,
     any_func,
@@ -231,6 +230,11 @@ def _build_non_generic_type_deserializer(
         if issubclass(type_, Dataclass):
             return _dataclass_deserializer(type_, value, **kwargs)
 
+        if issubclass(type_, type(None)) and value is not None:
+            raise DeserializationError(
+                f"Cannot deserialize {value!r}. Expected value to be None"
+            )
+
         try:
             return type_(value)  # type: ignore[call-arg]
         except (ValueError, TypeError) as exc:
@@ -269,6 +273,16 @@ def _non_generic_type_python_serializer(
     return value
 
 
+BUILTIN_TYPES = (
+    int,
+    float,
+    bool,
+    Set,
+    Sequence,
+    Mapping,
+)
+
+
 def _dataclass_deserializer(
     target: typing.Type[_Dataclass_co],
     value: typing.Any,
@@ -286,7 +300,7 @@ def _dataclass_deserializer(
     """
     if isinstance(value, target):
         return value
-    if not isinstance(value, Mapping):
+    if not isinstance(value, BUILTIN_TYPES):
         kwargs.setdefault("attributes", True)
     return deserialize(target, value, **kwargs)
 
@@ -364,17 +378,20 @@ def _build_generic_type_deserializer(
 
         def mapping_deserializer(
             value: typing.Any,
-            *_: typing.Any,
-            **__: typing.Any,
+            *args: typing.Any,
+            **kwargs: typing.Any,
         ) -> typing.Mapping[typing.Any, typing.Any]:
             try:
                 new_mapping = origin.__new__(origin)  # type: ignore[assignment]
-                iterator = value.items()
-                if not isinstance(value, Mapping):
+                if isinstance(value, Mapping):
+                    iterator = value.items()
+                else:
                     iterator = iter(value)
 
                 for key, item in iterator:
-                    new_mapping[key_deserializer(key)] = value_deserializer(item)
+                    new_mapping[key_deserializer(key, *args, **kwargs)] = (
+                        value_deserializer(item, *args, **kwargs)
+                    )
                 return new_mapping
             except Exception as exc:
                 raise DeserializationError(
@@ -386,26 +403,24 @@ def _build_generic_type_deserializer(
     if is_iterable_type(origin, exclude=(str, bytes, dict)) or issubclass(
         origin, Sequence
     ):
-        if inspect.isabstract(origin):
-            origin = list
-        adder = _get_itertype_adder(origin)
 
         def iterable_deserializer(
             value: typing.Any,
-            *_: typing.Any,
-            **__: typing.Any,
+            *args: typing.Any,
+            **kwargs: typing.Any,
         ) -> typing.Iterable[typing.Any]:
             if not is_iterable(value):
                 raise DeserializationError(
                     f"Cannot deserialize {value!r} to {target!r}"
                 )
 
-            new_iterable = origin.__new__(origin)
+            new_iterable = []
             for item in value:
                 error = None
                 for deserializer in args_deserializers:
                     try:
-                        adder(new_iterable, deserializer(item))
+                        new_iterable.append(deserializer(item, *args, **kwargs))
+                        break
                     except (TypeError, ValueError, DeserializationError) as exc:
                         error = exc
                         continue
@@ -414,6 +429,9 @@ def _build_generic_type_deserializer(
                         raise DeserializationError(
                             f"Failed to deserialize {value!r} to {target!r}"
                         ) from error
+
+            if origin is not list:
+                return origin(new_iterable)  # type: ignore
             return new_iterable
 
         return iterable_deserializer
@@ -505,6 +523,7 @@ def _build_generic_type_serializer(
     """
     origin = typing.get_origin(target)
     args = typing.get_args(target)
+
     if not (origin or args):
         raise TypeError(
             f"Cannot build {fmt!r} serializer for non-generic type {target!r}"
@@ -556,6 +575,7 @@ def _build_generic_type_serializer(
             for arg in args
         ]
     )
+
     if not inspect.isclass(origin):
         return any_func(
             *args_serializers,
@@ -578,17 +598,20 @@ def _build_generic_type_serializer(
 
         def mapping_serializer(
             value: typing.Any,
-            *_: typing.Any,
-            **__: typing.Any,
+            *args: typing.Any,
+            **kwargs: typing.Any,
         ) -> typing.Mapping[typing.Any, typing.Any]:
             try:
                 new_mapping = origin.__new__(origin)  # type: ignore[assignment]
-                iterator = value.items()
-                if not isinstance(value, Mapping):
+                if isinstance(value, Mapping):
+                    iterator = value.items()
+                else:
                     iterator = iter(value)
 
                 for key, item in iterator:
-                    new_mapping[key_serializer(key)] = value_serializer(item)
+                    new_mapping[key_serializer(key, *args, **kwargs)] = (
+                        value_serializer(item, *args, **kwargs)
+                    )
                 return new_mapping
             except (SerializationError, TypeError, ValueError) as exc:
                 raise SerializationError(
@@ -600,24 +623,22 @@ def _build_generic_type_serializer(
     if is_iterable_type(origin, exclude=(str, bytes, dict)) or issubclass(
         origin, Sequence
     ):
-        if inspect.isabstract(origin):
-            origin = list
-        adder = _get_itertype_adder(origin)
 
         def iterable_serializer(
             value: typing.Any,
-            *_: typing.Any,
-            **__: typing.Any,
+            *args: typing.Any,
+            **kwargs: typing.Any,
         ) -> typing.Iterable[typing.Any]:
             if not is_iterable(value):
                 raise SerializationError(f"Cannot serialize {value!r} to {target!r}")
 
-            new_iterable = origin.__new__(origin)
+            new_iterable = []
             for item in value:
                 error = None
                 for serializer in args_serializers:
                     try:
-                        adder(new_iterable, serializer(item))
+                        new_iterable.append(serializer(item, *args, **kwargs))
+                        break
                     except (SerializationError, TypeError, ValueError) as exc:
                         error = exc
                         continue
@@ -626,6 +647,9 @@ def _build_generic_type_serializer(
                         raise SerializationError(
                             f"Failed to serialize {value!r} to {target!r}"
                         ) from error
+
+            if origin is not list:
+                return origin(new_iterable)  # type: ignore
             return new_iterable
 
         return iterable_serializer
@@ -746,12 +770,12 @@ def _build_dataclass_adapter(
         instance_of(target),
     ]
     all_serializers = {
-        "json": lambda value, **kwargs: serialize(
+        "json": lambda value, *_, **kwargs: serialize(
             value,
             fmt="json",
             **kwargs,
         ),
-        "python": lambda value, **kwargs: serialize(
+        "python": lambda value, *_, **kwargs: serialize(
             value,
             fmt="python",
             **kwargs,

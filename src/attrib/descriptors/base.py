@@ -61,6 +61,9 @@ class AnyType:
     def __new__(cls):
         raise TypeError("AnyType cannot be instantiated.")
 
+    def __instancecheck__(self, instance: typing.Any) -> bool:
+        return True
+
 
 NonTupleFieldType: typing.TypeAlias = typing.Union[
     str,
@@ -253,7 +256,7 @@ def resolve_type(
     if isinstance(field_type, typing.ForwardRef):
         field_type = resolve_forward_ref(field_type, globalns, localns)
     elif not issubclass(field_type, enum.Enum) and is_iterable(  # type: ignore[arg-type]
-        field_type, exclude=(str, bytes)
+        field_type, exclude=(str, bytes, dict)
     ):
         field_type = tuple(
             resolve_forward_ref(arg, globalns, localns)
@@ -1077,12 +1080,17 @@ class Iterable(typing.Generic[IterType, _V], Field[IterType]):
         self.child = child or Any()
         self.adder = _get_itertype_adder(field_type)
 
+    def bind(self, parent: typing.Type[typing.Any], name: str) -> NoneType:
+        super().bind(parent, name)
+        self.child.bind(parent, f"{name}.__child__")
+
     def post_init_validate(self):
         super().post_init_validate()
         if not isinstance(self.child, Field):
             raise TypeError(
                 f"'child' must be a field instance , not {type(self.child).__name__}."
             )
+        self.child.post_init_validate()
 
     def check_type(self, value: typing.Any) -> typing.TypeGuard[IterType]:
         if not super().check_type(value):

@@ -6,7 +6,13 @@ R = typing.TypeVar("R")
 T = typing.TypeVar("T")
 
 
+RawData: typing.TypeAlias = typing.Union[
+    typing.Mapping[bytes, bytes],
+    typing.Sequence[typing.Tuple[bytes, bytes]],
+]
+
 IterType = typing.TypeVar("IterType", bound=typing.Iterable[typing.Any])
+
 
 @typing.runtime_checkable
 class SupportsRichComparison(typing.Protocol):
