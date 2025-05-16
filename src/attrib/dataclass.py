@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing_extensions import Unpack
 
 from attrib.descriptors.base import Field, Value
-from attrib.exceptions import FrozenInstanceError
+from attrib.exceptions import DeserializationError, FrozenInstanceError
 from attrib._typing import RawData
 
 
@@ -602,7 +602,7 @@ def load(
     return instance
 
 
-def from_attributes(
+def _from_attributes(
     dataclass_: typing.Type[_Dataclass_co],
     obj: typing.Any,
 ) -> _Dataclass_co:
@@ -644,8 +644,10 @@ def deserialize(
     :param attributes: If True, load fields using the object's attributes.
     :return: The dataclass instance.
     """
+    if obj is None:
+        raise DeserializationError(f"Cannot deserialize {obj!r}")
     if attributes:
-        return from_attributes(dataclass_, obj)
+        return _from_attributes(dataclass_, obj)
     return dataclass_(obj)
 
 

@@ -4,7 +4,7 @@
 Setup structured data with fields that support type enforcement, validation, and serialization.
 """
 
-from .dataclass import Dataclass, Config, load, deserialize, from_attributes  # noqa
+from .dataclass import Dataclass, Config, load, deserialize  # noqa
 from .descriptors.base import *  # noqa
 from .descriptors.nested import Nested  # noqa
 from .serializers import serialize, Option  # noqa

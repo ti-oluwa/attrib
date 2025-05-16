@@ -24,8 +24,8 @@ class SupportsRichComparison(typing.Protocol):
     def __ne__(self, other: typing.Any, /) -> bool: ...
 
 
-Serializer: typing.TypeAlias = typing.Callable[..., typing.Any]
-Deserializer: typing.TypeAlias = typing.Callable[..., typing.Any]
+Serializer: typing.TypeAlias = typing.Callable[..., R]
+Deserializer: typing.TypeAlias = typing.Callable[..., R]
 
 
 @typing.runtime_checkable
@@ -41,9 +41,25 @@ class TypeAdapter(typing.Generic[T], typing.Protocol):
 
     name: typing.Optional[str]
 
+    @typing.overload
+    def validate(
+        self,
+        value: T,
+        *args: typing.Any,
+        **kwargs: typing.Any,
+    ) -> T: ...
+
+    @typing.overload
     def validate(
         self,
         value: typing.Any,
+        *args: typing.Any,
+        **kwargs: typing.Any,
+    ) -> typing.Any: ...
+
+    def validate(
+        self,
+        value: typing.Union[T, typing.Any],
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> typing.Union[T, typing.Any]: ...

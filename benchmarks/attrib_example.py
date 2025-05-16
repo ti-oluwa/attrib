@@ -30,80 +30,22 @@ class Person(attrib.Dataclass, slots=False):
 
 
 Adapter = attrib.build_adapter(
-    typing.Mapping[
-        str,
-        typing.Mapping[
-            str,
-            typing.Optional[typing.Tuple[Person]],
-        ],
+    typing.Tuple[
+        typing.List[typing.Optional[Person]],
+        typing.Dict[str, typing.List[int]],
+        typing.Optional[str],
     ],
     strict=False,
 )
+adapted = Adapter(([{"name": "One", "age": 18}, None], {"scores": [10, 20, 30]}, None))
+print(adapted)
 log(
     Adapter.serialize(
-        Adapter(
-            {
-                "group1": {
-                    "students": [
-                        {
-                            "name": "John Doe",
-                            "age": "20",
-                            "friends": [
-                                {
-                                    "name": "Jane Smith",
-                                    "age": "22",
-                                    "friends": [
-                                        {
-                                            "name": "Alice Johnson",
-                                            "age": 19,
-                                        }
-                                    ],
-                                },
-                            ],
-                        },
-                        {
-                            "name": "Jane Smith",
-                            "age": "22",
-                            "friends": [
-                                {
-                                    "name": "Alice Johnson",
-                                    "age": "19",
-                                }
-                            ],
-                        },
-                    ],
-                    "teachers": [
-                        {
-                            "name": "Dr. Brown",
-                            "age": "25",
-                        },
-                    ],
-                },
-                "group2": {
-                    "students": [
-                        {
-                            "name": "Alice Johnson",
-                            "age": "19",
-                        },
-                        {
-                            "name": "Bob Lee",
-                            "age": "21",
-                            "friends": [
-                                {
-                                    "name": "Charlie Kim",
-                                    "age": "23",
-                                }
-                            ],
-                        },
-                    ],
-                    "teachers": None,
-                },
-            }
-        ),
+        adapted,
         options={
             attrib.Option(Person, depth=0, strict=True),
         },
-        astuple=True,
+        astuple=False,
     )
 )
 

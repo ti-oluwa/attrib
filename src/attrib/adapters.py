@@ -68,10 +68,12 @@ class TypeAdapter(typing.Generic[T]):
         name: typing.Optional[str] = None,
         /,
         *,
+        deserializer: typing.Optional[Deserializer[T]] = None,
         validators: typing.Optional[typing.Iterable[Validator[T]]] = None,
-        serializers: typing.Optional[typing.Mapping[str, Serializer]] = None,
-        deserializer: typing.Optional[Deserializer] = None,
-    ):
+        serializers: typing.Optional[
+            typing.Mapping[str, Serializer[typing.Any]]
+        ] = None,
+    ) -> None:
         """
         Initialize the adapter.
 
@@ -87,12 +89,28 @@ class TypeAdapter(typing.Generic[T]):
         )
         self.deserializer = deserializer
 
+    @typing.overload
+    def validate(
+        self,
+        value: T,
+        *args: typing.Any,
+        **kwargs: typing.Any,
+    ) -> T: ...
+
+    @typing.overload
     def validate(
         self,
         value: typing.Any,
         *args: typing.Any,
         **kwargs: typing.Any,
-    ) -> typing.Any:
+    ) -> typing.Any: ...
+
+    def validate(
+        self,
+        value: typing.Union[T, typing.Any],
+        *args: typing.Any,
+        **kwargs: typing.Any,
+    ) -> typing.Union[T, typing.Any]:
         """
         Validate the value using the validator.
 
@@ -133,7 +151,7 @@ class TypeAdapter(typing.Generic[T]):
         value: typing.Any,
         *args: typing.Any,
         **kwargs: typing.Any,
-    ) -> typing.Any:
+    ) -> T:
         """
         Deserialize the value using the deserializer.
 
@@ -142,32 +160,35 @@ class TypeAdapter(typing.Generic[T]):
         :param kwargs: Additional keyword arguments to pass to the deserializer
         :return: The deserialized value
         """
-        if self.deserializer:
-            try:
-                return self.deserializer(value, *args, **kwargs)
-            except (DeserializationError, ValueError, TypeError) as exc:
-                raise DeserializationError(
-                    f"{value!r} cannot be deserialized to {self.name!r}"
-                ) from exc
-        return value
+        if not self.deserializer:
+            raise DeserializationError(
+                f"Cannot deserialize value. '{self.name or type(self).__name__}' was not initialized with a deserializer"
+            )
+        try:
+            return self.deserializer(value, *args, **kwargs)
+        except (DeserializationError, ValueError, TypeError) as exc:
+            raise DeserializationError(
+                f"{value!r} cannot be deserialized to {self.name!r}"
+            ) from exc
 
     def __call__(
         self,
-        value: typing.Any,
+        value: typing.Union[T, typing.Any],
         *args: typing.Any,
         **kwargs: typing.Any,
-    ) -> typing.Any:
+    ) -> T:
         """
         Call the adapter to coerce the value to the adapted type and validate it.
         This method is a convenience method that combines deserialization and validation.
 
         :param value: The value to adapt
-        :param args: Additional arguments for validation
-        :param kwargs: Additional keyword arguments for validation
+        :param args: Additional arguments for deserialization/validation
+        :param kwargs: Additional keyword arguments for deserialization/validation
         :return: The validated value
         """
-        deserialized = self.deserialize(value)
-        return self.validate(deserialized, *args, **kwargs)
+        deserialized = self.deserialize(value, *args, **kwargs)
+        self.validate(deserialized, *args, **kwargs)
+        return deserialized
 
     def __instancecheck__(self, value: typing.Any) -> bool:
         """
@@ -308,7 +329,7 @@ def _dataclass_deserializer(
 @functools.lru_cache
 def _build_generic_type_deserializer(
     target: typing.Type[T], *, strict: bool = False
-) -> Deserializer:
+) -> Deserializer[typing.Any]:
     """
     Build a deserializer for a generic type.
 
@@ -514,7 +535,7 @@ def _build_generic_type_serializer(
     target: typing.Type[T],
     *,
     fmt: typing.Literal["json", "python"] = "python",
-) -> Serializer:
+) -> Serializer[typing.Any]:
     """
     Build a python serializer for a generic type.
 
@@ -660,14 +681,14 @@ def _build_generic_type_serializer(
 
 
 def _build_generic_type_adapter(
-    target: typing.Type[T],
+    target: T,
     /,
     *,
     name: typing.Optional[str] = None,
     strict: bool = False,
     validators: typing.Optional[typing.Iterable[Validator[T]]] = None,
-    serializers: typing.Optional[typing.Mapping[str, Serializer]] = None,
-    deserializer: typing.Optional[Deserializer] = None,
+    serializers: typing.Optional[typing.Mapping[str, Serializer[typing.Any]]] = None,
+    deserializer: typing.Optional[Deserializer[T]] = None,
 ) -> TypeAdapter[T]:
     """
     Build an adapter for a generic type.
@@ -714,8 +735,8 @@ def _build_non_generic_type_adapter(
     name: typing.Optional[str] = None,
     strict: bool = False,
     validators: typing.Optional[typing.Iterable[Validator[T]]] = None,
-    serializers: typing.Optional[typing.Mapping[str, Serializer]] = None,
-    deserializer: typing.Optional[Deserializer] = None,
+    serializers: typing.Optional[typing.Mapping[str, Serializer[typing.Any]]] = None,
+    deserializer: typing.Optional[Deserializer[T]] = None,
 ) -> TypeAdapter[T]:
     """
     Build an adapter for a non-generic type.
@@ -747,14 +768,14 @@ def _build_non_generic_type_adapter(
 
 
 def _build_dataclass_adapter(
-    target: typing.Type[T],
+    target: typing.Type[_Dataclass_co],
     /,
     *,
     name: typing.Optional[str] = None,
-    validators: typing.Optional[typing.Iterable[Validator[T]]] = None,
-    serializers: typing.Optional[typing.Mapping[str, Serializer]] = None,
-    deserializer: typing.Optional[Deserializer] = None,
-) -> TypeAdapter[T]:
+    validators: typing.Optional[typing.Iterable[Validator[_Dataclass_co]]] = None,
+    serializers: typing.Optional[typing.Mapping[str, Serializer[typing.Any]]] = None,
+    deserializer: typing.Optional[Deserializer[_Dataclass_co]] = None,
+) -> TypeAdapter[_Dataclass_co]:
     """
     Build a dataclass type adapter for the target type.
 
@@ -782,11 +803,20 @@ def _build_dataclass_adapter(
         ),
         **(serializers or {}),
     }
+    if not deserializer:
+        return TypeAdapter(
+            name or repr(target),
+            validators=all_validators,
+            serializers=all_serializers,
+            deserializer=lambda value, *args, **kwargs: _dataclass_deserializer(
+                target, value, *args, **kwargs
+            ),
+        )
     return TypeAdapter(
         name or repr(target),
         validators=all_validators,
         serializers=all_serializers,
-        deserializer=deserializer or _dataclass_deserializer,
+        deserializer=deserializer,
     )
 
 
@@ -798,8 +828,8 @@ def build_adapter(
     name: typing.Optional[str] = ...,
     strict: bool = ...,
     validators: typing.Optional[typing.Iterable[Validator[T]]] = ...,
-    serializers: typing.Optional[typing.Mapping[str, Serializer]] = ...,
-    deserializer: typing.Optional[Deserializer] = ...,
+    serializers: typing.Optional[typing.Mapping[str, Serializer[typing.Any]]] = ...,
+    deserializer: typing.Optional[Deserializer[T]] = ...,
 ) -> TypeAdapter[T]: ...
 
 
@@ -810,21 +840,34 @@ def build_adapter(
     *,
     name: typing.Optional[str] = ...,
     validators: typing.Optional[typing.Iterable[Validator[_Dataclass_co]]] = ...,
-    serializers: typing.Optional[typing.Mapping[str, Serializer]] = ...,
-    deserializer: typing.Optional[Deserializer] = ...,
+    serializers: typing.Optional[typing.Mapping[str, Serializer[typing.Any]]] = ...,
+    deserializer: typing.Optional[Deserializer[_Dataclass_co]] = ...,
 ) -> TypeAdapter[_Dataclass_co]: ...
 
 
+@typing.overload
 def build_adapter(
-    target: typing.Type[T],
+    target: T,
+    /,
+    *,
+    name: typing.Optional[str] = ...,
+    strict: bool = ...,
+    validators: typing.Optional[typing.Iterable[Validator[T]]] = ...,
+    serializers: typing.Optional[typing.Mapping[str, Serializer[typing.Any]]] = ...,
+    deserializer: typing.Optional[Deserializer[T]] = ...,
+) -> TypeAdapter[T]: ...
+
+
+def build_adapter(
+    target: typing.Union[T, typing.Type[T], typing.Type[_Dataclass_co]],
     /,
     *,
     name: typing.Optional[str] = None,
     strict: bool = False,
-    validators: typing.Optional[typing.Iterable[Validator[T]]] = None,
-    serializers: typing.Optional[typing.Mapping[str, Serializer]] = None,
+    validators: typing.Optional[typing.Iterable[Validator]] = None,
+    serializers: typing.Optional[typing.Mapping[str, Serializer[typing.Any]]] = None,
     deserializer: typing.Optional[Deserializer] = None,
-) -> TypeAdapter[T]:
+) -> TypeAdapter[typing.Any]:
     """
     Build a type adapter for the target type.
 

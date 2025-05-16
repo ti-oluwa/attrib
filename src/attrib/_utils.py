@@ -363,7 +363,7 @@ class SerializerRegistry(typing.NamedTuple):
     :param serializer_map: A dictionary mapping format names to their respective serializer functions.
     """
 
-    serializer_map: typing.DefaultDict[str, Serializer] = defaultdict(
+    serializer_map: typing.DefaultDict[str, Serializer[typing.Any]] = defaultdict(
         _unsupported_serializer_factory
     )
 
