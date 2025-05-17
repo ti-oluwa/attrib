@@ -1,7 +1,7 @@
 import typing
 
 try:
-    from typing import ParamSpec, Self
+    from typing import ParamSpec, Self # type: ignore[import]
 except ImportError:
     from typing_extensions import ParamSpec, Self
 
@@ -246,10 +246,10 @@ def get_stats_data(
     count = 0
     if max_rows:
         count = max_rows
-    elif stats.total_calls > 0:
-        count = stats.total_calls
-    elif stats.total_calls == 0:
-        count = len(stats.stats)
+    elif stats.total_calls > 0: # type: ignore
+        count = stats.total_calls # type: ignore
+    elif stats.total_calls == 0: # type: ignore
+        count = len(stats.stats) # type: ignore
     if count == 0:
         raise ValueError("No profiling data available.")
 

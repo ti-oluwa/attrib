@@ -17,7 +17,7 @@ from attrs_example import Student as AttrsStudent
 _Dataclass_co = typing.TypeVar("_Dataclass_co", bound=attrib.Dataclass, covariant=True)
 
 
-class Person(attrib.Dataclass, slots=False):
+class Person(attrib.Dataclass, slots=True, frozen=True):
     """Person data class"""
 
     name = attrib.String(max_length=100)
@@ -29,26 +29,30 @@ class Person(attrib.Dataclass, slots=False):
     )
 
 
-adapter = attrib.build_adapter(
-    typing.Tuple[
-        typing.List[typing.Optional[Person]],
-        typing.Dict[str, typing.List[int]],
-        typing.Optional[str],
-    ],
-    name="adapter",
-    strict=False,
-)
-adapted = adapter(([{"name": "One", "age": 18}, None], {"scores": [10, 20, 30]}, None))
-print(adapted)
-log(
-    adapter.serialize(
-        adapted,
-        options={
-            attrib.Option(Person, depth=0, strict=True),
-        },
-        astuple=False,
+with timeit("build_adapter"):
+    adapter = attrib.build_adapter(
+        typing.Tuple[
+            typing.List[typing.Optional[Person]],
+            typing.Dict[str, typing.List[int]],
+            typing.Optional[str],
+        ],
+        name="adapter",
+        strict=False,
     )
-)
+with timeit("adapt_and_serialize"):
+    adapted = adapter(
+        ([{"name": "One", "age": 18}, None], {"scores": [10, 20, 30]}, None)
+    )
+    # print(adapted)
+    log(
+        adapter.serialize(
+            adapted,
+            options={
+                attrib.Option(Person, depth=1, strict=True),
+            },
+            astuple=True,
+        )
+    )
 
 
 class Term(enum.Enum):
@@ -104,7 +108,6 @@ class Student(PersonalInfo, slots=True, hash=True):
         child=attrib.Nested(Course, lazy=False),
         validators=[
             attrib.validators.min_length(1),
-            attrib.validators.iterable(attrib.validators.instance_of(Course)),
         ],
     )
     gpa = attrib.Float(
@@ -117,7 +120,6 @@ class Student(PersonalInfo, slots=True, hash=True):
         allow_null=True,
         serializers={"json": lambda x, *_: attrib.make_jsonable(x)},
         deserializer=lambda x, _: AttrsStudent(**x),
-        validators=[attrib.validators.instance_of(AttrsStudent)],
     )
     joined_at = attrib.DateTime(allow_null=True, tz="Africa/Lagos")
     created_at = attrib.DateTime(default=datetime.now, tz="Africa/Lagos")
@@ -161,7 +163,7 @@ def example():
     for student in students:
         attrib.serialize(
             student,
-            fmt="json",
+            fmt="python",
             # options=[
             #     attrib.Option(Course, depth=0, strict=True),
             #     attrib.Option(depth=1),

@@ -1,5 +1,6 @@
 """Data description classes"""
 
+from collections.abc import Sequence
 import typing
 from functools import cache
 from types import MappingProxyType
@@ -69,7 +70,10 @@ def _setitem(instance: "Dataclass", key: str, value: typing.Any) -> None:
 
 def _frozen_setattr(instance: "Dataclass", key: str, value: Value) -> None:
     """Set an attribute on a frozen dataclass instance."""
-    if not getattr(instance, "__initializing", False):
+    print(
+        f"Attempting to set attribute '{key}' on frozen instance of {type(instance).__name__}"
+    )
+    if not getattr(instance, "_initializing", False):
         raise FrozenInstanceError(
             f"Cannot modify '{type(instance).__name__}.{key}'. "
             f"Instance is frozen and cannot be modified after instantiation."
@@ -381,7 +385,7 @@ class DataclassMeta(type):
                 namespace=attrs.copy(),
                 own_fields=own_fields.keys(),
                 additional_slots=config.slots
-                if isinstance(config.slots, (str, tuple, list, set))
+                if isinstance(config.slots, Sequence)
                 else None,
                 parent_slotted_attributes=parent_slotted_attributes,
             )
@@ -521,7 +525,7 @@ class Dataclass(metaclass=DataclassMeta):
 
     __slots__: typing.ClassVar[typing.Tuple[str, ...]] = (
         "__weakref__",
-        "__initializing",
+        "_initializing",
     )
     __state_attributes__: typing.ClassVar[typing.Tuple[str, ...]] = ()
     """
@@ -566,11 +570,11 @@ class Dataclass(metaclass=DataclassMeta):
         :param data: Raw data to initialize the dataclass with.
         :param kwargs: Additional keyword arguments to initialize the dataclass with.
         """
-        object.__setattr__(self, "__initializing", True)
+        object.__setattr__(self, "_initializing", True)
         combined = {**dict(data or {}), **kwargs}
         if combined:
             load(self, combined)
-        object.__setattr__(self, "__initializing", False)
+        object.__setattr__(self, "_initializing", False)
 
     def __init_subclass__(cls) -> None:
         """Ensure that subclasses define fields."""
