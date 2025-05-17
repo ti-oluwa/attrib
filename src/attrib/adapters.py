@@ -1,15 +1,12 @@
 import inspect
 import typing
 import functools
-from collections.abc import Mapping, MutableMapping, Sequence, Set
+from collections.abc import Iterable, Mapping, MutableMapping, Sequence, Set
 from collections import defaultdict
 
 from attrib._typing import Validator, T, Serializer, Deserializer
 from attrib._utils import (
     is_generic_type,
-    is_iterable_type,
-    is_mapping_type,
-    is_iterable,
     make_jsonable,
     SerializerRegistry,
     _unsupported_serializer_factory,
@@ -387,13 +384,12 @@ def _build_generic_type_deserializer(
             ),
         )
 
-    if is_mapping_type(origin):
-        if len(args) != 2:
-            raise TypeError(
-                f"Cannot build deserializer for mapping type {target!r} with {len(args_deserializers)} arguments. Expected 2."
-            )
-        key_deserializer = args_deserializers[0]
-        value_deserializer = args_deserializers[1]
+    if issubclass(origin, Mapping):
+        assert len(args_deserializers) == 2, (
+            f"Deserializer count mismatch. Expected 2 but got {len(args_deserializers)}"
+        )
+
+        key_deserializer, value_deserializer = args_deserializers
         if inspect.isabstract(origin) or not issubclass(origin, MutableMapping):
             origin = dict
 
@@ -421,26 +417,55 @@ def _build_generic_type_deserializer(
 
         return mapping_deserializer
 
-    if is_iterable_type(origin, exclude=(str, bytes, dict)) or issubclass(
-        origin, Sequence
-    ):
+    if issubclass(origin, (Sequence, Set)):
+        args_count = len(args)
+        assert args_count == len(args_deserializers), (
+            f"Deserializer count mismatch. Expected {args_count} but got {len(args_deserializers)}"
+        )
 
-        def iterable_deserializer(
+        if issubclass(origin, tuple) and args_count > 1:
+
+            def tuple_deserializer(
+                value: typing.Any,
+                *args: typing.Any,
+                **kwargs: typing.Any,
+            ) -> typing.Tuple[typing.Any, ...]:
+                if not isinstance(value, Iterable) or len(value) != args_count:  # type: ignore
+                    raise DeserializationError(
+                        f"Cannot deserialize {value!r} to {target!r}"
+                    )
+
+                new_tuple = []
+                for index, item in enumerate(value):
+                    try:
+                        new_tuple.append(
+                            args_deserializers[index](item, *args, **kwargs)
+                        )
+                    except (TypeError, ValueError, DeserializationError) as exc:
+                        raise DeserializationError(
+                            f"Failed to deserialize {value!r} to {target!r}"
+                        ) from exc
+
+                return origin(new_tuple)
+
+            return tuple_deserializer
+
+        def sequence_deserializer(
             value: typing.Any,
             *args: typing.Any,
             **kwargs: typing.Any,
         ) -> typing.Iterable[typing.Any]:
-            if not is_iterable(value):
+            if not isinstance(value, Iterable):
                 raise DeserializationError(
                     f"Cannot deserialize {value!r} to {target!r}"
                 )
 
-            new_iterable = []
+            new_sequence = []
             for item in value:
                 error = None
                 for deserializer in args_deserializers:
                     try:
-                        new_iterable.append(deserializer(item, *args, **kwargs))
+                        new_sequence.append(deserializer(item, *args, **kwargs))
                         break
                     except (TypeError, ValueError, DeserializationError) as exc:
                         error = exc
@@ -451,11 +476,9 @@ def _build_generic_type_deserializer(
                             f"Failed to deserialize {value!r} to {target!r}"
                         ) from error
 
-            if origin is not list:
-                return origin(new_iterable)  # type: ignore
-            return new_iterable
+            return origin(new_sequence)  # type: ignore
 
-        return iterable_deserializer
+        return sequence_deserializer
 
     raise TypeError(
         f"Cannot build deserializer for generic type {target!r} with origin {origin!r} and arguments {args!r}"
@@ -512,17 +535,14 @@ def _build_generic_type_validator(
     if not inspect.isclass(origin):
         return Or(args_validators)
 
-    if is_mapping_type(origin):
-        if len(args) != 2:
-            raise TypeError(
-                f"Cannot build validator for mapping type {target!r} with {len(args)} arguments. Expected 2."
-            )
+    if issubclass(origin, Mapping):
+        assert len(args_validators) == 2, (
+            f"Validator count mismatch. Expected 2 but got {len(args_validators)}"
+        )
         key_validator, value_validator = args_validators
         return mapping(key_validator, value_validator)
 
-    if is_iterable_type(origin, exclude=(str, bytes, dict)) or issubclass(
-        origin, Sequence
-    ):
+    if issubclass(origin, (Sequence, Set)):
         return iterable(Or(args_validators))
 
     raise TypeError(
@@ -607,13 +627,12 @@ def _build_generic_type_serializer(
             ),
         )
 
-    if is_mapping_type(origin):
-        if len(args) != 2:
-            raise TypeError(
-                f"Cannot build {fmt!r} serializer for mapping type {target!r} with {len(args_serializers)} arguments. Expected 2."
-            )
-        key_serializer = args_serializers[0]
-        value_serializer = args_serializers[1]
+    if issubclass(origin, Mapping):
+        assert len(args_serializers) == 2, (
+            f"Serializer count mismatch. Expected 2 but got {len(args_serializers)}"
+        )
+
+        key_serializer, value_serializer = args_serializers
         if inspect.isabstract(origin) or not issubclass(origin, MutableMapping):
             origin = dict
 
@@ -641,24 +660,48 @@ def _build_generic_type_serializer(
 
         return mapping_serializer
 
-    if is_iterable_type(origin, exclude=(str, bytes, dict)) or issubclass(
-        origin, Sequence
-    ):
+    if issubclass(origin, (Sequence, Set)):
+        args_count = len(args)
+        assert args_count == len(args_serializers), (
+            f"Serializer count mismatch. Expected {args_count} but got {len(args_serializers)}"
+        )
+        if issubclass(origin, tuple) and args_count > 1:
 
-        def iterable_serializer(
+            def tuple_serializer(
+                value: typing.Any,
+                *args: typing.Any,
+                **kwargs: typing.Any,
+            ) -> typing.Tuple[typing.Any, ...]:
+                if not isinstance(value, Iterable) or len(value) != args_count:  # type: ignore
+                    raise SerializationError(
+                        f"Cannot serialize {value!r} to {target!r}"
+                    )
+                new_tuple = []
+                for index, item in enumerate(value):
+                    try:
+                        new_tuple.append(args_serializers[index](item, *args, **kwargs))
+                    except (SerializationError, TypeError, ValueError) as exc:
+                        raise SerializationError(
+                            f"Failed to serialize {value!r} to {target!r}"
+                        ) from exc
+                return origin(new_tuple)
+
+            return tuple_serializer
+
+        def sequence_serializer(
             value: typing.Any,
             *args: typing.Any,
             **kwargs: typing.Any,
         ) -> typing.Iterable[typing.Any]:
-            if not is_iterable(value):
+            if not isinstance(value, Iterable):
                 raise SerializationError(f"Cannot serialize {value!r} to {target!r}")
 
-            new_iterable = []
+            new_sequence = []
             for item in value:
                 error = None
                 for serializer in args_serializers:
                     try:
-                        new_iterable.append(serializer(item, *args, **kwargs))
+                        new_sequence.append(serializer(item, *args, **kwargs))
                         break
                     except (SerializationError, TypeError, ValueError) as exc:
                         error = exc
@@ -669,11 +712,9 @@ def _build_generic_type_serializer(
                             f"Failed to serialize {value!r} to {target!r}"
                         ) from error
 
-            if origin is not list:
-                return origin(new_iterable)  # type: ignore
-            return new_iterable
+            return origin(new_sequence)  # type: ignore
 
-        return iterable_serializer
+        return sequence_serializer
 
     raise TypeError(
         f"Cannot build {fmt!r} serializer for generic type {target!r} with origin {origin!r} and arguments {args!r}"

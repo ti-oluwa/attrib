@@ -15,6 +15,7 @@ import pathlib
 from typing_extensions import Unpack, Self, Annotated
 import annotated_types as annot
 from collections import defaultdict
+import collections.abc
 from dataclasses import dataclass
 
 try:
@@ -187,8 +188,8 @@ def default_deserializer(
     :return: The deserialized value.
     """
     field_type = field.field_type
-    if is_iterable(field_type):
-        for arg in field_type:
+    if isinstance(field_type, collections.abc.Iterable):
+        for arg in field_type: # type: ignore
             arg = typing.cast(typing.Type[_T], arg)
             try:
                 deserialized = arg(value)  # type: ignore[call-arg]
