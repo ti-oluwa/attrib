@@ -30,18 +30,17 @@ class Person(attrib.Dataclass, slots=True, frozen=True):
 
 
 with timeit("build_adapter"):
-    adapter = attrib.build_adapter(
+    adapter = attrib.TypeAdapter(
         typing.Tuple[
             typing.List[typing.Optional[Person]],
             typing.Dict[str, typing.List[int]],
             typing.Optional[str],
         ],
-        name="adapter",
-        strict=False,
     )
+
 with timeit("adapt_and_serialize"):
     adapted = adapter(
-        ([{"name": "One", "age": 18}, None], {"scores": [10, 20, 30]}, None)
+        ([{"name": "One", "age": 18}, None], {"scores": [10, 20, 30]}, None),
     )
     # print(adapted)
     log(

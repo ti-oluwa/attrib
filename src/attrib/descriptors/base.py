@@ -34,19 +34,17 @@ from attrib._utils import (
     iexact,
     is_valid_type,
     is_iterable_type,
-    is_iterable,
     is_generic_type,
     iso_parse,
     parse_duration,
-    resolve_forward_ref,
     _LRUCache,
     get_cache_key,
     make_jsonable,
     _get_itertype_adder,
+    resolve_type,
     SerializerRegistry,
 )
 from attrib._typing import P, R, SupportsRichComparison, Validator, IterType, EMPTY
-
 
 _T = typing.TypeVar("_T")
 _V = typing.TypeVar("_V")
@@ -189,7 +187,7 @@ def default_deserializer(
     """
     field_type = field.field_type
     if isinstance(field_type, collections.abc.Iterable):
-        for arg in field_type: # type: ignore
+        for arg in field_type:  # type: ignore
             arg = typing.cast(typing.Type[_T], arg)
             try:
                 deserialized = arg(value)  # type: ignore[call-arg]
@@ -240,32 +238,6 @@ def Factory(
         return factory(*args, **kwargs)
 
     return factory_func
-
-
-def resolve_type(
-    field: "Field[_T]",
-    globalns: typing.Optional[typing.Dict[str, typing.Any]] = None,
-    localns: typing.Optional[typing.Dict[str, typing.Any]] = None,
-) -> NonForwardRefFieldType[_T]:
-    """
-    Resolve the field type.
-
-    This determines the actual type(s) of the field. Especially
-    useful when the field type definition is/contains a forward reference.
-    """
-    field_type = field.field_type
-    if isinstance(field_type, typing.ForwardRef):
-        field_type = resolve_forward_ref(field_type, globalns, localns)
-    elif not issubclass(field_type, enum.Enum) and is_iterable(  # type: ignore[arg-type]
-        field_type, exclude=(str, bytes, dict)
-    ):
-        field_type = tuple(
-            resolve_forward_ref(arg, globalns, localns)
-            if isinstance(arg, typing.ForwardRef)
-            else arg
-            for arg in field_type
-        )
-    return typing.cast(NonForwardRefFieldType[_T], field_type)
 
 
 class FieldMeta(type):
@@ -423,14 +395,17 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         :param name: The name of the field.
         """
         self.name = name
-        self.field_type = resolve_type(
-            self,
-            globalns=globals(),
-            localns={
-                parent.__name__: parent,
-                "Self": parent,
-                "self": parent,
-            },
+        self.field_type = typing.cast(
+            NonForwardRefFieldType[_T],
+            resolve_type(
+                self.field_type,
+                globalns=globals(),
+                localns={
+                    parent.__name__: parent,
+                    "Self": parent,
+                    "self": parent,
+                },
+            ),
         )
 
     def __set_name__(self, owner: typing.Type[typing.Any], name: str):

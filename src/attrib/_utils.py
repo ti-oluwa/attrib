@@ -155,14 +155,52 @@ HAS_DATEUTIL = has_package("dateutil")
 PY_GE_3_11 = sys.version_info >= (3, 11)
 
 
-def resolve_forward_ref(
-    ref: typing.ForwardRef,
+def resolve_forward_refs(
+    type_: typing.Any,
     /,
     globalns: typing.Optional[typing.Dict[str, typing.Any]] = None,
     localns: typing.Optional[typing.Dict[str, typing.Any]] = None,
 ) -> typing.Optional[typing.Any]:
-    """Resolve a forward reference to its actual type."""
-    return ref._evaluate(globalns or globals(), localns or {}, frozenset())
+    """
+    Resolve a forward reference(s) in a type.
+
+    :param type_: The type to resolve.
+    :param globalns: The global namespace to use for resolution.
+    :param localns: The local namespace to use for resolution.
+    :return: The resolved type.
+    """
+    return typing._eval_type(type_, globalns or globals(), localns or {})  # type: ignore[no-redef]
+
+
+def resolve_type(
+    type_: typing.Any,
+    /,
+    globalns: typing.Optional[typing.Dict[str, typing.Any]] = None,
+    localns: typing.Optional[typing.Dict[str, typing.Any]] = None,
+) -> typing.Any:
+    """
+    Resolve an adapter type.
+
+    This determines the actual type(s) of the field. Especially
+    useful when the field type definition is/contains a forward reference.
+
+    :param type_: The type to resolve.
+    :param globalns: The global namespace to use for resolution.
+    :param localns: The local namespace to use for resolution.
+    :return: The resolved type.
+    """
+    if (
+        inspect.isclass(type_)
+        and not issubclass(type_, enum.Enum)
+        and isinstance(type_, (tuple, list))
+    ):
+        return tuple(
+            resolve_type(arg, globalns, localns)
+            if isinstance(arg, typing.ForwardRef)
+            else arg
+            for arg in type_
+        )
+    return resolve_forward_refs(type_, globalns, localns) or type_
 
 
 standard_duration_re = re.compile(
