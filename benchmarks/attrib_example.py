@@ -164,7 +164,7 @@ def example():
     for student in students:
         attrib.serialize(
             student,
-            fmt="python",
+            fmt="json",
             # options=[
             #     attrib.Option(Course, depth=0, strict=True),
             #     attrib.Option(depth=1),

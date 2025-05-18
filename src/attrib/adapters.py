@@ -14,12 +14,11 @@ from attrib._utils import (
     resolve_type,
 )
 from attrib.exceptions import DeserializationError, SerializationError, ValidationError
-from attrib.validators import Or, instance_of, iterable, mapping
+from attrib.validators import Or, instance_of, iterable, mapping, member_of, eq
 from attrib.serializers import serialize
 from attrib.dataclass import Dataclass, deserialize, _Dataclass_co
 
 
-@typing.final
 class TypeAdapter(typing.Generic[T]):
     """
     Concrete `TypeAdapter` implementation.
@@ -192,7 +191,7 @@ class TypeAdapter(typing.Generic[T]):
     def serialize(
         self,
         value: T,
-        fmt: str = "python",
+        fmt: typing.Union[typing.Literal["python", "json"], str] = "python",
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> typing.Any:
@@ -265,7 +264,12 @@ class TypeAdapter(typing.Generic[T]):
 
 
 def build_non_generic_type_serializer_registry(
-    serializers: typing.Optional[typing.Mapping[str, Serializer[typing.Any]]] = None,
+    serializers: typing.Optional[
+        typing.Mapping[
+            str,
+            Serializer[typing.Any],
+        ]
+    ] = None,
 ) -> SerializerRegistry:
     serializers_map = {
         **(serializers or {}),
@@ -361,7 +365,12 @@ def build_dataclass_serializer_registry(
 def build_generic_type_serializer_registry(
     target: typing.Union[typing.Type[T], T],
     /,
-    serializers: typing.Optional[typing.Mapping[str, Serializer[typing.Any]]] = None,
+    serializers: typing.Optional[
+        typing.Mapping[
+            str,
+            Serializer[typing.Any],
+        ]
+    ] = None,
 ) -> SerializerRegistry:
     serializers_map = {
         **(serializers or {}),
@@ -427,15 +436,19 @@ def build_generic_type_deserializer(
             else build_non_generic_type_deserializer(origin)
         )
 
-    args_deserializers = tuple(
-        [
-            build_generic_type_deserializer(arg)
-            if is_generic_type(arg)
-            else build_non_generic_type_deserializer(arg)
-            for arg in args
-        ]
-    )
     if not inspect.isclass(origin):
+        if origin is typing.Literal:
+            # If the origin is Literal, the deserializer should just return the value as is
+            return lambda value, *args, **kwargs: value
+
+        args_deserializers = tuple(
+            [
+                build_generic_type_deserializer(arg)
+                if is_generic_type(arg)
+                else build_non_generic_type_deserializer(arg)
+                for arg in args
+            ]
+        )
         return any_func(
             *args_deserializers,
             target_exception=(
@@ -445,6 +458,14 @@ def build_generic_type_deserializer(
             ),
         )
 
+    args_deserializers = tuple(
+        [
+            build_generic_type_deserializer(arg)
+            if is_generic_type(arg)
+            else build_non_generic_type_deserializer(arg)
+            for arg in args
+        ]
+    )
     if issubclass(origin, Mapping):
         assert len(args_deserializers) == 2, (
             f"Deserializer count mismatch. Expected 2 but got {len(args_deserializers)}"
@@ -546,65 +567,6 @@ def build_generic_type_deserializer(
     )
 
 
-BUILTIN_TYPES = (
-    int,
-    float,
-    bool,
-    Set,
-    Sequence,
-    Mapping,
-)
-
-
-def _dataclass_deserializer(
-    target: typing.Type[_Dataclass_co],
-    /,
-    value: typing.Any,
-    *_: typing.Any,
-    **kwargs: typing.Any,
-) -> _Dataclass_co:
-    """
-    A deserializer function that attempts to coerce the value to the target type.
-
-    :param value: The value to deserialize
-    :param args: Additional arguments for deserialization
-    :param kwargs: Additional keyword arguments for deserialization
-    """
-    if isinstance(value, target):
-        return value
-    if not isinstance(value, BUILTIN_TYPES):
-        kwargs.setdefault("attributes", True)
-    return deserialize(target, value, **kwargs)
-
-
-def _non_generic_type_json_serializer(
-    value: typing.Any, *_: typing.Any, **kwargs: typing.Any
-) -> typing.Any:
-    """
-    Serialize a non-generic type.
-
-    :param value: The value to serialize
-    :return: The serialized value
-    """
-    if isinstance(value, Dataclass):
-        return serialize(value, fmt="json", **kwargs)
-    return make_jsonable(value)
-
-
-def _non_generic_type_python_serializer(
-    value: typing.Any, *_: typing.Any, **kwargs: typing.Any
-) -> typing.Any:
-    """
-    Serialize a non-generic type to Python.
-
-    :param value: The value to serialize
-    :return: The serialized value
-    """
-    if isinstance(value, Dataclass):
-        return serialize(value, fmt="python", **kwargs)
-    return value
-
-
 @functools.lru_cache
 def build_generic_type_validator(
     target: typing.Union[typing.Type[T], T],
@@ -642,6 +604,22 @@ def build_generic_type_validator(
             else instance_of(origin)
         )
 
+    # If the origin is not a class, we can just build an Or validator
+    # from the arguments validators.
+    if not inspect.isclass(origin):
+        if origin is typing.Literal:
+            return eq(args[0]) if len(args) == 1 else member_of(args)
+
+        args_validators = tuple(
+            [
+                build_generic_type_validator(arg)
+                if is_generic_type(arg)
+                else instance_of(arg)
+                for arg in args
+            ]
+        )
+        return Or(args_validators)
+
     args_validators = tuple(
         [
             build_generic_type_validator(arg)
@@ -650,11 +628,6 @@ def build_generic_type_validator(
             for arg in args
         ]
     )
-    # If the origin is not a class, we can just build an Or validator
-    # from the arguments validators.
-    if not inspect.isclass(origin):
-        return Or(args_validators)
-
     if issubclass(origin, Mapping):
         assert len(args_validators) == 2, (
             f"Validator count mismatch. Expected 2 but got {len(args_validators)}"
@@ -738,6 +711,23 @@ def build_generic_type_serializer(
     )
 
     if not inspect.isclass(origin):
+        if origin is typing.Literal:
+            if fmt == "json":
+                return _non_generic_type_json_serializer
+            return _non_generic_type_python_serializer
+
+        args_serializers = tuple(
+            [
+                build_generic_type_serializer(arg, fmt=fmt)
+                if is_generic_type(arg)
+                else (
+                    _non_generic_type_python_serializer
+                    if fmt == "python"
+                    else _non_generic_type_json_serializer
+                )
+                for arg in args
+            ]
+        )
         return any_func(
             *args_serializers,
             target_exception=(
@@ -747,6 +737,18 @@ def build_generic_type_serializer(
             ),
         )
 
+    args_serializers = tuple(
+        [
+            build_generic_type_serializer(arg, fmt=fmt)
+            if is_generic_type(arg)
+            else (
+                _non_generic_type_python_serializer
+                if fmt == "python"
+                else _non_generic_type_json_serializer
+            )
+            for arg in args
+        ]
+    )
     if issubclass(origin, Mapping):
         assert len(args_serializers) == 2, (
             f"Serializer count mismatch. Expected 2 but got {len(args_serializers)}"
@@ -839,3 +841,62 @@ def build_generic_type_serializer(
     raise TypeError(
         f"Cannot build {fmt!r} serializer for generic type {target!r} with origin {origin!r} and arguments {args!r}"
     )
+
+
+BUILTIN_TYPES = (
+    int,
+    float,
+    bool,
+    Set,
+    Sequence,
+    Mapping,
+)
+
+
+def _dataclass_deserializer(
+    target: typing.Type[_Dataclass_co],
+    /,
+    value: typing.Any,
+    *_: typing.Any,
+    **kwargs: typing.Any,
+) -> _Dataclass_co:
+    """
+    A deserializer function that attempts to coerce the value to the target type.
+
+    :param value: The value to deserialize
+    :param args: Additional arguments for deserialization
+    :param kwargs: Additional keyword arguments for deserialization
+    """
+    if isinstance(value, target):
+        return value
+    if not isinstance(value, BUILTIN_TYPES):
+        kwargs.setdefault("attributes", True)
+    return deserialize(target, value, **kwargs)
+
+
+def _non_generic_type_json_serializer(
+    value: typing.Any, *_: typing.Any, **kwargs: typing.Any
+) -> typing.Any:
+    """
+    Serialize a non-generic type.
+
+    :param value: The value to serialize
+    :return: The serialized value
+    """
+    if isinstance(value, Dataclass):
+        return serialize(value, fmt="json", **kwargs)
+    return make_jsonable(value)
+
+
+def _non_generic_type_python_serializer(
+    value: typing.Any, *_: typing.Any, **kwargs: typing.Any
+) -> typing.Any:
+    """
+    Serialize a non-generic type to Python.
+
+    :param value: The value to serialize
+    :return: The serialized value
+    """
+    if isinstance(value, Dataclass):
+        return serialize(value, fmt="python", **kwargs)
+    return value
