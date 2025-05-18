@@ -1,7 +1,7 @@
 import typing
 
 try:
-    from typing import ParamSpec, Self # type: ignore[import]
+    from typing import ParamSpec, Self  # type: ignore[import]
 except ImportError:
     from typing_extensions import ParamSpec, Self
 
@@ -24,7 +24,7 @@ P = ParamSpec("P")
 R = typing.TypeVar("R")
 
 
-class _timeit(ContextDecorator):
+class Timer(ContextDecorator):
     """Context manager/decorator to measure the time taken to execute a function or block of code."""
 
     def __init__(
@@ -34,7 +34,7 @@ class _timeit(ContextDecorator):
         use_perf_counter: bool = True,
     ) -> None:
         """
-        Create a new instance of the _timeit class.
+        Create a new instance of the Timer class.
 
         :param identifier: A unique identifier for the function or block.
         :param output: The output/writer function to use. This defaults to `print`.
@@ -67,11 +67,20 @@ class _timeit(ContextDecorator):
 @typing.overload
 def timeit(
     identifier: str,
+    *,
+    output: typing.Optional[typing.Callable] = None,
+    use_perf_counter: bool = True,
+) -> Timer: ...
+
+
+@typing.overload
+def timeit(
+    identifier: str,
     func: typing.Optional[typing.Callable[P, R]] = None,
     *,
     output: typing.Optional[typing.Callable] = None,
     use_perf_counter: bool = True,
-) -> typing.Union[_timeit, typing.Callable[P, R]]: ...
+) -> typing.Union[Timer, typing.Callable[P, R]]: ...
 
 
 @typing.overload
@@ -81,7 +90,7 @@ def timeit(
     identifier: typing.Optional[str] = None,
     output: typing.Optional[typing.Callable] = None,
     use_perf_counter: bool = True,
-) -> typing.Union[_timeit, typing.Callable[P, R]]: ...
+) -> typing.Union[Timer, typing.Callable[P, R]]: ...
 
 
 def timeit(  # type: ignore
@@ -89,7 +98,7 @@ def timeit(  # type: ignore
     identifier: typing.Optional[str] = None,
     output: typing.Optional[typing.Callable] = None,
     use_perf_counter: bool = True,
-) -> typing.Union[_timeit, typing.Callable[P, R]]:
+) -> typing.Union[Timer, typing.Callable[P, R]]:
     """
     Measure the time taken to execute a function or block of code.
 
@@ -111,7 +120,7 @@ def timeit(  # type: ignore
     ```
     """
     if isinstance(func, str):
-        timer = _timeit(
+        timer = Timer(
             identifier=func,
             output=output,
             use_perf_counter=use_perf_counter,
@@ -120,7 +129,7 @@ def timeit(  # type: ignore
             return timer(identifier)  # type: ignore
         return timer
 
-    timer = _timeit(
+    timer = Timer(
         identifier=identifier,
         output=output,
         use_perf_counter=use_perf_counter,
@@ -246,10 +255,10 @@ def get_stats_data(
     count = 0
     if max_rows:
         count = max_rows
-    elif stats.total_calls > 0: # type: ignore
-        count = stats.total_calls # type: ignore
-    elif stats.total_calls == 0: # type: ignore
-        count = len(stats.stats) # type: ignore
+    elif stats.total_calls > 0:  # type: ignore
+        count = stats.total_calls  # type: ignore
+    elif stats.total_calls == 0:  # type: ignore
+        count = len(stats.stats)  # type: ignore
     if count == 0:
         raise ValueError("No profiling data available.")
 
@@ -338,6 +347,18 @@ class Profiler(ContextDecorator):
     def __call__(self, func: typing.Callable[P, R]) -> typing.Callable[P, R]:
         self.identifier = self.identifier or func.__name__
         return super().__call__(func)
+
+
+@typing.overload
+def profileit(
+    identifier: str,
+    *,
+    output: StatOutput = ...,
+    timeunit: typing.Optional[float] = None,
+    subcalls: bool = False,
+    builtins: bool = False,
+    max_rows: typing.Optional[int] = None,
+) -> Profiler: ...
 
 
 @typing.overload

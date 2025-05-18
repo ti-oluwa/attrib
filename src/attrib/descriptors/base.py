@@ -241,10 +241,8 @@ def Factory(
 
 
 class FieldMeta(type):
-    def __init__(cls, name, bases, attrs):
-        default_validators = getattr(cls, "default_validators", [])
+    def __init__(cls, name, bases, attrs) -> NoneType:
         default_serializers = getattr(cls, "default_serializers", {})
-        cls.default_validators = field_validators.load(*default_validators)
         cls.default_serializers = {
             **DEFAULT_FIELD_SERIALIZERS,
             **default_serializers,
@@ -260,7 +258,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
 
     default_serializers: typing.ClassVar[typing.Mapping[str, FieldSerializer]] = {}
     default_deserializer: typing.ClassVar[FieldDeserializer] = default_deserializer
-    default_validators: typing.Iterable[Validator[_T]] = []
+    default_validator: typing.Optional[Validator[_T]] = None
 
     def __init__(
         self,
@@ -271,7 +269,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         allow_null: bool = False,
         required: bool = False,
         strict: bool = False,
-        validators: typing.Optional[typing.Iterable[Validator[_T]]] = None,
+        validator: typing.Optional[Validator[_T]] = None,
         serializers: typing.Optional[
             typing.Mapping[str, "FieldSerializer[_T, Self]"]
         ] = None,
@@ -284,17 +282,17 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         Initialize the field.
 
         :param field_type: The expected type for field values.
+        :param default: A default value for the field to be used if no value is set, defaults to empty.
         :param lazy: If True, the field will not be validated until it is accessed.
         :param alias: Optional string for alternative field naming, defaults to None.
         :param allow_null: If True, permits the field to be set to None, defaults to False.
         :param required: If True, field values must be explicitly provided, defaults to False.
         :param strict: If True, the field will only accept values of the specified type and will not attempt to coerce them.
             Defaults to False. This may speed up validation for large data sets.
-        :param validators: A list of validation functions to apply to the field's value, defaults to None.
-            Validators should be callables that accept the field value and the optional field instance as arguments.
-            NOTE: Values returned from the validators are not used, but they should raise a FieldError if the value is invalid.
+        :param validator: A validation function to apply to the field's value, defaults to None.
+            NOTE: The validator should be a callable that accepts the field value and the optional field instance as arguments.
+            Values returned from the validator are not used, but it should raise a FieldError if the value is invalid.
         :param serializers: A mapping of serialization formats to their respective serializer functions, defaults to None.
-        :param default: A default value for the field to be used if no value is set, defaults to empty.
         :param deserializer: A deserializer function to convert the field's value to the expected type, defaults to None.
         :param _cache_size: Multiplier for the base cache size for serialized and validated values, defaults to 1.
             Base cache size is 128, so the effective cache size will be 128 * _cache_size.
@@ -317,17 +315,16 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         self.allow_null = allow_null
         self.required = required
         self.strict = strict
-        all_validators = [*self.default_validators, *(validators or [])]
-        validator = field_validators.pipe(*all_validators) if all_validators else None
-        self.validator = validator
-        all_serializers = {
+        _validator = validator or type(self).default_validator
+        self.validator = field_validators.load(_validator)[0] if _validator else None
+        serializers_map = {
             **self.default_serializers,
             **(serializers or {}),
         }
         self.serializer = SerializerRegistry(
             defaultdict(
                 _unsupported_serializer_factory,
-                all_serializers,
+                serializers_map,
             )
         )
         self.deserializer = deserializer or type(self).default_deserializer
@@ -688,8 +685,8 @@ class FieldInitKwargs(typing.TypedDict, total=False):
     If True, the field will only accept values of the specified type,
     and will not attempt to coerce them.
     """
-    validators: typing.Optional[typing.Iterable[Validator]]
-    """A list of validation functions to apply to the field's value."""
+    validator: typing.Optional[Validator]
+    """A validation function to apply to the field's value."""
     serializers: typing.Optional[typing.Dict[str, FieldSerializer]]
     """A mapping of serialization formats to their respective serializer functions."""
     deserializer: typing.Optional[FieldDeserializer]
@@ -760,7 +757,7 @@ def build_min_max_value_validators(
     min_value: typing.Optional[SupportsRichComparison],
     max_value: typing.Optional[SupportsRichComparison],
 ) -> typing.List[Validator[typing.Any]]:
-    """Construct min and max value validators."""
+    """Construct min and max value ."""
     if min_value is None and max_value is None:
         return []
     if min_value is not None and max_value is not None and min_value >= max_value:
@@ -784,13 +781,19 @@ class Float(Field[float]):
         max_value: typing.Optional[float] = None,
         **kwargs: Unpack[FieldInitKwargs],
     ):
-        validators = kwargs.get("validators", [])
-        validators = typing.cast(typing.Iterable[Validator[float]], validators)
-        validators = [
-            *validators,
-            *build_min_max_value_validators(min_value, max_value),
-        ]
-        kwargs["validators"] = validators
+        validators = list(
+            filter(
+                None,
+                [
+                    kwargs.get("validator", None),
+                    *build_min_max_value_validators(min_value, max_value),
+                ],
+            )
+        )
+        if validators:
+            kwargs["validator"] = field_validators.pipe(
+                *validators,
+            )
         super().__init__(
             field_type=float,
             **kwargs,
@@ -824,13 +827,17 @@ class Integer(Field[int]):
         base: Annotated[int, annot.Interval(ge=2, le=36)] = 10,
         **kwargs: Unpack[FieldInitKwargs],
     ):
-        validators = kwargs.get("validators", [])
-        validators = typing.cast(typing.Iterable[Validator[int]], validators)
-        validators = [
-            *validators,
-            *build_min_max_value_validators(min_value, max_value),
-        ]
-        kwargs["validators"] = validators
+        validators = list(
+            filter(
+                None,
+                [
+                    kwargs.get("validator", None),
+                    *build_min_max_value_validators(min_value, max_value),
+                ],
+            )
+        )
+        if validators:
+            kwargs["validator"] = field_validators.pipe(*validators)
         super().__init__(
             field_type=int,
             **kwargs,
@@ -893,13 +900,15 @@ class String(Field[str]):
         :param trim_whitespaces: If True, leading and trailing whitespaces will be removed.
         :param kwargs: Additional keyword arguments for the field.
         """
-        validators = kwargs.get("validators", [])
-        validators = typing.cast(typing.Iterable[Validator[str]], validators)
-        validators = [
-            *validators,
-            *build_min_max_length_validators(min_length, max_length),
-        ]
-        kwargs["validators"] = validators
+        validators = list(filter(
+            None,
+            [
+                kwargs.get("validator", None),
+                *build_min_max_length_validators(min_length, max_length),
+            ],
+        ))
+        if validators:
+            kwargs["validator"] = field_validators.pipe(*validators)
         super().__init__(field_type=str, **kwargs)
         self.trim_whitespaces = trim_whitespaces
         self.to_lowercase = to_lowercase
@@ -1000,8 +1009,8 @@ def iterable_deserializer(
 
 def validate_iterable(
     value: IterType,
-    field: "Iterable[IterType, _V]",
-    instance: typing.Optional[typing.Any],
+    field: typing.Optional["Iterable[IterType, _V]"] = None,
+    instance: typing.Optional[typing.Any] = None,
 ) -> None:
     """
     Validate the elements of an iterable field.
@@ -1010,6 +1019,8 @@ def validate_iterable(
     :param field: The field instance to which the iterable belongs.
     :param instance: The instance to which the field belongs.
     """
+    if field is None:
+        return
     for item in value:
         field.child.validate(item, instance)
 
@@ -1022,7 +1033,7 @@ class Iterable(typing.Generic[IterType, _V], Field[IterType]):
         "json": iterable_json_serializer,
     }
     default_deserializer = iterable_deserializer
-    default_validators = (validate_iterable,)
+    default_validator = validate_iterable  # type: ignore[assignment]
 
     def __init__(
         self,
@@ -1046,12 +1057,15 @@ class Iterable(typing.Generic[IterType, _V], Field[IterType]):
 
         validators = kwargs.get("validators", [])
         if size is not None:
-            validators = typing.cast(typing.Iterable[Validator[IterType]], validators)
-            validators = [
-                *validators,
-                field_validators.max_length(size),
-            ]
-            kwargs["validators"] = validators
+            validators = list(filter(
+                None,
+                [
+                    kwargs.get("validator", None),
+                    field_validators.max_length(size),
+                ],
+            ))
+            if validators:
+                kwargs["validator"] = field_validators.pipe(*validators)
         super().__init__(field_type=field_type, **kwargs)
         self.child = child or Any()
         self.adder = _get_itertype_adder(field_type)
@@ -1181,7 +1195,7 @@ email_validator = field_validators.pattern(
 class Email(String):
     """Field for handling email addresses."""
 
-    default_validators = (email_validator,)
+    default_validator = email_validator
 
     def __init__(
         self,
@@ -1238,13 +1252,17 @@ class Choice(Field[_T]):
             )
 
         if choices:
-            validators = kwargs.get("validators", [])
-            validators = typing.cast(typing.Iterable[Validator[_T]], validators)
-            validators = [
-                *validators,
-                field_validators.in_(choices),
-            ]
-            kwargs["validators"] = validators
+            validators = list(filter(
+                None,
+                [
+                    kwargs.get("validator", None),
+                    field_validators.in_(choices),
+                ],
+            ))
+            if validators:
+                kwargs["validator"] = field_validators.pipe(
+                    *validators,
+                )
         super().__init__(field_type=field_type, **kwargs)
 
 
@@ -1284,7 +1302,7 @@ class HexColor(String):
 
     # default_min_length = 4
     # default_max_length = 9
-    default_validators = (hex_color_validator,)
+    default_validator = hex_color_validator
 
 
 rgb_color_validator = field_validators.pattern(
@@ -1297,7 +1315,7 @@ class RGBColor(String):
     """Field for handling RGB color values."""
 
     # default_max_length = 38
-    default_validators = (rgb_color_validator,)
+    default_validator = rgb_color_validator
 
     def __init__(
         self,
@@ -1328,7 +1346,7 @@ class HSLColor(String):
     """Field for handling HSL color values."""
 
     # default_max_length = 40
-    default_validators = (hsl_color_validator,)
+    default_validator = hsl_color_validator
 
     def __init__(
         self,
@@ -1358,7 +1376,8 @@ slug_validator = field_validators.pattern(
 class Slug(String):
     """Field for URL-friendly strings."""
 
-    default_validators = (slug_validator,)
+    default_min_length = 1
+    default_validator = slug_validator
 
 
 def ip_address_deserializer(value: typing.Any, field: Field) -> typing.Any:

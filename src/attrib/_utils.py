@@ -548,23 +548,33 @@ def any_func(
 ) -> typing.Callable[..., typing.Any]:
     """
     Build a function that calls a list of functions and returns the first successful call.
-    If all functions fail, it raises a ValueError with the last exception.
+    If all functions fail, it raises a ValueError with details about the last exception.
     This is useful for trying multiple functions in a specific order until one succeeds.
 
-    :param funcs: An iterable of functions to call.
-    :param target_exception: The exception type to catch. If None, all exceptions are caught.
-    :return: A function that returns the first successful call from the list of functions.
+    :param funcs: A list of functions to call.
+    :param target_exception: The exception type(s) to catch. If None, all exceptions are caught.
+    :return: A function that returns the result of the first successful call.
     """
+    if not funcs:
+        raise ValueError("No functions provided.")
     target_exception = target_exception if target_exception is not None else Exception
 
     def any(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
-        recent_exc = None
+        last_exception = None
+        failed_funcs = []
+
         for func in funcs:
             try:
                 return func(*args, **kwargs)
             except target_exception as exc:
-                recent_exc = exc
+                name = getattr(func, "__name__", repr(func))
+                failed_funcs.append(name)
+                last_exception = exc
                 continue
-        raise ValueError("All functions failed") from recent_exc
+
+        func_list = ", ".join(failed_funcs) or "no functions"
+        raise ValueError(
+            f"All functions failed ({func_list}). Most recent error - {type(last_exception).__name__}: {last_exception}"
+        ) from last_exception
 
     return any

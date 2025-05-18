@@ -328,6 +328,7 @@ def build_non_generic_type_deserializer(
                 f"Cannot deserialize {value!r} to {type_!r}"
             ) from exc
 
+    deserializer.__name__ = f"{type_.__name__}_deserializer"
     return deserializer
 
 

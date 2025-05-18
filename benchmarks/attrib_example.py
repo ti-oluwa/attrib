@@ -17,6 +17,16 @@ from attrs_example import Student as AttrsStudent
 _Dataclass_co = typing.TypeVar("_Dataclass_co", bound=attrib.Dataclass, covariant=True)
 
 
+adapter = attrib.TypeAdapter(
+    typing.Tuple[
+        typing.List[typing.Optional["Person"]],
+        typing.Dict[str, typing.List[int]],
+        typing.Optional[str],
+    ],
+    defer=True,
+)
+
+
 class Person(attrib.Dataclass, slots=True, frozen=True):
     """Person data class"""
 
@@ -30,19 +40,13 @@ class Person(attrib.Dataclass, slots=True, frozen=True):
 
 
 with timeit("build_adapter"):
-    adapter = attrib.TypeAdapter(
-        typing.Tuple[
-            typing.List[typing.Optional[Person]],
-            typing.Dict[str, typing.List[int]],
-            typing.Optional[str],
-        ],
-    )
+    adapter.build(globalns=globals(), localns=locals())
 
 with timeit("adapt_and_serialize"):
     adapted = adapter(
         ([{"name": "One", "age": 18}, None], {"scores": [10, 20, 30]}, None),
     )
-    # print(adapted)
+    log(adapted)
     log(
         adapter.serialize(
             adapted,
@@ -105,9 +109,7 @@ class Student(PersonalInfo, slots=True, hash=True):
     year = attrib.Nested(AcademicYear, lazy=False, allow_null=True)
     courses = attrib.List(
         child=attrib.Nested(Course, lazy=False),
-        validators=[
-            attrib.validators.min_length(1),
-        ],
+        validator=attrib.validators.min_length(1),
     )
     gpa = attrib.Float(
         allow_null=True, default=attrib.Factory(random.uniform, a=1.5, b=5.0)
