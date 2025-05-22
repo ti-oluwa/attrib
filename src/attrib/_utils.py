@@ -112,6 +112,17 @@ def is_mapping_type(
     return inspect.isclass(tp) and issubclass(tp, collections.abc.Mapping)
 
 
+def is_typed_dict(cls: type) -> bool:
+    """
+    Make shift check for TypedDict.
+    """
+    return (
+        isinstance(cls, type)
+        and issubclass(cls, dict)
+        and "__required_keys__" in cls.__dict__
+    )
+
+
 def is_slotted_cls(cls: typing.Type[typing.Any], /) -> bool:
     """Check if a class has __slots__ defined."""
     return "__slots__" in cls.__dict__

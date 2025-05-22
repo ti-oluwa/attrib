@@ -649,7 +649,7 @@ def deserialize(
     :return: The dataclass instance.
     """
     if obj is None:
-        raise DeserializationError(f"Cannot deserialize {obj!r}")
+        raise DeserializationError("Cannot deserialize 'None'")
     if attributes:
         return _from_attributes(dataclass_, obj)
     return dataclass_(obj)

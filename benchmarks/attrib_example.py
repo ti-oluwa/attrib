@@ -16,7 +16,6 @@ from attrs_example import Student as AttrsStudent
 
 _Dataclass_co = typing.TypeVar("_Dataclass_co", bound=attrib.Dataclass, covariant=True)
 
-
 adapter = attrib.TypeAdapter(
     typing.Tuple[
         typing.List[typing.Optional["Person"]],
@@ -46,7 +45,6 @@ with timeit("adapt_and_serialize"):
     adapted = adapter(
         ([{"name": "One", "age": 18}, None], {"scores": [10, 20, 30]}, None),
     )
-    log(adapted)
     log(
         adapter.serialize(
             adapted,

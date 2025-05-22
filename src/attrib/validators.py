@@ -14,8 +14,8 @@ from attrib.exceptions import ValidationError
 
 
 Bound = SupportsRichComparison
-ComparableValue = SupportsRichComparison
-CountableValue = typing.Sized
+Comparable = SupportsRichComparison
+Countable = typing.Sized
 
 
 @typing.final
@@ -28,7 +28,7 @@ class Pipeline(typing.NamedTuple):
     :param validators: A tuple of validator functions
     """
 
-    validators: Annotated[typing.Tuple[Validator, ...], MinLen(2)]
+    validators: Annotated[typing.Tuple[Validator[typing.Any], ...], MinLen(2)]
     message: typing.Optional[str] = None
 
     def __call__(
@@ -91,7 +91,7 @@ class Or(typing.NamedTuple):
     :param validators: A tuple of validator functions
     """
 
-    validators: Annotated[typing.Tuple[Validator, ...], MinLen(2)]
+    validators: Annotated[typing.Tuple[Validator[typing.Any], ...], MinLen(2)]
     message: typing.Optional[str] = None
 
     def __call__(
@@ -159,7 +159,7 @@ class Or(typing.NamedTuple):
 class FieldValidator(typing.NamedTuple):
     """Field validator."""
 
-    func: Validator
+    func: Validator[typing.Any]
     """Validator function."""
     message: typing.Optional[str] = None
     """Validation error message (template)."""
@@ -237,7 +237,7 @@ def load(*validators: Validator) -> typing.Tuple[FieldValidator, ...]:
 
 
 def pipe(
-    *validators: Validator, message: typing.Optional[str] = None
+    *validators: Validator[typing.Any], message: typing.Optional[str] = None
 ) -> FieldValidator:
     """
     Builds a pipeline of validators.
@@ -298,7 +298,7 @@ def or_(*validators: Validator, message: typing.Optional[str] = None) -> FieldVa
 
 
 def number_validator_factory(
-    comparison_func: typing.Callable[[ComparableValue, Bound], bool],
+    comparison_func: typing.Callable[[Comparable, Bound], bool],
     symbol: str,
 ):
     """
@@ -314,7 +314,7 @@ def number_validator_factory(
     def validator_factory(
         bound: Bound,
         message: typing.Optional[str] = None,
-    ) -> Validator:
+    ) -> Validator[typing.Any]:
         """
         Builds a validator for numeric comparisons.
 
@@ -382,7 +382,7 @@ def number_range(
     min_val: SupportsRichComparison,
     max_val: SupportsRichComparison,
     message: typing.Optional[str] = None,
-) -> Validator:
+) -> Validator[typing.Any]:
     """
     Number range validator.
 
@@ -440,7 +440,7 @@ def length_validator_factory(
     def validator_factory(
         bound: Bound,
         message: typing.Optional[str] = None,
-    ) -> Validator:
+    ) -> Validator[typing.Any]:
         """
         Builds a validator for length comparisons.
 
@@ -452,7 +452,7 @@ def length_validator_factory(
         msg = message or "'len({name}) {symbol} {bound}' is not True, got {length}"
 
         def validator(
-            value: CountableValue,
+            value: Countable,
             adapter: typing.Optional[typing.Any] = None,
             *args: typing.Any,
             **kwargs: typing.Any,
@@ -507,7 +507,7 @@ def pattern(
     flags: typing.Union[re.RegexFlag, typing.Literal[0]] = 0,
     func: typing.Optional[typing.Callable] = None,
     message: typing.Optional[str] = None,
-) -> Validator:
+) -> Validator[typing.Any]:
     """
     Builds a validator that checks if a value matches a given regex pattern.
 
@@ -584,7 +584,7 @@ def instance_of(
         typing.Type[typing.Any], typing.Tuple[typing.Type[typing.Any], ...]
     ],
     message: typing.Optional[str] = None,
-) -> Validator:
+) -> Validator[typing.Any]:
     """
     Builds a validator that checks if a value is an instance of a given type.
 
@@ -638,7 +638,7 @@ def subclass_of(
         typing.Type[typing.Any], typing.Tuple[typing.Type[typing.Any], ...]
     ],
     message: typing.Optional[str] = None,
-) -> Validator:
+) -> Validator[typing.Any]:
     """
     Builds a validator that checks if a value is a subclass of a given type.
 
@@ -684,7 +684,7 @@ def subclass_of(
     return validator
 
 
-def optional(validator: Validator) -> Validator:
+def optional(validator: Validator) -> Validator[typing.Any]:
     """
     Builds a validator that applies the given validator only if the value is not `None`.
 
@@ -721,7 +721,7 @@ def optional(validator: Validator) -> Validator:
 def member_of(
     choices: typing.Iterable[typing.Any],
     message: typing.Optional[str] = None,
-) -> Validator:
+) -> Validator[typing.Any]:
     """
     Builds a validator that checks if a value is a member of a given set of choices.
 
@@ -780,7 +780,7 @@ in_ = member_of
 def not_(
     validator: Validator,
     message: typing.Optional[str] = None,
-) -> Validator:
+) -> Validator[typing.Any]:
     """
     Builds a validator that raises `ValidationError` if the value
     validates against the specified validator.
@@ -858,7 +858,7 @@ def is_callable(
 def value_validator(
     func: typing.Callable[[typing.Any], typing.Any],
     message: typing.Optional[str] = None,
-) -> Validator:
+) -> Validator[typing.Any]:
     """
     Wraps a validator function that only accepts a value and returns a boolean
     indicating whether the value is valid or not such that it can be used
@@ -919,7 +919,7 @@ def path(
     is_absolute: bool = ...,
     is_relative: bool = ...,
     exists: typing.Literal[False] = False,
-) -> Validator: ...
+) -> Validator[typing.Any]: ...
 
 
 @typing.overload
@@ -935,7 +935,7 @@ def path(
     is_writable: bool = ...,
     is_executable: bool = ...,
     is_empty: bool = ...,
-) -> Validator: ...
+) -> Validator[typing.Any]: ...
 
 
 @typing.overload
@@ -951,7 +951,7 @@ def path(
     is_writable: bool = ...,
     is_executable: bool = ...,
     is_empty: bool = ...,
-) -> Validator: ...
+) -> Validator[typing.Any]: ...
 
 
 @typing.overload
@@ -967,7 +967,7 @@ def path(
     is_writable: bool = ...,
     is_executable: bool = ...,
     is_empty: bool = ...,
-) -> Validator: ...
+) -> Validator[typing.Any]: ...
 
 
 def path(
@@ -982,7 +982,7 @@ def path(
     is_writable: bool = False,
     is_executable: bool = False,
     is_empty: bool = False,
-) -> Validator:
+) -> Validator[typing.Any]:
     """
     `pathlib.Path` validator factory
 
@@ -1070,7 +1070,7 @@ def mapping(
     *,
     deep: bool = False,
     message: typing.Optional[str] = None,
-) -> Validator:
+) -> Validator[typing.Any]:
     """
     Builds a validator that checks if a value is a mapping (e.g., dict) and validates its keys
     and values using the provided validators.
@@ -1169,7 +1169,7 @@ def iterable(
     *,
     deep: bool = False,
     message: typing.Optional[str] = None,
-) -> Validator:
+) -> Validator[typing.Any]:
     """
     Builds a validator that checks if a value is an iterable (e.g., list, tuple) and validates
     its elements using the provided validator.

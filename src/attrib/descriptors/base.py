@@ -66,6 +66,7 @@ class AnyType:
 
 NonTupleFieldType: typing.TypeAlias = typing.Union[
     str,
+    _T,
     typing.Type[_T],
     typing.Type[AnyType],
     typing.ForwardRef,
@@ -75,6 +76,7 @@ FieldType: typing.TypeAlias = typing.Union[
     typing.Tuple[typing.Union[typing.ForwardRef, typing.Type[_T]], ...],
 ]
 NonForwardRefFieldType: typing.TypeAlias = typing.Union[
+    _T,
     typing.Type[_T],
     typing.Type[AnyType],
     typing.Tuple[typing.Type[_T], ...],
@@ -900,13 +902,15 @@ class String(Field[str]):
         :param trim_whitespaces: If True, leading and trailing whitespaces will be removed.
         :param kwargs: Additional keyword arguments for the field.
         """
-        validators = list(filter(
-            None,
-            [
-                kwargs.get("validator", None),
-                *build_min_max_length_validators(min_length, max_length),
-            ],
-        ))
+        validators = list(
+            filter(
+                None,
+                [
+                    kwargs.get("validator", None),
+                    *build_min_max_length_validators(min_length, max_length),
+                ],
+            )
+        )
         if validators:
             kwargs["validator"] = field_validators.pipe(*validators)
         super().__init__(field_type=str, **kwargs)
@@ -1057,13 +1061,15 @@ class Iterable(typing.Generic[IterType, _V], Field[IterType]):
 
         validators = kwargs.get("validators", [])
         if size is not None:
-            validators = list(filter(
-                None,
-                [
-                    kwargs.get("validator", None),
-                    field_validators.max_length(size),
-                ],
-            ))
+            validators = list(
+                filter(
+                    None,
+                    [
+                        kwargs.get("validator", None),
+                        field_validators.max_length(size),
+                    ],
+                )
+            )
             if validators:
                 kwargs["validator"] = field_validators.pipe(*validators)
         super().__init__(field_type=field_type, **kwargs)
@@ -1252,13 +1258,15 @@ class Choice(Field[_T]):
             )
 
         if choices:
-            validators = list(filter(
-                None,
-                [
-                    kwargs.get("validator", None),
-                    field_validators.in_(choices),
-                ],
-            ))
+            validators = list(
+                filter(
+                    None,
+                    [
+                        kwargs.get("validator", None),
+                        field_validators.in_(choices),
+                    ],
+                )
+            )
             if validators:
                 kwargs["validator"] = field_validators.pipe(
                     *validators,
@@ -1380,7 +1388,10 @@ class Slug(String):
     default_validator = slug_validator
 
 
-def ip_address_deserializer(value: typing.Any, field: Field) -> typing.Any:
+def ip_address_deserializer(
+    value: typing.Any,
+    field: Field[typing.Union[ipaddress.IPv4Address, ipaddress.IPv6Address]],
+) -> typing.Any:
     """Deserialize IP address data to an IP address object."""
     return ipaddress.ip_address(value)
 
