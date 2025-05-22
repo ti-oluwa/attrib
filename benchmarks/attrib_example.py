@@ -14,7 +14,11 @@ from mock_data import course_data, student_data, year_data
 from attrs_example import Student as AttrsStudent
 
 
-_Dataclass_co = typing.TypeVar("_Dataclass_co", bound=attrib.Dataclass, covariant=True)
+Dataclass_co = typing.TypeVar(
+    "Dataclass_co",
+    bound=attrib.Dataclass,
+    covariant=True,
+)
 
 adapter = attrib.TypeAdapter(
     typing.Tuple[
@@ -141,8 +145,8 @@ dummy_student.age
 
 def load_data(
     data_list: typing.List[typing.Dict[str, typing.Any]],
-    cls: typing.Type[_Dataclass_co],
-) -> typing.List[_Dataclass_co]:
+    cls: typing.Type[Dataclass_co],
+) -> typing.List[Dataclass_co]:
     """
     Load data into data classes
 
@@ -162,7 +166,7 @@ def example():
     for student in students:
         attrib.serialize(
             student,
-            fmt="json",
+            fmt="python",
             # options=[
             #     attrib.Option(Course, depth=0, strict=True),
             #     attrib.Option(depth=1),

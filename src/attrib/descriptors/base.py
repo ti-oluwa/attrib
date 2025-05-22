@@ -5,23 +5,16 @@ import functools
 from types import NoneType
 import uuid
 import decimal
-import datetime
 import typing
 import base64
 import io
 import copy
-import ipaddress
 import pathlib
 from typing_extensions import Unpack, Self, Annotated
 import annotated_types as annot
 from collections import defaultdict
 import collections.abc
 from dataclasses import dataclass
-
-try:
-    import zoneinfo
-except ImportError:
-    from backports import zoneinfo  # type: ignore[import]
 
 from attrib import validators as field_validators
 from attrib.exceptions import (
@@ -35,8 +28,6 @@ from attrib._utils import (
     is_valid_type,
     is_iterable_type,
     is_generic_type,
-    iso_parse,
-    parse_duration,
     _LRUCache,
     get_cache_key,
     make_jsonable,
@@ -45,6 +36,32 @@ from attrib._utils import (
     SerializerRegistry,
 )
 from attrib._typing import P, R, SupportsRichComparison, Validator, IterType, EMPTY
+
+
+__all__ = [
+    "AnyType",
+    "FieldError",
+    "Field",
+    "Factory",
+    "FieldInitKwargs",
+    "Any",
+    "Boolean",
+    "String",
+    "Float",
+    "Integer",
+    "Dict",
+    "List",
+    "Set",
+    "Tuple",
+    "Decimal",
+    "Email",
+    "Choice",
+    "JSON",
+    "Slug",
+    "Bytes",
+    "IOBase",
+    "Path",
+]
 
 _T = typing.TypeVar("_T")
 _V = typing.TypeVar("_V")
@@ -1299,82 +1316,6 @@ class JSON(Any):
     default_deserializer = json_deserializer
 
 
-hex_color_validator = field_validators.pattern(
-    r"^#(?:[0-9a-fA-F]{3,4}){1,2}$",
-    message="'{name}' must be a valid hex color code.",
-)
-
-
-class HexColor(String):
-    """Field for handling hex color values."""
-
-    # default_min_length = 4
-    # default_max_length = 9
-    default_validator = hex_color_validator
-
-
-rgb_color_validator = field_validators.pattern(
-    r"^rgb[a]?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*(\d{1,3})\s*)?\)$",
-    message="'{name}' must be a valid RGB color code.",
-)
-
-
-class RGBColor(String):
-    """Field for handling RGB color values."""
-
-    # default_max_length = 38
-    default_validator = rgb_color_validator
-
-    def __init__(
-        self,
-        *,
-        min_length=None,
-        max_length=None,
-        trim_whitespaces=True,
-        **kwargs,
-    ):
-        # Field enforces lowercase for RGB color values
-        kwargs["to_lowercase"] = True
-        kwargs["to_uppercase"] = False
-        super().__init__(
-            min_length=min_length,
-            max_length=max_length,
-            trim_whitespaces=trim_whitespaces,
-            **kwargs,
-        )
-
-
-hsl_color_validator = field_validators.pattern(
-    r"^hsl[a]?\(\s*(\d{1,3})\s*,\s*(\d{1,3})%?\s*,\s*(\d{1,3})%?\s*(?:,\s*(\d{1,3})\s*)?\)$",
-    message="'{name}' must be a valid HSL color code.",
-)
-
-
-class HSLColor(String):
-    """Field for handling HSL color values."""
-
-    # default_max_length = 40
-    default_validator = hsl_color_validator
-
-    def __init__(
-        self,
-        *,
-        min_length=None,
-        max_length=None,
-        trim_whitespaces=True,
-        **kwargs,
-    ):
-        # Field enforces lowercase for HSL color values
-        kwargs["to_lowercase"] = True
-        kwargs["to_uppercase"] = False
-        super().__init__(
-            min_length=min_length,
-            max_length=max_length,
-            trim_whitespaces=trim_whitespaces,
-            **kwargs,
-        )
-
-
 slug_validator = field_validators.pattern(
     r"^[a-zA-Z0-9_-]+$",
     message="'{name}' must be a valid slug.",
@@ -1386,247 +1327,6 @@ class Slug(String):
 
     default_min_length = 1
     default_validator = slug_validator
-
-
-def ip_address_deserializer(
-    value: typing.Any,
-    field: Field[typing.Union[ipaddress.IPv4Address, ipaddress.IPv6Address]],
-) -> typing.Any:
-    """Deserialize IP address data to an IP address object."""
-    return ipaddress.ip_address(value)
-
-
-class IPAddress(Field[typing.Union[ipaddress.IPv4Address, ipaddress.IPv6Address]]):
-    """Field for handling IP addresses."""
-
-    default_serializers = {
-        "json": to_string_serializer,
-    }
-    default_deserializer = ip_address_deserializer
-
-    def __init__(
-        self,
-        **kwargs: Unpack[FieldInitKwargs],
-    ):
-        super().__init__(
-            field_type=(
-                ipaddress.IPv4Address,
-                ipaddress.IPv6Address,
-            ),
-            **kwargs,
-        )
-
-
-def timedelta_deserializer(value: typing.Any, field: Field) -> datetime.timedelta:
-    """Deserialize duration data to time delta."""
-    duration = parse_duration(value)
-    if duration is None:
-        raise DeserializationError(f"Invalid duration value - {value}")
-    return duration
-
-
-class Duration(Field[datetime.timedelta]):
-    """Field for handling duration values."""
-
-    default_serializers = {
-        "json": to_string_serializer,
-    }
-    default_deserializer = timedelta_deserializer
-
-    def __init__(self, **kwargs: Unpack[FieldInitKwargs]):
-        super().__init__(field_type=datetime.timedelta, **kwargs)
-
-
-TimeDelta = Duration
-
-
-def timezone_deserializer(value: typing.Any, field: Field) -> zoneinfo.ZoneInfo:
-    """Deserialize timezone data to `zoneinfo.ZoneInfo` object."""
-    return zoneinfo.ZoneInfo(value)
-
-
-class TimeZone(Field[datetime.tzinfo]):
-    """Field for handling timezone values."""
-
-    default_serializers = {
-        "json": to_string_serializer,
-    }
-    default_deserializer = timezone_deserializer
-
-    def __init__(self, **kwargs: Unpack[FieldInitKwargs]):
-        super().__init__(field_type=datetime.tzinfo, **kwargs)
-
-
-DatetimeType = typing.TypeVar(
-    "DatetimeType",
-    bound=typing.Union[datetime.date, datetime.datetime, datetime.time],
-)
-
-
-def datetime_serializer(
-    value: DatetimeType,
-    field: "DateTimeBase[DatetimeType]",
-    context: typing.Optional[typing.Dict[str, typing.Any]],
-) -> str:
-    """Serialize a datetime object to a string."""
-    return value.strftime(field.output_format)
-
-
-class DateTimeBase(Field[DatetimeType]):
-    """Base class for datetime fields."""
-
-    default_output_format: typing.ClassVar[str] = "%Y-%m-%d %H:%M:%S%z"
-    default_serializers = {
-        "json": datetime_serializer,
-    }
-
-    def __init__(
-        self,
-        field_type: typing.Type[DatetimeType],
-        *,
-        input_formats: typing.Optional[typing.Iterable[str]] = None,
-        output_format: typing.Optional[str] = None,
-        **kwargs: Unpack[FieldInitKwargs],
-    ):
-        """
-        Initialize the field.
-
-        :param input_formats: Possible expected input format (ISO or RFC) for the date value.
-            If not provided, the field will attempt to parse the date value
-            itself, which may be slower.
-
-        :param output_format: The preferred output format for the date value.
-        :param kwargs: Additional keyword arguments for the field.
-        """
-        super().__init__(field_type=field_type, **kwargs)  # type: ignore
-        self.input_formats = input_formats
-        self.output_format = output_format or self.default_output_format
-
-
-_datetime_cache = _LRUCache[str, datetime.datetime](maxsize=128)
-
-
-def cached_iso_parse(
-    value: str,
-    fmt: typing.Optional[typing.Iterable[str]] = None,
-) -> datetime.datetime:
-    """Parse a datetime string in ISO format with caching."""
-    if value in _datetime_cache:
-        return _datetime_cache[value]
-
-    parsed = iso_parse(value, fmt=fmt)
-    _datetime_cache[value] = parsed
-    return parsed
-
-
-def iso_date_deserializer(
-    value: str,
-    field: DateTimeBase[datetime.date],
-) -> datetime.date:
-    """Parse a date string in ISO format."""
-    return cached_iso_parse(value, fmt=field.input_formats).date()
-
-
-def iso_time_deserializer(
-    value: str,
-    field: DateTimeBase[datetime.time],
-) -> datetime.time:
-    """Parse a time string in ISO format."""
-    return cached_iso_parse(value, fmt=field.input_formats).time()
-
-
-class Date(DateTimeBase[datetime.date]):
-    """Field for handling date values."""
-
-    default_output_format = "%Y-%m-%d"
-    default_deserializer = iso_date_deserializer
-
-    def __init__(
-        self,
-        *,
-        input_formats: typing.Optional[typing.Iterable[str]] = None,
-        output_format: typing.Optional[str] = None,
-        **kwargs: Unpack[FieldInitKwargs],
-    ):
-        super().__init__(
-            field_type=datetime.date,
-            input_formats=input_formats,
-            output_format=output_format,
-            **kwargs,
-        )
-
-
-class Time(DateTimeBase[datetime.time]):
-    """Field for handling time values."""
-
-    default_output_format = "%H:%M:%S.%s"
-    default_deserializer = iso_time_deserializer
-
-    def __init__(
-        self,
-        *,
-        input_formats: typing.Optional[typing.Iterable[str]] = None,
-        output_format: typing.Optional[str] = None,
-        **kwargs: Unpack[FieldInitKwargs],
-    ):
-        super().__init__(
-            field_type=datetime.time,
-            input_formats=input_formats,
-            output_format=output_format,
-            **kwargs,
-        )
-
-
-def datetime_deserializer(
-    value: str,
-    field: DateTimeBase[datetime.datetime],
-) -> datetime.datetime:
-    """Parse a datetime string in ISO format."""
-    return cached_iso_parse(value, fmt=field.input_formats)
-
-
-class DateTime(DateTimeBase[datetime.datetime]):
-    """Field for handling datetime values."""
-
-    default_output_format = "%Y-%m-%d %H:%M:%S%z"
-    default_deserializer = datetime_deserializer
-
-    def __init__(
-        self,
-        *,
-        tz: typing.Optional[typing.Union[datetime.tzinfo, str]] = None,
-        input_formats: typing.Optional[typing.Iterable[str]] = None,
-        output_format: typing.Optional[str] = None,
-        **kwargs: Unpack[FieldInitKwargs],
-    ):
-        """
-        Initialize the field.
-
-        :param tz: The timezone to use for the datetime value. If this set,
-            the datetime value will be represented in this timezone.
-
-        :param input_format: Possible expected input format (ISO or RFC) for the datetime value.
-            If not provided, the field will attempt to parse the datetime value
-            itself, which may be slower.
-
-        :param output_format: The preferred output format for the datetime value.
-        :param kwargs: Additional keyword arguments for the field.
-        """
-        super().__init__(
-            field_type=datetime.datetime,
-            input_formats=input_formats,
-            output_format=output_format,
-            **kwargs,
-        )
-        self.tz = timezone_deserializer(tz, self) if tz else None
-
-    def deserialize(self, value: typing.Any) -> datetime.datetime:
-        deserialized = super().deserialize(value)
-        if self.tz and deserialized.tzinfo:
-            deserialized = deserialized.astimezone(self.tz)
-        elif self.tz:
-            deserialized = deserialized.replace(tzinfo=self.tz)
-        return deserialized
 
 
 def bytes_serializer(
@@ -1715,39 +1415,3 @@ class Path(Field[pathlib.Path]):
     ):
         super().__init__(field_type=pathlib.Path, **kwargs)
         self.resolve = resolve
-
-
-__all__ = [
-    "EMPTY",
-    "AnyType",
-    "FieldError",
-    "Field",
-    "Factory",
-    "FieldInitKwargs",
-    "Any",
-    "Boolean",
-    "String",
-    "Float",
-    "Integer",
-    "Dict",
-    "List",
-    "Set",
-    "Tuple",
-    "Decimal",
-    "Email",
-    "Choice",
-    "JSON",
-    "HexColor",
-    "RGBColor",
-    "HSLColor",
-    "IPAddress",
-    "Slug",
-    "Date",
-    "Time",
-    "Duration",
-    "TimeDelta",
-    "DateTime",
-    "Bytes",
-    "IOBase",
-    "Path",
-]

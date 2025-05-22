@@ -563,7 +563,7 @@ def pattern(
         """
         nonlocal msg
 
-        if not match_func(value):
+        if not match_func(str(value)):
             name = adapter.name if adapter and adapter.name else "value"
             raise ValidationError(
                 msg.format_map(
