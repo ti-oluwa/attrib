@@ -2,6 +2,7 @@
 
 import enum
 import functools
+import sys
 from types import NoneType
 import uuid
 import decimal
@@ -409,16 +410,36 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         :param name: The name of the field.
         """
         self.name = name
+        parent_module = sys.modules.get(parent.__module__)
+        globalns = globals()
+        if parent_module is not None:
+            globalns = {**globalns, **parent_module.__dict__}
+        self.build(
+            globalns=globalns,
+            localns={
+                parent.__name__: parent,
+                "Self": parent,
+                "self": parent,
+            },
+        )
+
+    def build(
+        self,
+        globalns: typing.Optional[typing.Dict[str, typing.Any]] = None,
+        localns: typing.Optional[typing.Dict[str, typing.Any]] = None,
+    ) -> None:
+        """
+        Build the field type, resolving any forward references.
+
+        :param globalns: Global namespace for resolving types.
+        :param localns: Local namespace for resolving types.
+        """
         self.field_type = typing.cast(
             NonForwardRefFieldType[_T],
             resolve_type(
                 self.field_type,
-                globalns=globals(),
-                localns={
-                    parent.__name__: parent,
-                    "Self": parent,
-                    "self": parent,
-                },
+                globalns=globalns,
+                localns=localns,
             ),
         )
 

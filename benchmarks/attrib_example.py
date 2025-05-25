@@ -1,11 +1,13 @@
 import enum
 import random
 import typing
+import pydantic
 from datetime import datetime
 import tracemalloc
 import gc
 import attrs
 from memory_profiler import profile
+from typing_extensions import TypedDict
 
 import attrib
 from attrib.descriptors.phonenumbers import PhoneNumber
@@ -13,20 +15,35 @@ from utils import timeit, profileit, log
 from mock_data import course_data, student_data, year_data
 from attrs_example import Student as AttrsStudent
 
-
 Dataclass_co = typing.TypeVar(
     "Dataclass_co",
     bound=attrib.Dataclass,
     covariant=True,
 )
 
-adapter = attrib.TypeAdapter(
+#######################
+#### Type Adapters ####
+#######################
+
+attrib_adapter = attrib.TypeAdapter(
     typing.Tuple[
         typing.List[typing.Optional["PersonTypeDict"]],
         typing.Dict[str, typing.List[int]],
         typing.Optional[str],
     ],
-    defer=True,
+    defer_build=True,
+)
+
+pydantic_adapter = pydantic.TypeAdapter(
+    typing.Tuple[
+        typing.List[typing.Optional["PersonTypeDict"]],
+        typing.Dict[str, typing.List[int]],
+        typing.Optional[str],
+    ],
+    config=pydantic.ConfigDict(
+        defer_build=True,
+        arbitrary_types_allowed=True,
+    ),
 )
 
 
@@ -42,58 +59,70 @@ class Person(attrib.Dataclass, slots=True, frozen=True):
     )
 
 
-class PersonTypeDict(typing.TypedDict, total=False):
+class PersonTypeDict(TypedDict, total=False):
     """TypedDict for Person"""
 
     name: str
     age: int
-    friends: typing.List[typing.Optional["Person"]]
+    friends: typing.List[typing.Optional["PersonTypeDict"]]
 
+
+raw_data = (
+    (
+        {
+            "name": "One",
+            "age": "18",
+            "friends": [
+                {"name": "Two", "age": 20, "friends": []},
+                {"name": "Three", "age": "30", "friends": []},
+                {
+                    "name": "Four",
+                    "age": 40,
+                    "friends": (
+                        {"name": "Five", "age": 50, "friends": [None]},
+                        {"name": "Six", "age": 60, "friends": [None]},
+                    ),
+                },
+            ],
+        },
+        {"name": "Seven", "age": "70", "friends": []},
+        None,
+    ),
+    {"scores": [10, 20, 30]},
+    None,
+)
+
+with timeit("build_pydantic_adapter"):
+    pydantic_adapter.rebuild()
 
 with timeit("build_adapter"):
-    adapter.build(
-        depth=None,
+    attrib_adapter.build(
+        depth=10,
         globalns=globals(),
         localns=locals(),
     )
 
+with timeit("adapt_and_serialize_pydantic"):
+    adapted_pydantic = pydantic_adapter.validate_python(raw_data)
+    log(adapted_pydantic)
+
 with timeit("adapt_and_serialize"):
-    adapted = adapter(
-        (
-            (
-                {
-                    "name": "One",
-                    "age": "18",
-                    "friends": [
-                        {"name": "Two", "age": 20, "friends": []},
-                        {"name": "Three", "age": "30", "friends": []},
-                        {
-                            "name": "Four",
-                            "age": 40,
-                            "friends": (
-                                {"name": "Five", "age": 50, "friends": [None]},
-                                {"name": "Six", "age": 60, "friends": [None]},
-                            ),
-                        },
-                    ],
-                },
-                {"name": "Seven", "age": "70", "friends": []},
-                None,
-            ),
-            {"scores": [10, 20, 30]},
-            None,
-        ),
-    )
+    adapted = attrib_adapter(raw_data)
     log(
-        adapter.serialize(
+        attrib_adapter.serialize(
             adapted,
             options={
                 attrib.Option(Person, depth=1, strict=True),
             },
-            fmt="json",
+            fmt="python",
             astuple=True,
         )
     )
+
+
+########################
+##### Data Classes #####
+########################
 
 
 class Term(enum.Enum):
@@ -202,7 +231,7 @@ def example():
     for student in students:
         attrib.serialize(
             student,
-            fmt="python",
+            fmt="json",
             # options=[
             #     attrib.Option(Course, depth=0, strict=True),
             #     attrib.Option(depth=1),
@@ -212,31 +241,36 @@ def example():
     for course in courses:
         attrib.serialize(
             course,
-            fmt="python",
+            fmt="json",
         )
 
     for year in years:
         attrib.serialize(
             year,
-            fmt="python",
+            fmt="json",
         )
 
+    # import pickle
     # dump = pickle.dumps(students)
     # loaded_students = pickle.loads(dump)
     # log(
     #     "Loaded Students: ",
-    #     [attrib.serialize(student, fmt="python") for student in loaded_students],
+    #     [attrib.serialize(student, fmt="json") for student in loaded_students],
     # )
 
     # # Access and print a student's information
     # student = students[0]  # e.g., first student in the list
-    # log(attrib.serialize(student, depth=2))  # View student details in dictionary format
-    # Modify the student's academic year
+    # log(
+    #     attrib.serialize(student, options={attrib.Option(depth=2)})
+    # )  # View student details in dictionary format
+    # # Modify the student's academic year
     # student.year = years[1]  # Update academic year to next year
     # log(f"Updated Academic Year for {student.name}: ", attrib.serialize(student))
 
     # # Serialize the student's data to JSON format
-    # student_json = attrib.serialize(student, fmt="json", depth=2)
+    # student_json = attrib.serialize(
+    #     student, fmt="json", options={attrib.Option(depth=2)}
+    # )
     # log("Serialized Student JSON: ", student_json)
 
     # # Nesting and Data Validation Example
@@ -251,16 +285,27 @@ def example():
     #     "start_date": "2022-09-01",
     #     "end_date": "2023-06-30",
     # }
-    # log(f"Updated Academic Year for {student.name}: ", attrib.serialize(student, depth=2))
+    # log(
+    #     f"Updated Academic Year for {student.name}: ",
+    #     attrib.serialize(student, options={attrib.Option(depth=2)}),
+    # )
 
     # # Adding a new course to a student and displaying
     # new_course = Course(
-    #     {"id": 4, "name": "Organic Chemistry", "code": "CHEM121", "year": year_data[1]}
+    #     {
+    #         "id": 4,
+    #         "name": "Organic Chemistry",
+    #         "code": "CHEM121",
+    #         "year": year_data[1],
+    #     }
     # )
     # student.courses.append(new_course)
     # log(
     #     f"Updated Courses for {student.name}: ",
-    #     [attrib.serialize(course, fmt="json", depth=2) for course in student.courses],
+    #     [
+    #         attrib.serialize(course, fmt="json", options={attrib.Option(depth=2)})
+    #         for course in student.courses
+    #     ],
     # )
 
     # # Update student age

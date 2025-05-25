@@ -571,7 +571,7 @@ class Dataclass(metaclass=DataclassMeta):
         :param kwargs: Additional keyword arguments to initialize the dataclass with.
         """
         object.__setattr__(self, "_initializing", True)
-        combined = {**dict(data or {}), **kwargs}
+        combined = {**dict(data or {}), **kwargs} # type: ignore[assignment]
         load(self, combined)
         object.__setattr__(self, "_initializing", False)
 
@@ -619,7 +619,7 @@ def _from_attributes(
     """
     if dataclass_.__config__.frozen:
         raise TypeError(
-            "Cannot convert to a frozen dataclass. Use the constructor instead."
+            f"Cannot convert {obj!r} to a frozen dataclass. Use the constructor instead."
         )
     instance = dataclass_()
     for name, field in dataclass_.__fields__.items():

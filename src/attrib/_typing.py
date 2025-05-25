@@ -7,7 +7,9 @@ T = typing.TypeVar("T")
 
 
 RawData: typing.TypeAlias = typing.Union[
+    typing.Mapping[str, typing.Any],
     typing.Mapping[bytes, bytes],
+    typing.Sequence[typing.Tuple[str, typing.Any]],
     typing.Sequence[typing.Tuple[bytes, bytes]],
 ]
 
@@ -40,6 +42,16 @@ class TypeAdapter(typing.Generic[T], typing.Protocol):
     """
 
     name: typing.Optional[str]
+
+    def build(
+        self,
+        *args: typing.Any,
+        **kwargs: typing.Any,
+    ) -> None:
+        """
+        Builds any necessary components or itenaries for the type adapter to function.
+        """
+        ...
 
     @typing.overload
     def validate(

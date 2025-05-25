@@ -2,7 +2,7 @@ import inspect
 from types import NoneType
 import typing
 import functools
-from collections.abc import Iterable, Mapping, MutableMapping, Sequence, Set
+from collections.abc import Mapping, MutableMapping, Sequence, Set
 from collections import defaultdict
 
 from attrib._typing import Validator, T, Serializer, Deserializer
@@ -29,6 +29,7 @@ from attrib.serializers import serialize
 from attrib.dataclass import Dataclass, deserialize, _Dataclass_co
 
 
+@typing.final
 class TypeAdapter(typing.Generic[T]):
     """
     Concrete `TypeAdapter` implementation.
@@ -87,7 +88,7 @@ class TypeAdapter(typing.Generic[T]):
         serializers: typing.Optional[
             typing.Mapping[str, Serializer[typing.Any]]
         ] = None,
-        defer: bool = False,
+        defer_build: bool = False,
         strict: bool = False,
     ) -> None:
         """
@@ -98,7 +99,7 @@ class TypeAdapter(typing.Generic[T]):
         :param validator: A function to validate values for the adapted type
         :param serializers: A mapping of serialization formats to their respective serializer functions
         :param deserializer: A function to coerce the value to a specific type
-        :param defer: Whether to defer the building of the adapter probably for performance reasons,
+        :param defer_build: Whether to defer the building of the adapter probably for performance reasons,
             or for later resolving forward references.
         :param strict: Whether to enforce strict type checking and not attempt type coercion.
         """
@@ -114,18 +115,26 @@ class TypeAdapter(typing.Generic[T]):
         )
         self.strict = strict
         self._is_built = False
-        if not defer:
+        if not defer_build:
             self.build()
 
     def build(
         self,
         *,
-        depth: typing.Optional[int] = None,
         globalns: typing.Optional[typing.Dict[str, typing.Any]] = None,
         localns: typing.Optional[typing.Dict[str, typing.Any]] = None,
+        depth: typing.Optional[int] = None,
     ) -> None:
         """
         Build the adapter with the provided parameters.
+
+        *This method is idempotent. Building the adapter multiple times*
+        *will not change its state after the first build.*
+
+        :param depth: Defines how many type-levels deep the necessary deserializers
+            and validators should be built. This is especially useful for nested types or
+            self-referencing types that may cause infinite recursion of deserializer and validator building.
+            An example is a typed dict that contains a field that is a list of instances of the same typed dict.
 
         :param globalns: Global namespace for resolving type references
         :param localns: Local namespace for resolving type references
@@ -302,6 +311,12 @@ def build_non_generic_type_serializer_registry(
         ]
     ] = None,
 ) -> SerializerRegistry:
+    """
+    Build a serializer registry for non-generic types.
+
+    :param serializers: A mapping of serialization formats to their respective serializer functions
+    :return: A SerializerRegistry with the provided serializers
+    """
     serializers_map = {
         **(serializers or {}),
     }
@@ -325,7 +340,7 @@ def build_non_generic_type_deserializer(
     """
     Build a deserializer for a non-generic type.
 
-    :param type_: The target type to adapt
+    :param type_: The target non-generic type to build deserializer for.
     :param depth: The depth for nested deserialization (if applicable)
     :param strict: Whether to enforce strict type checking and not attempt type coercion.
     :return: A function that attempts to coerce the value to the target type
@@ -408,6 +423,13 @@ def build_non_generic_type_validator(
     /,
     depth: typing.Optional[int] = None,
 ) -> Validator[typing.Any]:
+    """
+    Build a validator for a non-generic type.
+
+    :param target: The target non-generic type.
+    :param depth: The depth for nested build operations (if applicable)
+    :return: A function that attempts to validate the value against the target type
+    """
     if is_typed_dict(target):
         return build_typeddict_validator(target, depth=depth)
     return instance_of(target)
@@ -416,6 +438,12 @@ def build_non_generic_type_validator(
 def build_dataclass_serializer_registry(
     serializers: typing.Optional[typing.Mapping[str, Serializer[typing.Any]]] = None,
 ) -> SerializerRegistry:
+    """
+    Build a serializer registry for dataclass types.
+
+    :param serializers: A mapping of serialization formats to their respective serializer functions
+    :return: A SerializerRegistry with the provided serializers
+    """
     serializers_map = {
         **(serializers or {}),
     }
@@ -449,6 +477,12 @@ def build_generic_type_serializer_registry(
         ]
     ] = None,
 ) -> SerializerRegistry:
+    """
+    Build a serializer registry for generic types.
+
+    :param target: The target generic type.
+    :param serializers: A mapping of serialization formats to their respective serializer functions
+    """
     serializers_map = {
         **(serializers or {}),
     }
@@ -547,7 +581,7 @@ def build_typeddict_validator(
     """
     Build a validator for a TypedDict type.
 
-    :param target: The target type to adapt
+    :param target: The target TypedDict type to validate against.
     :return: A function that attempts to coerce the value to the target type
     """
     annotations = typing.get_type_hints(target, include_extras=True)
@@ -608,7 +642,7 @@ def build_generic_type_deserializer(
     """
     Build a deserializer for a generic type.
 
-    :param target: The target type to build deserializer for
+    :param target: The target generic type to build deserializer for
     :return: A deserializer function for the target type
     """
     next_depth = None
@@ -812,7 +846,7 @@ def build_generic_type_validator(
     """
     Build a validator for a generic type.
 
-    :param target: The target type to build validator for
+    :param target: The target generic type to build validator for
     :return: A validator function for the target type
     """
     next_depth = None
@@ -945,7 +979,7 @@ def build_generic_type_serializer(
     """
     Build a python serializer for a generic type.
 
-    :param target: The target type to build serializer for
+    :param target: The target generic type to build serializer for
     :return: A serializer function for the target type
     """
     origin = typing.get_origin(target)
