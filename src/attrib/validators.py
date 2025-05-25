@@ -592,7 +592,7 @@ def instance_of(
     :param message: Error message template
     :return: A validator function
     """
-    msg = message or "Value must be an instance of {cls!r}, not {value_type!r}"
+    msg = message or "Value must be an instance of {cls!r}, not {type!r}"
 
     def validator(
         value: typing.Any,
@@ -622,7 +622,7 @@ def instance_of(
                     {
                         "cls": cls,
                         "value": value,
-                        "value_type": type(value),
+                        "type": type(value),
                         "name": name,
                         "adapter": adapter,
                     }

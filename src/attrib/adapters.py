@@ -1,4 +1,5 @@
 import inspect
+from types import NoneType
 import typing
 import functools
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence, Set
@@ -15,7 +16,15 @@ from attrib._utils import (
     resolve_type,
 )
 from attrib.exceptions import DeserializationError, SerializationError, ValidationError
-from attrib.validators import Or, instance_of, iterable, mapping, member_of, eq
+from attrib.validators import (
+    Or,
+    instance_of,
+    iterable,
+    mapping,
+    member_of,
+    eq,
+    optional,
+)
 from attrib.serializers import serialize
 from attrib.dataclass import Dataclass, deserialize, _Dataclass_co
 
@@ -64,6 +73,7 @@ class TypeAdapter(typing.Generic[T]):
         "serializer",
         "deserializer",
         "strict",
+        "_is_built",
     )
 
     def __init__(
@@ -103,12 +113,14 @@ class TypeAdapter(typing.Generic[T]):
             )
         )
         self.strict = strict
+        self._is_built = False
         if not defer:
             self.build()
 
     def build(
         self,
         *,
+        depth: typing.Optional[int] = None,
         globalns: typing.Optional[typing.Dict[str, typing.Any]] = None,
         localns: typing.Optional[typing.Dict[str, typing.Any]] = None,
     ) -> None:
@@ -118,6 +130,13 @@ class TypeAdapter(typing.Generic[T]):
         :param globalns: Global namespace for resolving type references
         :param localns: Local namespace for resolving type references
         """
+        if self._is_built:
+            raise RuntimeError(
+                f"Adapter {self.name or repr(self)} is already built. "
+                "You cannot build it again."
+            )
+
+        self._is_built = True
         self.adapted = resolve_type(
             self.adapted,
             globalns=globalns,
@@ -132,10 +151,12 @@ class TypeAdapter(typing.Generic[T]):
                 )
 
             if self.validator is None:
-                self.validator = build_generic_type_validator(self.adapted)
+                self.validator = build_generic_type_validator(self.adapted, depth=depth)
 
             if self.deserializer is None:
-                self.deserializer = build_generic_type_deserializer(self.adapted)
+                self.deserializer = build_generic_type_deserializer(
+                    self.adapted, depth=depth
+                )
             return
 
         if not isinstance(self.adapted, type):
@@ -152,7 +173,9 @@ class TypeAdapter(typing.Generic[T]):
         if self.validator is None:
             self.validator = instance_of(self.adapted)
         if self.deserializer is None:
-            self.deserializer = build_non_generic_type_deserializer(self.adapted)
+            self.deserializer = build_non_generic_type_deserializer(
+                self.adapted, depth=depth
+            )
         return
 
     @typing.overload
@@ -294,23 +317,64 @@ def build_non_generic_type_serializer_registry(
     )
 
 
-@functools.lru_cache
+@functools.lru_cache(maxsize=128)
 def build_non_generic_type_deserializer(
     type_: typing.Type[T],
-) -> Deserializer[T]:
+    depth: typing.Optional[int] = None,
+) -> Deserializer[typing.Any]:
     """
     Build a deserializer for a non-generic type.
 
     :param type_: The target type to adapt
+    :param depth: The depth for nested deserialization (if applicable)
     :param strict: Whether to enforce strict type checking and not attempt type coercion.
     :return: A function that attempts to coerce the value to the target type
     """
     if is_typed_dict(type_):
-        return build_typeddict_deserializer(type_)
+        return build_typeddict_deserializer(type_, depth=depth)
+
+    if issubclass(type_, Dataclass):
+
+        def to_dataclass(
+            value: typing.Any, *args: typing.Any, **kwargs: typing.Any
+        ) -> T:
+            return _dataclass_deserializer(
+                type_,  # type: ignore[return-value]
+                value,
+                *args,
+                **kwargs,
+            )
+
+        to_type = to_dataclass
+    elif issubclass(type_, NoneType):
+
+        def to_none_type(
+            value: typing.Any, *args: typing.Any, **kwargs: typing.Any
+        ) -> T:
+            if value is not None:
+                raise DeserializationError(
+                    f"Cannot deserialize {value!r}. Expected value to be None"
+                )
+            return value
+
+        to_type = to_none_type
+    else:
+
+        def to_any_type(
+            value: typing.Any, *args: typing.Any, **kwargs: typing.Any
+        ) -> T:
+            if isinstance(value, type_):
+                return value
+            return type_(value)  # type: ignore[call-arg]
+
+        to_type = to_any_type
+
+    allow_any_type = type_ is typing.Any
+    type_ = typing.cast(typing.Type[T], type_)
 
     def deserializer(
         value: typing.Any,
-        *_: typing.Any,
+        *args: typing.Any,
         **kwargs: typing.Any,
     ) -> T:
         """
@@ -320,7 +384,7 @@ def build_non_generic_type_deserializer(
         :param args: Additional arguments for deserialization
         :param kwargs: Additional keyword arguments for deserialization
         """
-        if type_ is typing.Any or isinstance(value, type_):
+        if allow_any_type or isinstance(value, type_):
             return value
 
         if kwargs.pop("strict", False):
@@ -328,16 +392,8 @@ def build_non_generic_type_deserializer(
                 f"Cannot deserialize {value!r} to {type_!r} without coercion. Set strict=False to allow coercion."
             )
 
-        if issubclass(type_, type(None)) and value is not None:
-            raise DeserializationError(
-                f"Cannot deserialize {value!r}. Expected value to be None"
-            )
-
-        if issubclass(type_, Dataclass):
-            return _dataclass_deserializer(type_, value, **kwargs)
-
         try:
-            return type_(value)  # type: ignore[call-arg]
+            return to_type(value, *args, **kwargs)
         except (ValueError, TypeError) as exc:
             raise DeserializationError(
                 f"Cannot deserialize {value!r} to {type_!r}"
@@ -347,9 +403,13 @@ def build_non_generic_type_deserializer(
     return deserializer
 
 
-def build_non_generic_type_validator(target: typing.Type[T], /) -> Validator[T]:
+def build_non_generic_type_validator(
+    target: typing.Type[T],
+    /,
+    depth: typing.Optional[int] = None,
+) -> Validator[typing.Any]:
     if is_typed_dict(target):
-        return build_typeddict_validator(target)
+        return build_typeddict_validator(target, depth=depth)
     return instance_of(target)
 
 
@@ -410,11 +470,15 @@ def build_generic_type_serializer_registry(
     )
 
 
-@functools.lru_cache
+TypeDictType = typing.TypeVar("TypeDictType", bound=typing.Mapping[str, typing.Any])
+
+
+@functools.lru_cache(maxsize=128)
 def build_typeddict_deserializer(
-    target: typing.Type[T],
+    target: typing.Type[TypeDictType],
     /,
-) -> Deserializer[T]:
+    depth: typing.Optional[int] = None,
+) -> Deserializer[TypeDictType]:
     """
     Build a deserializer for a TypedDict type.
 
@@ -425,20 +489,22 @@ def build_typeddict_deserializer(
         raise TypeError(f"Cannot build deserializer for non-TypedDict type {target!r}")
 
     annotations = typing.get_type_hints(target, include_extras=True)
-    required_keys = getattr(target, "__required_keys__", set())
-    optional_keys = getattr(target, "__optional_keys__", set())
     deserializers_map: typing.Dict[str, Deserializer[typing.Any]] = {}
     for key, value in annotations.items():
         if is_generic_type(value):
-            deserializers_map[key] = build_generic_type_deserializer(value)
+            deserializers_map[key] = build_generic_type_deserializer(value, depth=depth)
         else:
-            deserializers_map[key] = build_non_generic_type_deserializer(value)
+            deserializers_map[key] = build_non_generic_type_deserializer(
+                value, depth=depth
+            )
+
+    typeddict_keys = set(deserializers_map.keys())
 
     def deserializer(
-        value: typing.Any,
+        value: typing.Union[TypeDictType, typing.Any],
         *args: typing.Any,
         **kwargs: typing.Any,
-    ) -> T:
+    ) -> TypeDictType:
         """
         A deserializer function that attempts to coerce the value to the target type.
 
@@ -446,33 +512,22 @@ def build_typeddict_deserializer(
         :param args: Additional arguments for deserialization
         :param kwargs: Additional keyword arguments for deserialization
         """
-        if not isinstance(value, Mapping):
-            raise DeserializationError(f"Cannot deserialize {value!r} to {target!r}")
-
         mapping_keys = set(value.keys())
         # If deserialization is not strict and all of the typedicts keys are not present in the
         # mapping, just return an empty mapping
         if (
             not kwargs.get("strict", False)
-            and (mapping_keys - set(deserializers_map.keys())) == mapping_keys
+            and (mapping_keys - typeddict_keys) == mapping_keys
         ):
             return target()
 
-        if required_keys:
-            if (mapping_keys & required_keys) != required_keys:
-                raise DeserializationError(
-                    f"Value is missing required keys {required_keys - mapping_keys} in {value!r}"
-                )
-
         new_mapping = {}
         for key, item in value.items():
-            if key not in deserializers_map:
+            if key not in typeddict_keys:
                 continue
             try:
                 new_mapping[key] = deserializers_map[key](item, *args, **kwargs)
             except (TypeError, ValueError, DeserializationError) as exc:
-                if key in optional_keys:
-                    continue
                 raise DeserializationError(
                     f"Failed to deserialize {value!r} to {target!r}"
                 ) from exc
@@ -483,11 +538,12 @@ def build_typeddict_deserializer(
     return deserializer
 
 
-@functools.lru_cache
+@functools.lru_cache(maxsize=128)
 def build_typeddict_validator(
-    target: typing.Type[T],
+    target: typing.Type[TypeDictType],
     /,
-) -> Validator[T]:
+    depth: typing.Optional[int] = None,
+) -> Validator[TypeDictType]:
     """
     Build a validator for a TypedDict type.
 
@@ -499,12 +555,14 @@ def build_typeddict_validator(
     validators_map: typing.Dict[str, Validator[typing.Any]] = {}
     for key, value in annotations.items():
         if is_generic_type(value):
-            validators_map[key] = build_generic_type_validator(value)
+            validators_map[key] = build_generic_type_validator(value, depth=depth)
         else:
-            validators_map[key] = build_non_generic_type_validator(value)
+            validators_map[key] = build_non_generic_type_validator(value, depth=depth)
+
+    typeddict_keys = set(validators_map.keys())
 
     def validator(
-        value: typing.Union[T, typing.Any],
+        value: typing.Union[TypeDictType, typing.Any],
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
@@ -515,23 +573,19 @@ def build_typeddict_validator(
         :param args: Additional arguments for validation
         :param kwargs: Additional keyword arguments for validation
         """
-        if not isinstance(value, Mapping):
-            raise ValidationError(f"Cannot validate {value!r} as {target!r}")
-
         mapping_keys = set(value.keys())
         # If all of the typedicts keys are not present in the
         # mapping, just return
-        if (mapping_keys - set(validators_map.keys())) == mapping_keys:
+        if (mapping_keys - typeddict_keys) == mapping_keys:
             return
 
-        if required_keys:
-            if (mapping_keys & required_keys) != required_keys:
-                raise ValidationError(
-                    f"Value is missing required keys {required_keys - mapping_keys} in {value!r}"
-                )
+        if required_keys and (mapping_keys & required_keys) != required_keys:
+            raise ValidationError(
+                f"Value is missing required keys {required_keys - mapping_keys} in {value!r}"
+            )
 
         for key, item in value.items():
-            if key not in validators_map:
+            if key not in typeddict_keys:
                 continue
             try:
                 validators_map[key](item, *args, **kwargs)
@@ -546,17 +600,24 @@ def build_typeddict_validator(
     return validator
 
 
-@functools.lru_cache
+@functools.lru_cache(maxsize=128)
 def build_generic_type_deserializer(
     target: typing.Union[typing.Type[T], T],
-) -> Deserializer[typing.Any]:
+    depth: typing.Optional[int] = None,
+) -> Deserializer[typing.Union[T, typing.Any]]:
     """
     Build a deserializer for a generic type.
 
     :param target: The target type to build deserializer for
-    :param strict: Whether to enforce strict type checking and not attempt type coercion.
     :return: A deserializer function for the target type
     """
+    next_depth = None
+    if depth is not None:
+        if depth <= 0:
+            return lambda value, *args, **kwargs: value
+        else:
+            next_depth = depth - 1
+
     origin = typing.get_origin(target)
     args = typing.get_args(target)
     if not (origin or args):
@@ -571,9 +632,9 @@ def build_generic_type_deserializer(
         # and the rest as arguments.
         return any_func(
             *(
-                build_generic_type_deserializer(arg)
+                build_generic_type_deserializer(arg, depth=next_depth)
                 if is_generic_type(arg)
-                else build_non_generic_type_deserializer(arg)
+                else build_non_generic_type_deserializer(arg, depth=next_depth)
                 for arg in args
             ),
             target_exception=(
@@ -584,9 +645,9 @@ def build_generic_type_deserializer(
         )
     elif origin and not args:
         return (
-            build_generic_type_deserializer(origin)
+            build_generic_type_deserializer(origin, depth=next_depth)
             if is_generic_type(origin)
-            else build_non_generic_type_deserializer(origin)
+            else build_non_generic_type_deserializer(origin, depth=next_depth)
         )
 
     if not inspect.isclass(origin):
@@ -594,11 +655,38 @@ def build_generic_type_deserializer(
             # If the origin is Literal, the deserializer should just return the value as is
             return lambda value, *args, **kwargs: value
 
+        if origin is typing.Union and NoneType in args:
+            # If the origin is Union and NoneType is one of the arguments,
+            # We have an optional type.
+            any_deserializer = any_func(
+                *(
+                    build_generic_type_deserializer(arg, depth=next_depth)
+                    if is_generic_type(arg)
+                    else build_non_generic_type_deserializer(arg, depth=next_depth)
+                    for arg in args
+                    if arg is not NoneType
+                ),
+                target_exception=(
+                    TypeError,
+                    ValueError,
+                    DeserializationError,
+                ),
+            )
+
+            def optional_deserializer(
+                value: typing.Any, *args: typing.Any, **kwargs: typing.Any
+            ) -> typing.Optional[typing.Any]:
+                if value is None:
+                    return None
+                return any_deserializer(value, *args, **kwargs)
+
+            return optional_deserializer
+
         args_deserializers = tuple(
             [
-                build_generic_type_deserializer(arg)
+                build_generic_type_deserializer(arg, depth=next_depth)
                 if is_generic_type(arg)
-                else build_non_generic_type_deserializer(arg)
+                else build_non_generic_type_deserializer(arg, depth=next_depth)
                 for arg in args
             ]
         )
@@ -613,9 +701,9 @@ def build_generic_type_deserializer(
 
     args_deserializers = tuple(
         [
-            build_generic_type_deserializer(arg)
+            build_generic_type_deserializer(arg, depth=next_depth)
             if is_generic_type(arg)
-            else build_non_generic_type_deserializer(arg)
+            else build_non_generic_type_deserializer(arg, depth=next_depth)
             for arg in args
         ]
     )
@@ -665,7 +753,7 @@ def build_generic_type_deserializer(
                 *args: typing.Any,
                 **kwargs: typing.Any,
             ) -> typing.Tuple[typing.Any, ...]:
-                if not isinstance(value, Iterable) or len(value) != args_count:  # type: ignore
+                if len(value) != args_count:  # type: ignore
                     raise DeserializationError(
                         f"Cannot deserialize {value!r} to {target!r}"
                     )
@@ -690,11 +778,6 @@ def build_generic_type_deserializer(
             *args: typing.Any,
             **kwargs: typing.Any,
         ) -> typing.Iterable[typing.Any]:
-            if not isinstance(value, Iterable):
-                raise DeserializationError(
-                    f"Cannot deserialize {value!r} to {target!r}"
-                )
-
             new_sequence = []
             for item in value:
                 error = None
@@ -720,16 +803,25 @@ def build_generic_type_deserializer(
     )
 
 
-@functools.lru_cache
+@functools.lru_cache(maxsize=128)
 def build_generic_type_validator(
     target: typing.Union[typing.Type[T], T],
-) -> Validator[T]:
+    /,
+    depth: typing.Optional[int] = None,
+) -> Validator[typing.Union[T, typing.Any]]:
     """
     Build a validator for a generic type.
 
     :param target: The target type to build validator for
     :return: A validator function for the target type
     """
+    next_depth = None
+    if depth is not None:
+        if depth <= 0:
+            return lambda value, *args, **kwargs: None
+        else:
+            next_depth = depth - 1
+
     origin = typing.get_origin(target)
     args = typing.get_args(target)
     if not (origin or args):
@@ -740,21 +832,21 @@ def build_generic_type_validator(
             raise TypeError(
                 f"Cannot build deserializer for non-generic type {target!r}"
             )
-        # If the origin is None, we need to use the first argument as the origin
-        # and the rest as arguments.
-        return Or(
-            tuple(
-                build_generic_type_validator(arg)
-                if is_generic_type(arg)
-                else build_non_generic_type_validator(arg)
-                for arg in args
-            )
+        args_validators = tuple(
+            build_generic_type_validator(arg, depth=next_depth)
+            if is_generic_type(arg)
+            else build_non_generic_type_validator(arg, depth=next_depth)
+            for arg in args
         )
+        if len(args_validators) == 1:
+            return args_validators[0]
+        return Or(args_validators)
+
     elif origin and not args:
         return (
-            build_generic_type_validator(origin)
+            build_generic_type_validator(origin, depth=next_depth)
             if is_generic_type(origin)
-            else build_non_generic_type_validator(origin)
+            else build_non_generic_type_validator(origin, depth=next_depth)
         )
 
     # If the origin is not a class, we can just build an Or validator
@@ -763,11 +855,31 @@ def build_generic_type_validator(
         if origin is typing.Literal:
             return eq(args[0]) if len(args) == 1 else member_of(args)
 
+        if origin is typing.Union and NoneType in args:
+            # If the origin is Union and NoneType is one of the arguments,
+            # we have an optional type.
+            args_validators = tuple(
+                [
+                    build_generic_type_validator(arg, depth=next_depth)
+                    if is_generic_type(arg)
+                    else build_non_generic_type_validator(arg, depth=next_depth)
+                    for arg in args
+                    if arg is not NoneType
+                ]
+            )
+            if not args_validators:
+                raise TypeError(
+                    f"Cannot build validator for generic type {target!r} with origin {origin!r} and arguments {args!r}"
+                )
+            if len(args_validators) == 1:
+                return optional(args_validators[0])
+            return optional(Or(args_validators))
+
         args_validators = tuple(
             [
-                build_generic_type_validator(arg)
+                build_generic_type_validator(arg, depth=next_depth)
                 if is_generic_type(arg)
-                else build_non_generic_type_validator(arg)
+                else build_non_generic_type_validator(arg, depth=next_depth)
                 for arg in args
             ]
         )
@@ -775,9 +887,9 @@ def build_generic_type_validator(
 
     args_validators = tuple(
         [
-            build_generic_type_validator(arg)
+            build_generic_type_validator(arg, depth=next_depth)
             if is_generic_type(arg)
-            else build_non_generic_type_validator(arg)
+            else build_non_generic_type_validator(arg, depth=next_depth)
             for arg in args
         ]
     )
@@ -789,6 +901,34 @@ def build_generic_type_validator(
         return mapping(key_validator, value_validator)
 
     if issubclass(origin, (Sequence, Set)):
+        if issubclass(origin, tuple) and len(args_validators) > 1:
+            if len(args_validators) != len(args):
+                raise TypeError(
+                    f"Validator count mismatch. Expected {len(args)} but got {len(args_validators)}"
+                )
+
+            def tuple_validator(
+                value: typing.Any,
+                *args: typing.Any,
+                **kwargs: typing.Any,
+            ) -> None:
+                if len(value) != len(args_validators):
+                    raise ValidationError(f"Cannot validate {value!r} as {target!r}")
+
+                for index, item in enumerate(value):
+                    try:
+                        args_validators[index](item, *args, **kwargs)
+                    except (ValidationError, TypeError, ValueError) as exc:
+                        raise ValidationError(
+                            f"Failed to validate {value!r} as {target!r}"
+                        ) from exc
+
+                return None
+
+            return tuple_validator
+
+        if len(args_validators) == 1:
+            return iterable(args_validators[0])
         return iterable(Or(args_validators))
 
     raise TypeError(
@@ -796,7 +936,7 @@ def build_generic_type_validator(
     )
 
 
-@functools.lru_cache
+@functools.lru_cache(maxsize=128)
 def build_generic_type_serializer(
     target: typing.Union[typing.Type[T], T],
     *,
@@ -868,6 +1008,37 @@ def build_generic_type_serializer(
             if fmt == "json":
                 return _non_generic_type_json_serializer
             return _non_generic_type_python_serializer
+
+        if origin is typing.Union and NoneType in args:
+            # If the origin is Union and NoneType is one of the arguments,
+            # we have an optional type.
+            any_serializer = any_func(
+                *(
+                    build_generic_type_serializer(arg, fmt=fmt)
+                    if is_generic_type(arg)
+                    else (
+                        _non_generic_type_python_serializer
+                        if fmt == "python"
+                        else _non_generic_type_json_serializer
+                    )
+                    for arg in args
+                    if arg is not None
+                ),
+                target_exception=(
+                    TypeError,
+                    ValueError,
+                    SerializationError,
+                ),
+            )
+
+            def optional_serializer(
+                value: typing.Any, *args: typing.Any, **kwargs: typing.Any
+            ) -> typing.Optional[typing.Any]:
+                if value is None:
+                    return None
+                return any_serializer(value, *args, **kwargs)
+
+            return optional_serializer
 
         args_serializers = tuple(
             [
@@ -947,7 +1118,7 @@ def build_generic_type_serializer(
                 *args: typing.Any,
                 **kwargs: typing.Any,
             ) -> typing.Tuple[typing.Any, ...]:
-                if not isinstance(value, Iterable) or len(value) != args_count:  # type: ignore
+                if len(value) != args_count:  # type: ignore
                     raise SerializationError(
                         f"Cannot serialize {value!r} to {target!r}"
                     )
@@ -968,9 +1139,6 @@ def build_generic_type_serializer(
             *args: typing.Any,
             **kwargs: typing.Any,
         ) -> typing.Iterable[typing.Any]:
-            if not isinstance(value, Iterable):
-                raise SerializationError(f"Cannot serialize {value!r} to {target!r}")
-
             new_sequence = []
             for item in value:
                 error = None
@@ -996,14 +1164,7 @@ def build_generic_type_serializer(
     )
 
 
-BUILTIN_TYPES = (
-    int,
-    float,
-    bool,
-    Set,
-    Sequence,
-    Mapping,
-)
+BUILTIN_TYPES = {int, float, bool, set, list, tuple, dict}
 
 
 def _dataclass_deserializer(
@@ -1022,7 +1183,7 @@ def _dataclass_deserializer(
     """
     if isinstance(value, target):
         return value
-    if not isinstance(value, BUILTIN_TYPES):
+    if type(value) not in BUILTIN_TYPES:
         kwargs.setdefault("attributes", True)
     return deserialize(target, value, **kwargs)
 

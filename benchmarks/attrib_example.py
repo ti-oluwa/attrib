@@ -22,7 +22,7 @@ Dataclass_co = typing.TypeVar(
 
 adapter = attrib.TypeAdapter(
     typing.Tuple[
-        typing.List[typing.Optional["Person"]],
+        typing.List[typing.Optional["PersonType"]],
         typing.Dict[str, typing.List[int]],
         typing.Optional[str],
     ],
@@ -34,7 +34,7 @@ class Person(attrib.Dataclass, slots=True, frozen=True):
     """Person data class"""
 
     name = attrib.String(max_length=100)
-    age = attrib.Integer(min_value=0, max_value=30)
+    age = attrib.Integer(min_value=0, max_value=100)
     friends = attrib.List(
         child=attrib.Nested("Person", lazy=False),
         default=attrib.Factory(list),
@@ -42,20 +42,51 @@ class Person(attrib.Dataclass, slots=True, frozen=True):
     )
 
 
+class PersonType(typing.TypedDict, total=False):
+    """TypedDict for Person"""
+
+    name: str
+    age: int
+    friends: typing.List[typing.Optional["Person"]]
+
+
 with timeit("build_adapter"):
-    adapter.build(globalns=globals(), localns=locals())
+    adapter.build(depth=None, globalns=globals(), localns=locals())
 
 with timeit("adapt_and_serialize"):
     adapted = adapter(
-        ([{"name": "One", "age": 18}, None], {"scores": [10, 20, 30]}, None),
+        (
+            (
+                {
+                    "name": "One",
+                    "age": "18",
+                    "friends": [
+                        {"name": "Two", "age": 20, "friends": [None]},
+                        {"name": "Three", "age": "30", "friends": [None]},
+                        {
+                            "name": "Four",
+                            "age": 40,
+                            "friends": (
+                                {"name": "Five", "age": 50, "friends": [None]},
+                                {"name": "Six", "age": 60, "friends": [None]},
+                            ),
+                        },
+                    ],
+                },
+                {"name": "Seven", "age": "70", "friends": []},
+                None,
+            ),
+            {"scores": [10, 20, 30]},
+            None,
+        ),
     )
     log(
         adapter.serialize(
             adapted,
-            options={
-                attrib.Option(Person, depth=1, strict=True),
-            },
-            astuple=True,
+            # options={
+            #     attrib.Option(Person, depth=1, strict=True),
+            # },
+            # astuple=False,
         )
     )
 
