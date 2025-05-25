@@ -83,7 +83,6 @@ class AnyType:
 
 NonTupleFieldType: typing.TypeAlias = typing.Union[
     str,
-    _T,
     typing.Type[_T],
     typing.Type[AnyType],
     typing.ForwardRef,
@@ -93,7 +92,6 @@ FieldType: typing.TypeAlias = typing.Union[
     typing.Tuple[typing.Union[typing.ForwardRef, typing.Type[_T]], ...],
 ]
 NonForwardRefFieldType: typing.TypeAlias = typing.Union[
-    _T,
     typing.Type[_T],
     typing.Type[AnyType],
     typing.Tuple[typing.Type[_T], ...],

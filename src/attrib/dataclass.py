@@ -572,8 +572,7 @@ class Dataclass(metaclass=DataclassMeta):
         """
         object.__setattr__(self, "_initializing", True)
         combined = {**dict(data or {}), **kwargs}
-        if combined:
-            load(self, combined)
+        load(self, combined)
         object.__setattr__(self, "_initializing", False)
 
     def __init_subclass__(cls) -> None:

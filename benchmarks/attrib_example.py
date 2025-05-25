@@ -22,7 +22,7 @@ Dataclass_co = typing.TypeVar(
 
 adapter = attrib.TypeAdapter(
     typing.Tuple[
-        typing.List[typing.Optional["PersonType"]],
+        typing.List[typing.Optional["PersonTypeDict"]],
         typing.Dict[str, typing.List[int]],
         typing.Optional[str],
     ],
@@ -42,7 +42,7 @@ class Person(attrib.Dataclass, slots=True, frozen=True):
     )
 
 
-class PersonType(typing.TypedDict, total=False):
+class PersonTypeDict(typing.TypedDict, total=False):
     """TypedDict for Person"""
 
     name: str
@@ -51,7 +51,11 @@ class PersonType(typing.TypedDict, total=False):
 
 
 with timeit("build_adapter"):
-    adapter.build(depth=None, globalns=globals(), localns=locals())
+    adapter.build(
+        depth=None,
+        globalns=globals(),
+        localns=locals(),
+    )
 
 with timeit("adapt_and_serialize"):
     adapted = adapter(
@@ -61,8 +65,8 @@ with timeit("adapt_and_serialize"):
                     "name": "One",
                     "age": "18",
                     "friends": [
-                        {"name": "Two", "age": 20, "friends": [None]},
-                        {"name": "Three", "age": "30", "friends": [None]},
+                        {"name": "Two", "age": 20, "friends": []},
+                        {"name": "Three", "age": "30", "friends": []},
                         {
                             "name": "Four",
                             "age": 40,
@@ -83,10 +87,11 @@ with timeit("adapt_and_serialize"):
     log(
         adapter.serialize(
             adapted,
-            # options={
-            #     attrib.Option(Person, depth=1, strict=True),
-            # },
-            # astuple=False,
+            options={
+                attrib.Option(Person, depth=1, strict=True),
+            },
+            fmt="json",
+            astuple=True,
         )
     )
 

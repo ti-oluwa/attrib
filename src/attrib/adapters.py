@@ -1164,7 +1164,22 @@ def build_generic_type_serializer(
     )
 
 
-BUILTIN_TYPES = {int, float, bool, set, list, tuple, dict}
+BUILTIN_TYPES = {
+    int,
+    float,
+    bool,
+    set,
+    list,
+    tuple,
+    dict,
+    NoneType,
+    str,
+    bytes,
+    complex,
+    bytearray,
+    frozenset,
+    memoryview,
+}
 
 
 def _dataclass_deserializer(
@@ -1183,6 +1198,7 @@ def _dataclass_deserializer(
     """
     if isinstance(value, target):
         return value
+
     if type(value) not in BUILTIN_TYPES:
         kwargs.setdefault("attributes", True)
     return deserialize(target, value, **kwargs)
