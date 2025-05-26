@@ -510,13 +510,13 @@ class Dataclass(metaclass=DataclassMeta):
     #     "country": {
     #         "name": "Kenya",
     #         "code": "KE",
-    #         "population": 50_000_000,
+    #         "population": 50000000,
     #         "continent": {
     #             "name": "Africa",
-    #             "population": 1_300_000_000,
+    #             "population": 1300000000,
     #         }
     #     },
-    #     "population": 4_000_000,
+    #     "population": 4000000,
     #     "area": 696.1,
     #     "postal_code": "00100"
     # }
@@ -637,19 +637,19 @@ def deserialize(
     dataclass_: typing.Type[_Dataclass_co],
     obj: typing.Any,
     *,
-    attributes: bool = False,
+    from_attributes: bool = False,
 ) -> _Dataclass_co:
     """
     Deserialize an object to a dataclass instance.
 
     :param obj: The object to deserialize.
     :param dataclass_: The dataclass type to convert to.
-    :param attributes: If True, load fields using the object's attributes.
+    :param from_attributes: If True, load fields using the object's attributes.
     :return: The dataclass instance.
     """
     if obj is None:
         raise DeserializationError("Cannot deserialize 'None'")
-    if attributes:
+    if from_attributes:
         return _from_attributes(dataclass_, obj)
     return dataclass_(obj)
 

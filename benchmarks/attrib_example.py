@@ -96,18 +96,14 @@ with timeit("build_pydantic_adapter"):
     pydantic_adapter.rebuild()
 
 with timeit("build_adapter"):
-    attrib_adapter.build(
-        depth=10,
-        globalns=globals(),
-        localns=locals(),
-    )
+    attrib_adapter.build(depth=10, globalns=globals())
 
 with timeit("adapt_and_serialize_pydantic"):
     adapted_pydantic = pydantic_adapter.validate_python(raw_data)
     log(adapted_pydantic)
 
 with timeit("adapt_and_serialize"):
-    adapted = attrib_adapter(raw_data)
+    adapted = attrib_adapter.adapt(raw_data)
     log(
         attrib_adapter.serialize(
             adapted,

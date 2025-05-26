@@ -34,7 +34,7 @@ class TypeAdapter(typing.Generic[T]):
     """
     Concrete `TypeAdapter` implementation.
 
-    A type adapter is a pseudo-type. It defines type-like behavior using 3 methods:
+    A type adapter is a pseudo-type. It defines type-like behavior using 3 main methods:
     - validate: Validates the value
     - serialize: Serializes the value to a specific format
     - deserialize: Coerces the value to a specific type
@@ -48,10 +48,10 @@ class TypeAdapter(typing.Generic[T]):
         int,
         name="StrictPositiveInt",
         validators=[ge(0)],
-        deserializer=lambda value, *args, **kwargs: value, # No coercion attempted
+        strict=True,
     )
 
-    value = adapter("123") # deserializes to int and validates
+    value = adapter.adapt("123") # deserializes to int and validates
     print(type(value), value, sep=", ")  # <class 'int'>, 123
 
     value = adapter.deserialize("123")
@@ -136,7 +136,9 @@ class TypeAdapter(typing.Generic[T]):
             self-referencing types that may cause infinite recursion of deserializer and validator building.
             An example is a typed dict that contains a field that is a list of instances of the same typed dict.
 
-        :param globalns: Global namespace for resolving type references
+        :param globalns: Global namespace for resolving type references. It is advisable to always provide this
+            parameter. If it is not provided, the adapter will try to resolve the type from the current frame's
+            module's namespace, which may not always be available or correct and can be expensive.
         :param localns: Local namespace for resolving type references
         """
         if self._is_built:
@@ -146,6 +148,15 @@ class TypeAdapter(typing.Generic[T]):
             )
 
         self._is_built = True
+        if not globalns:
+            current_frame = inspect.currentframe()
+            if current_frame is None:
+                raise RuntimeError(
+                    "Cannot build adapter without a global namespace. Provide a global namespace."
+                )
+            module = inspect.getmodule(current_frame.f_back)
+            globalns = module.__dict__ if module else {}
+
         self.adapted = resolve_type(
             self.adapted,
             globalns=globalns,
@@ -275,20 +286,20 @@ class TypeAdapter(typing.Generic[T]):
                 f"{value!r} cannot be deserialized to {self.name!r}"
             ) from exc
 
-    def __call__(
+    def adapt(
         self,
         value: typing.Union[T, typing.Any],
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> T:
         """
-        Call the adapter to coerce the value to the adapted type and validate it.
+        Adapt the value to the adapted type and validate it.
         This method is a convenience method that combines deserialization and validation.
 
         :param value: The value to adapt
         :param args: Additional arguments for deserialization/validation
         :param kwargs: Additional keyword arguments for deserialization/validation
-        :return: The validated value
+        :return: The adapted and validated value
         """
         deserialized = self.deserialize(value, *args, **kwargs)
         validated = self.validate(deserialized, *args, **kwargs)
@@ -1234,7 +1245,7 @@ def _dataclass_deserializer(
         return value
 
     if type(value) not in BUILTIN_TYPES:
-        kwargs.setdefault("attributes", True)
+        kwargs.setdefault("from_attributes", True)
     return deserialize(target, value, **kwargs)
 
 

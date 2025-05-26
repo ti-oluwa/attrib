@@ -2,7 +2,7 @@
 
 import enum
 import functools
-import sys
+import inspect
 from types import NoneType
 import uuid
 import decimal
@@ -410,10 +410,8 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         :param name: The name of the field.
         """
         self.name = name
-        parent_module = sys.modules.get(parent.__module__)
-        globalns = globals()
-        if parent_module is not None:
-            globalns = {**globalns, **parent_module.__dict__}
+        parent_module = inspect.getmodule(parent)
+        globalns = parent_module.__dict__ if parent_module else globals()
         self.build(
             globalns=globalns,
             localns={

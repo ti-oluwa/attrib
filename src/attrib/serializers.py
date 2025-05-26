@@ -57,7 +57,6 @@ DEFAULT_OPTION = Option()
 
 OptionsMap: typing.TypeAlias = typing.MutableMapping[typing.Type[Dataclass], Option]
 
-
 def resolve_option(
     dataclass_: typing.Type[Dataclass],
     options_map: OptionsMap,

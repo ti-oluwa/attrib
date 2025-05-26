@@ -180,7 +180,7 @@ def resolve_forward_refs(
     :param localns: The local namespace to use for resolution.
     :return: The resolved type.
     """
-    return typing._eval_type(type_, globalns or globals(), localns or {})  # type: ignore[no-redef]
+    return typing._eval_type(type_, globalns or {}, localns or {})  # type: ignore[no-redef]
 
 
 def resolve_type(
