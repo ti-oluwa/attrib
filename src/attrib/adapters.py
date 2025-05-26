@@ -2,12 +2,20 @@ import inspect
 from types import NoneType
 import typing
 import functools
-from collections.abc import Mapping, MutableMapping, Sequence, Set
+from collections.abc import (
+    Iterable,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
+    Sequence,
+    Set,
+)
 from collections import defaultdict
 
 from attrib._typing import Validator, T, Serializer, Deserializer
 from attrib._utils import (
     is_generic_type,
+    is_named_tuple,
     is_typed_dict,
     make_jsonable,
     SerializerRegistry,
@@ -359,6 +367,9 @@ def build_non_generic_type_deserializer(
     if is_typed_dict(type_):
         return build_typeddict_deserializer(type_, depth=depth)
 
+    if is_named_tuple(type_):
+        return build_named_tuple_deserializer(type_, depth=depth)
+
     if issubclass(type_, Dataclass):
 
         def to_dataclass(
@@ -443,6 +454,8 @@ def build_non_generic_type_validator(
     """
     if is_typed_dict(target):
         return build_typeddict_validator(target, depth=depth)
+    if is_named_tuple(target):
+        return build_named_tuple_validator(target, depth=depth)
     return instance_of(target)
 
 
@@ -516,6 +529,7 @@ def build_generic_type_serializer_registry(
 
 
 TypeDictType = typing.TypeVar("TypeDictType", bound=typing.Mapping[str, typing.Any])
+NamedTupleType = typing.TypeVar("NamedTupleType", bound=typing.NamedTuple)
 
 
 @functools.lru_cache(maxsize=128)
@@ -557,6 +571,11 @@ def build_typeddict_deserializer(
         :param args: Additional arguments for deserialization
         :param kwargs: Additional keyword arguments for deserialization
         """
+        if not isinstance(value, Mapping):
+            raise DeserializationError(
+                f"Cannot deserialize {value!r} to {target!r}. Expected a Mapping."
+            )
+
         mapping_keys = set(value.keys())
         # If deserialization is not strict and all of the typedicts keys are not present in the
         # mapping, just return an empty mapping
@@ -618,6 +637,11 @@ def build_typeddict_validator(
         :param args: Additional arguments for validation
         :param kwargs: Additional keyword arguments for validation
         """
+        if not isinstance(value, Mapping):
+            raise ValidationError(
+                f"Cannot validate {value!r} as {target!r}. Expected a Mapping."
+            )
+
         mapping_keys = set(value.keys())
         # If all of the typedicts keys are not present in the
         # mapping, just return
@@ -631,6 +655,123 @@ def build_typeddict_validator(
 
         for key, item in value.items():
             if key not in typeddict_keys:
+                continue
+            try:
+                validators_map[key](item, *args, **kwargs)
+            except (ValidationError, TypeError, ValueError) as exc:
+                raise ValidationError(
+                    f"Failed to validate {value!r} as {target!r}"
+                ) from exc
+
+        return None
+
+    validator.__name__ = f"{target.__name__}_validator"
+    return validator
+
+
+@functools.lru_cache(maxsize=128)
+def build_named_tuple_deserializer(
+    target: typing.Type[NamedTupleType],
+    /,
+    depth: typing.Optional[int] = None,
+) -> Deserializer[NamedTupleType]:
+    """
+    Build a deserializer for a NamedTuple type.
+
+    :param target: The target NamedTuple type to adapt
+    :return: A function that attempts to coerce the value to the target type
+    """
+    annotations = typing.get_type_hints(target, include_extras=True)
+    deserializers_map: typing.Dict[str, Deserializer[typing.Any]] = {}
+    for key, value in annotations.items():
+        if is_generic_type(value):
+            deserializers_map[key] = build_generic_type_deserializer(value, depth=depth)
+        else:
+            deserializers_map[key] = build_non_generic_type_deserializer(
+                value, depth=depth
+            )
+
+    def deserializer(
+        value: typing.Union[NamedTupleType, typing.Any],
+        *args: typing.Any,
+        **kwargs: typing.Any,
+    ) -> NamedTupleType:
+        """
+        A deserializer function that attempts to coerce the value to the target type.
+
+        :param value: The value to deserialize
+        :param args: Additional arguments for deserialization
+        :param kwargs: Additional keyword arguments for deserialization
+        """
+        if not isinstance(value, (Mapping, Iterable)):
+            raise DeserializationError(
+                f"Cannot deserialize {value!r} to {target!r}. Expected a Mapping or Iterable."
+            )
+
+        if isinstance(value, Mapping):
+            items = value.items()
+        else:
+            items = zip(target._fields, value)
+
+        new_mapping = {}
+        for key, item in items:
+            try:
+                new_mapping[key] = deserializers_map[key](item, *args, **kwargs)
+            except (TypeError, ValueError, DeserializationError) as exc:
+                raise DeserializationError(
+                    f"Failed to deserialize {value!r} to {target!r}"
+                ) from exc
+
+        return target(**new_mapping)  # type: ignore[call-arg]
+
+    deserializer.__name__ = f"{target.__name__}_deserializer"
+    return deserializer
+
+
+@functools.lru_cache(maxsize=128)
+def build_named_tuple_validator(
+    target: typing.Type[NamedTupleType],
+    /,
+    depth: typing.Optional[int] = None,
+) -> Validator[NamedTupleType]:
+    """
+    Build a validator for a NamedTuple type.
+
+    :param target: The target NamedTuple type to validate against.
+    :return: A function that attempts to validate the value against the target type
+    """
+    annotations = typing.get_type_hints(target, include_extras=True)
+    validators_map: typing.Dict[str, Validator[typing.Any]] = {}
+    for key, value in annotations.items():
+        if is_generic_type(value):
+            validators_map[key] = build_generic_type_validator(value, depth=depth)
+        else:
+            validators_map[key] = build_non_generic_type_validator(value, depth=depth)
+
+    def validator(
+        value: typing.Union[NamedTupleType, typing.Any],
+        *args: typing.Any,
+        **kwargs: typing.Any,
+    ) -> None:
+        """
+        A validator function that attempts to validate the value against the target type.
+
+        :param value: The value to validate
+        :param args: Additional arguments for validation
+        :param kwargs: Additional keyword arguments for validation
+        """
+        if not isinstance(value, (Mapping, Iterable)):
+            raise ValidationError(
+                f"Cannot validate {value!r} as {target!r}. Expected a Mapping or Iterable."
+            )
+
+        if isinstance(value, Mapping):
+            items = value.items()
+        else:
+            items = zip(target._fields, value)
+
+        for key, item in items:
+            if key not in validators_map:
                 continue
             try:
                 validators_map[key](item, *args, **kwargs)
@@ -767,13 +908,18 @@ def build_generic_type_deserializer(
             **kwargs: typing.Any,
         ) -> typing.Mapping[typing.Any, typing.Any]:
             try:
+                if not isinstance(value, (Mapping, Iterable)):
+                    raise DeserializationError(
+                        f"Cannot deserialize {value!r} to type {target!r}. Expected a Mapping or Iterable."
+                    )
+
                 new_mapping = origin.__new__(origin)  # type: ignore[assignment]
                 if isinstance(value, Mapping):
-                    iterator = value.items()
+                    items = value.items()
                 else:
-                    iterator = iter(value)
+                    items = iter(value)
 
-                for key, item in iterator:
+                for key, item in items:
                     new_mapping[key_deserializer(key, *args, **kwargs)] = (
                         value_deserializer(item, *args, **kwargs)
                     )
@@ -798,9 +944,9 @@ def build_generic_type_deserializer(
                 *args: typing.Any,
                 **kwargs: typing.Any,
             ) -> typing.Tuple[typing.Any, ...]:
-                if len(value) != args_count:  # type: ignore
+                if not isinstance(value, Iterable) or len(value) != args_count:  # type: ignore
                     raise DeserializationError(
-                        f"Cannot deserialize {value!r} to {target!r}"
+                        f"Cannot deserialize {value!r} to {target!r}. Expected an Iterable with {args_count} items."
                     )
 
                 new_tuple = []
@@ -818,17 +964,25 @@ def build_generic_type_deserializer(
 
             return tuple_deserializer
 
-        def sequence_deserializer(
+        if inspect.isabstract(origin) or not issubclass(origin, MutableSequence):
+            origin = list
+
+        def iterable_deserializer(
             value: typing.Any,
             *args: typing.Any,
             **kwargs: typing.Any,
         ) -> typing.Iterable[typing.Any]:
-            new_sequence = []
+            if not isinstance(value, Iterable):
+                raise DeserializationError(
+                    f"Cannot deserialize {value!r} to type {target!r}. Expected an Iterable."
+                )
+
+            new_iterable = []
             for item in value:
                 error = None
                 for deserializer in args_deserializers:
                     try:
-                        new_sequence.append(deserializer(item, *args, **kwargs))
+                        new_iterable.append(deserializer(item, *args, **kwargs))
                         break
                     except (TypeError, ValueError, DeserializationError) as exc:
                         error = exc
@@ -839,9 +993,9 @@ def build_generic_type_deserializer(
                             f"Failed to deserialize {value!r} to {target!r}"
                         ) from error
 
-            return origin(new_sequence)  # type: ignore
+            return origin(new_iterable)  # type: ignore
 
-        return sequence_deserializer
+        return iterable_deserializer
 
     raise TypeError(
         f"Cannot build deserializer for generic type {target!r} with origin {origin!r} and arguments {args!r}"
@@ -946,19 +1100,22 @@ def build_generic_type_validator(
         return mapping(key_validator, value_validator)
 
     if issubclass(origin, (Sequence, Set)):
+        args_count = len(args)
+        assert args_count == len(args_validators), (
+            f"Validator count mismatch. Expected {args_count} but got {len(args_validators)}"
+        )
+
         if issubclass(origin, tuple) and len(args_validators) > 1:
-            if len(args_validators) != len(args):
-                raise TypeError(
-                    f"Validator count mismatch. Expected {len(args)} but got {len(args_validators)}"
-                )
 
             def tuple_validator(
                 value: typing.Any,
                 *args: typing.Any,
                 **kwargs: typing.Any,
             ) -> None:
-                if len(value) != len(args_validators):
-                    raise ValidationError(f"Cannot validate {value!r} as {target!r}")
+                if not isinstance(value, Iterable) or len(value) != args_count:  # type: ignore
+                    raise ValidationError(
+                        f"Cannot validate {value!r} as {target!r}. Expected an Iterable with {args_count} items."
+                    )
 
                 for index, item in enumerate(value):
                     try:
@@ -1132,14 +1289,19 @@ def build_generic_type_serializer(
             *args: typing.Any,
             **kwargs: typing.Any,
         ) -> typing.Mapping[typing.Any, typing.Any]:
+            if not isinstance(value, (Mapping, Iterable)):
+                raise SerializationError(
+                    f"Cannot serialize {value!r} to type {target!r}. Expected a Mapping or Iterable."
+                )
+
             try:
                 new_mapping = origin.__new__(origin)  # type: ignore[assignment]
                 if isinstance(value, Mapping):
-                    iterator = value.items()
+                    items = value.items()
                 else:
-                    iterator = iter(value)
+                    items = iter(value)
 
-                for key, item in iterator:
+                for key, item in items:
                     new_mapping[key_serializer(key, *args, **kwargs)] = (
                         value_serializer(item, *args, **kwargs)
                     )
@@ -1156,6 +1318,7 @@ def build_generic_type_serializer(
         assert args_count == len(args_serializers), (
             f"Serializer count mismatch. Expected {args_count} but got {len(args_serializers)}"
         )
+
         if issubclass(origin, tuple) and args_count > 1:
 
             def tuple_serializer(
@@ -1163,10 +1326,11 @@ def build_generic_type_serializer(
                 *args: typing.Any,
                 **kwargs: typing.Any,
             ) -> typing.Tuple[typing.Any, ...]:
-                if len(value) != args_count:  # type: ignore
+                if not isinstance(value, Iterable) or len(value) != args_count:  # type: ignore
                     raise SerializationError(
-                        f"Cannot serialize {value!r} to {target!r}"
+                        f"Cannot serialize {value!r} to {target!r}. Expected an Iterable with {args_count} items."
                     )
+
                 new_tuple = []
                 for index, item in enumerate(value):
                     try:
@@ -1179,17 +1343,24 @@ def build_generic_type_serializer(
 
             return tuple_serializer
 
-        def sequence_serializer(
+        if inspect.isabstract(origin) or not issubclass(origin, MutableSequence):
+            origin = list
+
+        def iterable_serializer(
             value: typing.Any,
             *args: typing.Any,
             **kwargs: typing.Any,
         ) -> typing.Iterable[typing.Any]:
-            new_sequence = []
+            if not isinstance(value, Iterable):
+                raise SerializationError(
+                    f"Cannot serialize {value!r} to type {target!r}. Expected an Iterable."
+                )
+            new_iterable = []
             for item in value:
                 error = None
                 for serializer in args_serializers:
                     try:
-                        new_sequence.append(serializer(item, *args, **kwargs))
+                        new_iterable.append(serializer(item, *args, **kwargs))
                         break
                     except (SerializationError, TypeError, ValueError) as exc:
                         error = exc
@@ -1200,9 +1371,9 @@ def build_generic_type_serializer(
                             f"Failed to serialize {value!r} to {target!r}"
                         ) from error
 
-            return origin(new_sequence)  # type: ignore
+            return origin(new_iterable)  # type: ignore
 
-        return sequence_serializer
+        return iterable_serializer
 
     raise TypeError(
         f"Cannot build {fmt!r} serializer for generic type {target!r} with origin {origin!r} and arguments {args!r}"

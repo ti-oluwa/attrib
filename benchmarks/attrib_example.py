@@ -27,7 +27,7 @@ Dataclass_co = typing.TypeVar(
 
 attrib_adapter = attrib.TypeAdapter(
     typing.Tuple[
-        typing.List[typing.Optional["PersonTypeDict"]],
+        typing.List[typing.Optional["PersonTuple"]],
         typing.Dict[str, typing.List[int]],
         typing.Optional[str],
     ],
@@ -36,7 +36,7 @@ attrib_adapter = attrib.TypeAdapter(
 
 pydantic_adapter = pydantic.TypeAdapter(
     typing.Tuple[
-        typing.List[typing.Optional["PersonTypeDict"]],
+        typing.List[typing.Optional["PersonTuple"]],
         typing.Dict[str, typing.List[int]],
         typing.Optional[str],
     ],
@@ -59,12 +59,12 @@ class Person(attrib.Dataclass, slots=True, frozen=True):
     )
 
 
-class PersonTypeDict(TypedDict, total=False):
+class PersonTuple(typing.NamedTuple):
     """TypedDict for Person"""
 
     name: str
     age: int
-    friends: typing.List[typing.Optional["PersonTypeDict"]]
+    friends: typing.List[typing.Optional["PersonTuple"]]
 
 
 raw_data = (
@@ -104,16 +104,7 @@ with timeit("adapt_and_serialize_pydantic"):
 
 with timeit("adapt_and_serialize"):
     adapted = attrib_adapter.adapt(raw_data)
-    log(
-        attrib_adapter.serialize(
-            adapted,
-            options={
-                attrib.Option(Person, depth=1, strict=True),
-            },
-            fmt="python",
-            astuple=True,
-        )
-    )
+    log(attrib_adapter.serialize(adapted, fmt="python"))
 
 
 ########################
@@ -177,7 +168,7 @@ class Student(PersonalInfo, slots=True, hash=True):
     gpa = attrib.Float(
         allow_null=True, default=attrib.Factory(random.uniform, a=1.5, b=5.0)
     )
-    friend: attrib.Field["AttrsStudent"] = attrib.Field(
+    friend = attrib.Field(
         AttrsStudent,
         lazy=False,
         default=lambda: attrib.serialize(dummy_student, fmt="python"),

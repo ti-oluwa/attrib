@@ -123,6 +123,20 @@ def is_typed_dict(cls: type) -> bool:
     )
 
 
+def is_named_tuple(cls: typing.Type[typing.Any], /) -> bool:
+    """
+    Check if a class is a named tuple.
+
+    This checks if the class is a subclass of `tuple` and has a `_fields` attribute.
+    """
+    return (
+        isinstance(cls, type)
+        and issubclass(cls, tuple)
+        and hasattr(cls, "_fields")
+        and isinstance(cls._fields, tuple)  # type: ignore[has-type,attr-defined]
+    )
+
+
 def is_slotted_cls(cls: typing.Type[typing.Any], /) -> bool:
     """Check if a class has __slots__ defined."""
     return "__slots__" in cls.__dict__
@@ -282,9 +296,9 @@ def parse_duration(value):
         return days + sign * datetime.timedelta(**kw)
 
 
-_ISO_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S.%f%z"
-_RFC3339_DATE_FORMAT_0 = "%Y, /-%m-%dT%H:%M:%S.%f%z"
-_RFC3339_DATE_FORMAT_1 = "%Y, /-%m-%dT%H:%M:%S%z"
+ISO_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S.%f%z"
+RFC3339_DATE_FORMAT_0 = "%Y, /-%m-%dT%H:%M:%S.%f%z"
+RFC3339_DATE_FORMAT_1 = "%Y, /-%m-%dT%H:%M:%S%z"
 
 
 def rfc3339_parse(s: str, /) -> datetime.datetime:
@@ -296,13 +310,13 @@ def rfc3339_parse(s: str, /) -> datetime.datetime:
 
     Source: https://stackoverflow.com/a/30696682
     """
-    global _RFC3339_DATE_FORMAT_0, _RFC3339_DATE_FORMAT_1
+    global RFC3339_DATE_FORMAT_0, RFC3339_DATE_FORMAT_1
     try:
-        return datetime.datetime.strptime(s, _RFC3339_DATE_FORMAT_0)
+        return datetime.datetime.strptime(s, RFC3339_DATE_FORMAT_0)
     except ValueError:
         # Perhaps the datetime has a whole number of seconds with no decimal
         # point. In that case, this will work:
-        return datetime.datetime.strptime(s, _RFC3339_DATE_FORMAT_1)
+        return datetime.datetime.strptime(s, RFC3339_DATE_FORMAT_1)
 
 
 def iso_parse(
@@ -313,7 +327,7 @@ def iso_parse(
 
     Reference: https://stackoverflow.com/a/62769371
     """
-    global HAS_DATEUTIL, _ISO_DATE_FORMAT
+    global HAS_DATEUTIL, ISO_DATE_FORMAT
 
     if PY_GE_3_11:
         try:
@@ -333,7 +347,7 @@ def iso_parse(
         except ValueError:
             pass
 
-    fmt = fmt or _ISO_DATE_FORMAT
+    fmt = fmt or ISO_DATE_FORMAT
     if isinstance(fmt, str):
         try:
             return datetime.datetime.strptime(s, fmt)
