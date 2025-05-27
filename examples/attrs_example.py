@@ -25,8 +25,14 @@ class AcademicYear:
         validator=attrs.validators.optional(attrs.validators.max_len(100)),
         converter=str,
     )
-    start_date: date = attrs.field(default=None, converter=lambda x: parse(x).date())
-    end_date: date = attrs.field(default=None, converter=lambda x: parse(x).date())
+    start_date: date = attrs.field(
+        default=None,
+        converter=lambda x: parse(x).date() if not isinstance(x, date) else x,
+    )
+    end_date: date = attrs.field(
+        default=None,
+        converter=lambda x: parse(x).date() if not isinstance(x, date) else x,
+    )
     created_at: datetime = attrs.field(factory=datetime.now)
 
 
@@ -61,7 +67,9 @@ class Student(PersonalInfo):
     """Student data class with multiple fields and a list of enrolled courses"""
 
     id: int = attrs.field()
-    year: typing.Optional[AcademicYear] = attrs.field()
+    year: typing.Optional[AcademicYear] = attrs.field(
+        converter=lambda x: AcademicYear(**x) if isinstance(x, dict) else x,
+    )
     gpa: float = attrs.field(
         default=attrs.Factory(lambda: random.uniform(1.5, 5.0)),
     )

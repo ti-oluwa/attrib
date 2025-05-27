@@ -10,7 +10,7 @@ from .descriptors.nested import Nested  # noqa
 from .descriptors.colors import *  # noqa
 from .descriptors.networks import *  # noqa
 from .descriptors.datetime import *  # noqa
-from .serializers import serialize, Option  # noqa
+from .serializers import serialize, Option, Options  # noqa
 from . import validators  # noqa
 from ._utils import make_jsonable, iexact  # noqa
 from .adapters import TypeAdapter  # noqa

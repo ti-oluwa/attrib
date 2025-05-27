@@ -353,7 +353,7 @@ class DataclassMeta(type):
         # Inspect the base classes for fields and borrow them
         inspected = set()
         for base_ in bases:
-            for cls_ in base_.mro()[:-1]:
+            for cls_ in base_.__mro__[:-1]:
                 if cls_ in inspected:
                     continue
 

@@ -1,13 +1,10 @@
 import enum
 import random
 import typing
-import pydantic
 from datetime import datetime
 import tracemalloc
 import gc
-import attrs
 from memory_profiler import profile
-from typing_extensions import TypedDict
 
 import attrib
 from attrib.descriptors.phonenumbers import PhoneNumber
@@ -20,91 +17,6 @@ Dataclass_co = typing.TypeVar(
     bound=attrib.Dataclass,
     covariant=True,
 )
-
-#######################
-#### Type Adapters ####
-#######################
-
-attrib_adapter = attrib.TypeAdapter(
-    typing.Tuple[
-        typing.List[typing.Optional["PersonTuple"]],
-        typing.Dict[str, typing.List[int]],
-        typing.Optional[str],
-    ],
-    defer_build=True,
-)
-
-pydantic_adapter = pydantic.TypeAdapter(
-    typing.Tuple[
-        typing.List[typing.Optional["PersonTuple"]],
-        typing.Dict[str, typing.List[int]],
-        typing.Optional[str],
-    ],
-    config=pydantic.ConfigDict(
-        defer_build=True,
-        arbitrary_types_allowed=True,
-    ),
-)
-
-
-class Person(attrib.Dataclass, slots=True, frozen=True):
-    """Person data class"""
-
-    name = attrib.String(max_length=100)
-    age = attrib.Integer(min_value=0, max_value=100)
-    friends = attrib.List(
-        child=attrib.Nested("Person", lazy=False),
-        default=attrib.Factory(list),
-        allow_null=True,
-    )
-
-
-class PersonTuple(typing.NamedTuple):
-    """TypedDict for Person"""
-
-    name: str
-    age: int
-    friends: typing.List[typing.Optional["PersonTuple"]]
-
-
-raw_data = (
-    (
-        {
-            "name": "One",
-            "age": "18",
-            "friends": [
-                {"name": "Two", "age": 20, "friends": []},
-                {"name": "Three", "age": "30", "friends": []},
-                {
-                    "name": "Four",
-                    "age": 40,
-                    "friends": (
-                        {"name": "Five", "age": 50, "friends": [None]},
-                        {"name": "Six", "age": 60, "friends": [None]},
-                    ),
-                },
-            ],
-        },
-        {"name": "Seven", "age": "70", "friends": []},
-        None,
-    ),
-    {"scores": [10, 20, 30]},
-    None,
-)
-
-with timeit("build_pydantic_adapter"):
-    pydantic_adapter.rebuild()
-
-with timeit("build_adapter"):
-    attrib_adapter.build(depth=10, globalns=globals())
-
-with timeit("adapt_and_serialize_pydantic"):
-    adapted_pydantic = pydantic_adapter.validate_python(raw_data)
-    log(adapted_pydantic)
-
-with timeit("adapt_and_serialize"):
-    adapted = attrib_adapter.adapt(raw_data)
-    log(attrib_adapter.serialize(adapted, fmt="python"))
 
 
 ########################
@@ -171,7 +83,11 @@ class Student(PersonalInfo, slots=True, hash=True):
     friend = attrib.Field(
         AttrsStudent,
         lazy=False,
-        default=lambda: attrib.serialize(dummy_student, fmt="python"),
+        default=lambda: attrib.serialize(
+            dummy_student,
+            fmt="python",
+            options=attrib.Options(attrib.Option(AcademicYear, exclude={"term"})),
+        ),
         allow_null=True,
         serializers={"json": lambda x, *_: attrib.make_jsonable(x)},
         deserializer=lambda x, _: AttrsStudent(**x),
@@ -218,23 +134,23 @@ def example():
     for student in students:
         attrib.serialize(
             student,
-            fmt="json",
-            # options=[
-            #     attrib.Option(Course, depth=0, strict=True),
+            fmt="python",
+            # options=attrib.Options(
+            #     attrib.Option(Course, exclude={"year"}, depth=0, strict=True),
             #     attrib.Option(depth=1),
-            # ],
+            # ),
         )
 
     for course in courses:
         attrib.serialize(
             course,
-            fmt="json",
+            fmt="python",
         )
 
     for year in years:
         attrib.serialize(
             year,
-            fmt="json",
+            fmt="python",
         )
 
     # import pickle

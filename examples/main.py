@@ -1,6 +1,7 @@
 import sys
 import attrib_example
 import attrs_example
+import pydantic_example
 import utils
 
 
@@ -11,6 +12,7 @@ def main(n: int) -> None:
     """Main function to run the benchmarks."""
     attrib_example.test(n)
     attrs_example.test(n)
+    pydantic_example.test(n)
 
 
 if __name__ == "__main__":

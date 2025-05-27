@@ -498,17 +498,13 @@ def make_jsonable(obj: typing.Any) -> typing.Any:
     dictionaries, and custom objects. If a type is not supported, it raises
     a TypeError.
     """
-    from attrib.dataclass import Dataclass
-    from attrib.serializers import serialize
-
-    if isinstance(obj, Dataclass):
-        return serialize(obj, fmt="json")
-
     if obj is None or isinstance(obj, (str, int, float, bool)):
         return obj
 
     if isinstance(obj, collections.abc.Mapping):
         return jsonable_mapping(obj)
+    elif is_named_tuple(type(obj)):
+        return jsonable_mapping(obj._asdict())
     elif isinstance(obj, collections.abc.Iterable):
         return jsonable_iterable(obj)
 

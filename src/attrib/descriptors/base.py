@@ -315,7 +315,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         :param _cache_size: Multiplier for the base cache size for serialized and validated values, defaults to 1.
             Base cache size is 128, so the effective cache size will be 128 * _cache_size.
         """
-        assert 0.5 <= _cache_size <= 3.0, "Cache size must be between 1 and 3"
+        # assert 0.5 <= _cache_size <= 3.0, "Cache size must be between 1 and 3"
 
         if isinstance(field_type, str):
             self.field_type = typing.ForwardRef(field_type)
@@ -349,9 +349,9 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         self.default = default
         self._init_args = ()
         self._init_kwargs = {}
-        effective_cache_size = int(128 * _cache_size)
-        self._serialized_cache = _LRUCache(maxsize=effective_cache_size)
-        self._validated_cache = _LRUCache(maxsize=effective_cache_size)
+        # effective_cache_size = int(128 * _cache_size)
+        # self._serialized_cache = _LRUCache(maxsize=effective_cache_size)
+        # self._validated_cache = _LRUCache(maxsize=effective_cache_size)
 
     def post_init_validate(self) -> None:
         """
@@ -485,9 +485,9 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
             )
 
         # with self._lock:
-        cache_key = get_cache_key(value)
-        if cache_key in self._serialized_cache:
-            del self._serialized_cache[cache_key]
+        # cache_key = get_cache_key(value)
+        # if cache_key in self._serialized_cache:
+        #     del self._serialized_cache[cache_key]
         self.set_value(instance, value, not self.lazy)
 
     def get_value(self, instance: typing.Any) -> Value[_T]:
@@ -592,9 +592,9 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         if value is None and self.allow_null:
             return None
 
-        cache_key = get_cache_key(value)
-        if cache_key in self._validated_cache:
-            return self._validated_cache[cache_key]
+        # cache_key = get_cache_key(value)
+        # if cache_key in self._validated_cache:
+        #     return self._validated_cache[cache_key]
 
         if self.check_type(value):
             deserialized = value
@@ -613,7 +613,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
             self.validator(deserialized, self, instance)
 
         # with self._lock:
-        self._validated_cache[cache_key] = deserialized
+        # self._validated_cache[cache_key] = deserialized
         return deserialized
 
     def serialize(
@@ -632,9 +632,9 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         if value is None:
             return None
 
-        cache_key = get_cache_key(value)
-        if cache_key in self._serialized_cache:
-            return self._serialized_cache[cache_key]
+        # cache_key = get_cache_key(value)
+        # if cache_key in self._serialized_cache:
+        #     return self._serialized_cache[cache_key]
 
         try:
             serialiazed = self.serializer(fmt, value, self, context)
@@ -643,9 +643,9 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
                 f"Failed to serialize '{type(self).__name__}', {self.effective_name} to '{fmt}'.",
             ) from exc
 
-        if serialiazed is not None:
-            # with self._lock:
-            self._serialized_cache[cache_key] = serialiazed
+        # if serialiazed is not None:
+        #     # with self._lock:
+        #     self._serialized_cache[cache_key] = serialiazed
         return serialiazed
 
     def deserialize(self, value: typing.Any) -> _T:
