@@ -70,7 +70,7 @@ _V = typing.TypeVar("_V")
 
 @typing.final
 class AnyType:
-    """Class to represent the Any type."""
+    """Type representing any type."""
 
     def __init_subclass__(cls):
         raise TypeError("AnyType cannot be subclassed.")
@@ -155,7 +155,7 @@ def unsupported_serializer(
     """Raise an error for unsupported serialization."""
     raise SerializationError(
         f"'{type(field).__name__}' does not support serialization format. "
-        f"Supported formats are: {', '.join(field.serializer.serializer_map.keys())}.",
+        f"Supported formats are: {', '.join(field.serializer.map.keys())}.",
         field.effective_name,
     )
 
@@ -292,6 +292,9 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
             typing.Mapping[str, "FieldSerializer[_T, Self]"]
         ] = None,
         deserializer: typing.Optional["FieldDeserializer[Self, _T]"] = None,
+        always_coerce: bool = False,
+        check_coerced: bool = False,
+        skip_validator: bool = False,
         _cache_size: Annotated[
             float, annot.Interval(ge=0.5, le=3.0), annot.MultipleOf(0.5)
         ] = 1.0,
@@ -300,19 +303,29 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         Initialize the field.
 
         :param field_type: The expected type for field values.
-        :param default: A default value for the field to be used if no value is set, defaults to empty.
+        :param default: A default value for the field to be used if no value is set. Defaults to `EMPTY`.
         :param lazy: If True, the field will not be validated until it is accessed.
-        :param alias: Optional string for alternative field naming, defaults to None.
-        :param allow_null: If True, permits the field to be set to None, defaults to False.
-        :param required: If True, field values must be explicitly provided, defaults to False.
+        :param alias: Optional string for alternative field naming. Defaults to None.
+        :param allow_null: If True, permits the field to be set to None. Defaults to False.
+        :param required: If True, field values must be explicitly provided. Defaults to False.
         :param strict: If True, the field will only accept values of the specified type and will not attempt to coerce them.
             Defaults to False. This may speed up validation for large data sets.
+
         :param validator: A validation function to apply to the field's value, defaults to None.
             NOTE: The validator should be a callable that accepts the field value and the optional field instance as arguments.
             Values returned from the validator are not used, but it should raise a FieldError if the value is invalid.
-        :param serializers: A mapping of serialization formats to their respective serializer functions, defaults to None.
-        :param deserializer: A deserializer function to convert the field's value to the expected type, defaults to None.
-        :param _cache_size: Multiplier for the base cache size for serialized and validated values, defaults to 1.
+
+        :param serializers: A mapping of serialization formats to their respective serializer functions. Defaults to None.
+        :param deserializer: A deserializer function to convert the field's value to the expected type. Defaults to None.
+        :param always_coerce: If True, the field will always attempt to coerce the value by applying the deserializer
+            to the specified type, even if the value is already of that type. Defaults to False.
+
+        :param check_coerced: If True, the field will (double) check that the value returned by the deserializer is of the expected type.
+            If the value is not of the expected type, a ValidationError will be raised. Defaults to False.
+            Set to True if a custom deserializer is used and the return type cannot be guaranteed to match the field type.
+
+        :param skip_validator: If True, the field will skip validator run after deserialization. Defaults to False.
+        :param _cache_size: Multiplier for the base cache size for serialized and validated values. Defaults to 1.
             Base cache size is 128, so the effective cache size will be 128 * _cache_size.
         """
         # assert 0.5 <= _cache_size <= 3.0, "Cache size must be between 1 and 3"
@@ -347,6 +360,9 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         )
         self.deserializer = deserializer or type(self).default_deserializer
         self.default = default
+        self.always_coerce = always_coerce
+        self.check_coerced = check_coerced
+        self.skip_validator = skip_validator
         self._init_args = ()
         self._init_kwargs = {}
         # effective_cache_size = int(128 * _cache_size)
@@ -364,11 +380,17 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         Avoid modifying the field's state in this method.
         """
         if not is_valid_type(self.field_type):
-            raise TypeError(f"Specified type '{self.field_type}' is not a valid type.")
+            raise FieldError(f"{self.field_type!r} is not a valid field type.")
 
         default_provided = self.default is not EMPTY
         if self.required and default_provided:
             raise FieldError("A default value is not necessary when required=True")
+
+        if self.strict and self.always_coerce:
+            raise FieldError(
+                "Cannot set both strict=True and always_coerce=True. "
+                "If strict is True, the field will not attempt to coerce values."
+            )
 
     def __new__(cls, *args, **kwargs):
         instance = super().__new__(cls)
@@ -596,20 +618,20 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         # if cache_key in self._validated_cache:
         #     return self._validated_cache[cache_key]
 
-        if self.check_type(value):
+        if not self.always_coerce and self.check_type(value):
             deserialized = value
         elif self.strict:
             raise ValidationError(
-                f"'{type(self).__name__}', {self.effective_name!r} expected type '{self.field_type}', but got '{type(value)}'.",
+                f"{type(self).__name__} - {self.effective_name!r}, expected type '{self.field_type}' but got '{type(value)}'.",
             )
         else:
             deserialized = self.deserialize(value)
-            if not self.check_type(deserialized):
+            if self.check_coerced and not self.check_type(deserialized):
                 raise ValidationError(
-                    f"'{type(self).__name__}', {self.effective_name!r} expected type '{self.field_type}', but got '{type(deserialized)}'.",
+                    f"{type(self).__name__} - {self.effective_name!r}, expected type '{self.field_type}' but got '{type(deserialized)}'.",
                 )
 
-        if self.validator:
+        if not self.skip_validator and self.validator:
             self.validator(deserialized, self, instance)
 
         # with self._lock:
@@ -729,6 +751,17 @@ class FieldInitKwargs(typing.TypedDict, total=False):
     """A deserializer function to convert the field's value to the expected type."""
     default: typing.Union[typing.Any, DefaultFactory, NoneType]
     """A default value for the field to be used if no value is set."""
+    always_coerce: bool
+    """If True, the field will always attempt to coerce the value by applying the deserializer."""
+    check_coerced: bool
+    """
+    If True, the field will (double) check that the value returned by the deserializer is of the expected type.
+    If the value is not of the expected type, a ValidationError will be raised. Defaults to False.
+
+    Set to True if a custom deserializer is used and the return type cannot be guaranteed to match the field type.
+    """
+    skip_validator: bool
+    """If True, the field will skip validator run after deserialization."""
     _cache_size: Annotated[int, annot.Interval(ge=1, le=3), annot.MultipleOf(1)]
 
 

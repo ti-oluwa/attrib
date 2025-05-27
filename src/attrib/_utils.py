@@ -21,7 +21,7 @@ try:
 except ImportError:
     import json
 
-from attrib._typing import IterType, Serializer
+from attrib._typing import IterType, Serializer, EMPTY
 from attrib.exceptions import SerializationError
 
 
@@ -423,10 +423,10 @@ class SerializerRegistry(typing.NamedTuple):
     """
     Registry class to handle different serialization formats.
 
-    :param serializer_map: A dictionary mapping format names to their respective serializer functions.
+    :param map: A dictionary mapping format names to their respective serializer functions.
     """
 
-    serializer_map: typing.DefaultDict[str, Serializer[typing.Any]] = defaultdict(
+    map: typing.DefaultDict[str, Serializer[typing.Any]] = defaultdict(
         _unsupported_serializer_factory
     )
 
@@ -439,7 +439,7 @@ class SerializerRegistry(typing.NamedTuple):
         :param kwargs: Keyword arguments to pass to the format's serializer.
         :return: Serialized data in the specified format.
         """
-        return self.serializer_map[fmt](*args, **kwargs)
+        return self.map[fmt](*args, **kwargs)
 
 
 HASHABLE_TYPES = (
@@ -459,7 +459,9 @@ def get_cache_key(value: typing.Any) -> typing.Any:
     return value if isinstance(value, HASHABLE_TYPES) else id(value)
 
 
-### JSON serialization helpers
+##################################
+### JSON serialization helpers ###
+##################################
 
 
 def unjsonable(obj: typing.Any) -> typing.Any:
@@ -498,15 +500,17 @@ def make_jsonable(obj: typing.Any) -> typing.Any:
     dictionaries, and custom objects. If a type is not supported, it raises
     a TypeError.
     """
-    if obj is None or isinstance(obj, (str, int, float, bool)):
-        return obj
+    if obj is None or obj is EMPTY:
+        return None
 
-    if isinstance(obj, collections.abc.Mapping):
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    elif isinstance(obj, collections.abc.Mapping):
         return jsonable_mapping(obj)
-    elif is_named_tuple(type(obj)):
-        return jsonable_mapping(obj._asdict())
     elif isinstance(obj, collections.abc.Iterable):
         return jsonable_iterable(obj)
+    elif is_named_tuple(type(obj)):
+        return jsonable_mapping(obj._asdict())
 
     encoder = JSON_ENCODERS.get(type(obj), None)
     if encoder is not None:

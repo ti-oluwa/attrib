@@ -68,6 +68,18 @@ class PersonalInfo(attrib.Dataclass):
     )
 
 
+meta_adapter = attrib.TypeAdapter(
+    typing.Mapping[
+        str,
+        typing.Union[
+            typing.Sequence[str],
+            str,
+            None,
+        ],
+    ]
+)
+
+
 class Student(PersonalInfo, slots=True, hash=True):
     """Student data class with multiple fields and a list of enrolled courses"""
 
@@ -86,11 +98,34 @@ class Student(PersonalInfo, slots=True, hash=True):
         default=lambda: attrib.serialize(
             dummy_student,
             fmt="python",
-            options=attrib.Options(attrib.Option(AcademicYear, exclude={"term"})),
+            options=attrib.Options(
+                attrib.Option(AcademicYear, exclude={"term"}),
+                attrib.Option(Student, exclude={"metadata"}),
+            ),
         ),
         allow_null=True,
         serializers={"json": lambda x, *_: attrib.make_jsonable(x)},
         deserializer=lambda x, _: AttrsStudent(**x),
+    )
+    # Use deserializer and serializer built by the TypeAdapter to handle complex metadata
+    metadata = attrib.Field(
+        attrib.AnyType, # Use AnyType to allow any type of data
+        always_coerce=True, # Ensures that the adapter deserilizer is always used
+        deserializer=meta_adapter.deserializer, # Use deserializer from TypeAdapter if you need input and/or output data to always match adapted type
+        # serializers=meta_adapter.serializer.map, # Use serializer from TypeAdapter if you only need output data to match adapted type
+        default=lambda: {
+            "instagram": ["@ti_oluwa"],
+            "twitter": "@ti_oluwa_",
+            "facebook": None,
+            "linkedin": None,
+            "website": "https://example.com",
+            "bio": 10,
+            "hobbies": ["reading", "coding", "sports"],
+            "languages": ["English", "French"],
+            "interests": ["AI", "Blockchain", "Web Development"],
+            "achievements": ["Dean's List", "Hackathon Winner"],
+            "certifications": ["Python Programming", "Data Science"],
+        },
     )
     joined_at = attrib.DateTime(allow_null=True, tz="Africa/Lagos")
     created_at = attrib.DateTime(default=datetime.now, tz="Africa/Lagos")
@@ -222,14 +257,5 @@ def example():
 # @profile
 def test(n: int = 1):
     """Run the attrib example multiple times"""
-    # tracemalloc.start()
     for _ in range(n):
-        # snapshot1 = tracemalloc.take_snapshot()
         example()
-    #     snapshot2 = tracemalloc.take_snapshot()
-    #     stats = snapshot2.compare_to(snapshot1, 'lineno')
-    #     for stat in stats[:10]:
-    #         print(stat)
-
-    # print(tracemalloc.get_traced_memory())
-    # tracemalloc.stop()

@@ -3,6 +3,7 @@ import enum
 import random
 import typing
 from datetime import datetime
+from memory_profiler import profile
 
 import pydantic
 from pydantic import Field, field_validator, model_validator, ConfigDict
@@ -178,6 +179,7 @@ def example():
 
 
 @timeit("pydantic")
+# @profile
 def test(n: int = 1):
     """Run the pydantic example multiple times"""
     for _ in range(n):

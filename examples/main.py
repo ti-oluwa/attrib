@@ -10,9 +10,9 @@ DEFAULT_ITERATIONS = 10000
 
 def main(n: int) -> None:
     """Main function to run the benchmarks."""
-    attrib_example.test(n)
     attrs_example.test(n)
     pydantic_example.test(n)
+    attrib_example.test(n)
 
 
 if __name__ == "__main__":

@@ -1,10 +1,9 @@
 import typing
-
+from typing_extensions import Self
 
 P = typing.ParamSpec("P")
 R = typing.TypeVar("R")
 T = typing.TypeVar("T")
-
 
 RawData: typing.TypeAlias = typing.Union[
     typing.Mapping[str, typing.Any],
@@ -12,7 +11,6 @@ RawData: typing.TypeAlias = typing.Union[
     typing.Sequence[typing.Tuple[str, typing.Any]],
     typing.Sequence[typing.Tuple[bytes, bytes]],
 ]
-
 IterType = typing.TypeVar("IterType", bound=typing.Iterable[typing.Any])
 
 
@@ -119,8 +117,17 @@ class Validator(typing.Generic[T], typing.Protocol):
 
 
 @typing.final
-class _empty:
-    """Class to represent missing/empty values."""
+class Empty:
+    """Type representing missing/empty values."""
+
+    _instance: typing.Optional[Self] = None
+
+    def __new__(cls) -> Self:
+        if cls._instance is not None:
+            raise TypeError("Singleton `Empty` can no longer be created")
+        instance = super().__new__(cls)
+        cls._instance = instance
+        return instance
 
     def __bool__(self):
         return False
@@ -129,4 +136,4 @@ class _empty:
         return id(self)
 
 
-EMPTY = _empty()
+EMPTY = Empty()

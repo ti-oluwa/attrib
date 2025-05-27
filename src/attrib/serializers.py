@@ -1,6 +1,7 @@
 """Dataclass serialization module."""
 
 from collections import deque
+import functools
 import typing
 import os
 from annotated_types import Ge, MinLen
@@ -45,8 +46,8 @@ class Option(typing.NamedTuple):
             (
                 self.target,
                 self.depth,
-                self.include,
-                self.exclude,
+                tuple(self.include or []),
+                tuple(self.exclude or []),
                 self.strict,
             )
         )
@@ -395,16 +396,43 @@ def _serialize_instance_asnamedtuple_iterative(
     return tuple(serialized_items)
 
 
+@functools.lru_cache(maxsize=128)
 def Options(
     *options: Option,
 ) -> OptionsMap:
     """
-    Process a variable number of `Option` instances into a mapping.
+    Process a variable number of serialization `Option` instances into a mapping.
 
     :param options: Variable number of `Option` instances.
     :return: A mapping of dataclass types to their corresponding `Option` instances.
     """
-    return {option.target: option for option in options}
+    options_map: OptionsMap = {}
+    for option in options:
+        if option.target in options_map:
+            raise ValueError(
+                f"Duplicate option for target dataclass: {option.target.__name__}"
+            )
+        if option.include and option.exclude:
+            raise ValueError(
+                "Cannot specify both 'include' and 'exclude' in the same Option."
+            )
+
+        target_fields = set(option.target.effective_to_base_name_map)
+        if option.include:
+            unknown_fields = option.include - target_fields
+            if unknown_fields:
+                raise ValueError(
+                    f"Some included fields are not present in {option.target.__name__} - {', '.join(unknown_fields)}"
+                )
+        elif option.exclude:
+            unknown_fields = option.exclude - target_fields
+            if unknown_fields:
+                raise ValueError(
+                    f"Some excluded fields are not present in {option.target.__name__} - {', '.join(unknown_fields)}"
+                )
+        options_map[option.target] = option
+
+    return options_map
 
 
 if SERIALIZATION_STYLE == "recursive":
@@ -492,14 +520,16 @@ def serialize(
         john,
         fmt="json",
         options=attrib.Options(
-            attrib.Option(Person, depth=1, strict=True),
+            attrib.Option(exclude={"address"}),
         ),
     )
     print(data)
     # Output:
     # {
     #     "name": "John Doe",
-    #     "age": 30
+    #     "age": 30,
+    #     "email": "john.doe@example.com",
+    #     "phone": "+1234567890",
     # }
     ```
     """

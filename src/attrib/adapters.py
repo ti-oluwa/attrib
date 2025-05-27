@@ -1,5 +1,4 @@
 import inspect
-from types import NoneType
 import typing
 import functools
 from collections.abc import (
@@ -10,6 +9,7 @@ from collections.abc import (
     Sequence,
     Set,
 )
+from types import NoneType
 from collections import defaultdict
 
 from attrib._typing import Validator, T, Serializer, Deserializer
@@ -34,7 +34,7 @@ from attrib.validators import (
     optional,
 )
 from attrib.serializers import serialize
-from attrib.dataclass import Dataclass, deserialize, _Dataclass_co
+from attrib.dataclass import Dataclass, deserialize, DataclassTco
 
 
 @typing.final
@@ -91,8 +91,8 @@ class TypeAdapter(typing.Generic[T]):
         /,
         *,
         name: typing.Optional[str] = None,
-        deserializer: typing.Optional[Deserializer[T]] = None,
-        validator: typing.Optional[Validator[T]] = None,
+        deserializer: typing.Optional[Deserializer[typing.Union[T, typing.Any]]] = None,
+        validator: typing.Optional[Validator[typing.Union[T, typing.Any]]] = None,
         serializers: typing.Optional[
             typing.Mapping[str, Serializer[typing.Any]]
         ] = None,
@@ -172,10 +172,10 @@ class TypeAdapter(typing.Generic[T]):
         )
         if is_generic_type(self.adapted):
             if (
-                len(self.serializer.serializer_map) < 2
+                len(self.serializer.map) < 2
             ):  # Should contain at least "python" and "json" serializers
                 self.serializer = build_generic_type_serializer_registry(
-                    self.adapted, serializers=self.serializer.serializer_map
+                    self.adapted, serializers=self.serializer.map
                 )
 
             if self.validator is None:
@@ -190,8 +190,8 @@ class TypeAdapter(typing.Generic[T]):
         if not isinstance(self.adapted, type):
             raise TypeError(f"Adapter target `{self.adapted}` must be a type")
 
-        if len(self.serializer.serializer_map) < 2:
-            serializers = self.serializer.serializer_map
+        if len(self.serializer.map) < 2:
+            serializers = self.serializer.map
             self.serializer = (
                 build_dataclass_serializer_registry(serializers)
                 if issubclass(self.adapted, Dataclass)
@@ -1399,12 +1399,12 @@ BUILTIN_TYPES = {
 
 
 def _dataclass_deserializer(
-    target: typing.Type[_Dataclass_co],
+    target: typing.Type[DataclassTco],
     /,
     value: typing.Any,
     *_: typing.Any,
     **kwargs: typing.Any,
-) -> _Dataclass_co:
+) -> DataclassTco:
     """
     A deserializer function that attempts to coerce the value to the target type.
 

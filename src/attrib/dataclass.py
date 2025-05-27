@@ -571,7 +571,7 @@ class Dataclass(metaclass=DataclassMeta):
         :param kwargs: Additional keyword arguments to initialize the dataclass with.
         """
         object.__setattr__(self, "_initializing", True)
-        combined = {**dict(data or {}), **kwargs} # type: ignore[assignment]
+        combined = {**dict(data or {}), **kwargs}  # type: ignore[assignment]
         load(self, combined)
         object.__setattr__(self, "_initializing", False)
 
@@ -582,12 +582,10 @@ class Dataclass(metaclass=DataclassMeta):
         return
 
 
-_Dataclass_co = typing.TypeVar("_Dataclass_co", bound=Dataclass, covariant=True)
+DataclassTco = typing.TypeVar("DataclassTco", bound=Dataclass, covariant=True)
 
 
-def load(
-    instance: _Dataclass_co, data: typing.Mapping[str, typing.Any]
-) -> _Dataclass_co:
+def load(instance: DataclassTco, data: typing.Mapping[str, typing.Any]) -> DataclassTco:
     """
     Load raw data unto the dataclass instance.
 
@@ -606,9 +604,9 @@ def load(
 
 
 def _from_attributes(
-    dataclass_: typing.Type[_Dataclass_co],
+    dataclass_: typing.Type[DataclassTco],
     obj: typing.Any,
-) -> _Dataclass_co:
+) -> DataclassTco:
     """
     Convert an object to a dataclass instance by loading fields using
     the object's attributes
@@ -634,11 +632,11 @@ def _from_attributes(
 
 
 def deserialize(
-    dataclass_: typing.Type[_Dataclass_co],
+    dataclass_: typing.Type[DataclassTco],
     obj: typing.Any,
     *,
     from_attributes: bool = False,
-) -> _Dataclass_co:
+) -> DataclassTco:
     """
     Deserialize an object to a dataclass instance.
 
