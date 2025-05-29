@@ -22,7 +22,7 @@ except ImportError:
     import json
 
 from attrib._typing import IterType, Serializer, EMPTY
-from attrib.exceptions import SerializationError
+from attrib.exceptions import SerializationError, DetailedError
 
 
 def has_package(package_name) -> bool:
@@ -409,7 +409,8 @@ class _LRUCache(typing.Generic[K, V]):
 def _unsupported_serializer(*args, **kwargs) -> None:
     """Raise an error for unsupported serialization."""
     raise SerializationError(
-        "Unsupported serialization format. Register a serializer for this format."
+        "Unsupported serialization format. Register a serializer for this format.",
+        code="unsupported_serialization_format",
     )
 
 
@@ -577,41 +578,43 @@ JSON_ENCODERS = {
 }
 
 
-def any_func(
+def coalesce_funcs(
     *funcs: typing.Callable[..., typing.Any],
-    target_exception: typing.Optional[
-        typing.Union[typing.Tuple[typing.Type[Exception], ...], typing.Type[Exception]]
-    ] = None,
+    target: typing.Union[
+        typing.Tuple[typing.Type[Exception], ...], typing.Type[Exception]
+    ] = Exception,
+    detailed_exc_type: typing.Type[DetailedError] = DetailedError,
 ) -> typing.Callable[..., typing.Any]:
     """
     Build a function that calls a list of functions and returns the first successful call.
-    If all functions fail, it raises a ValueError with details about the last exception.
-    This is useful for trying multiple functions in a specific order until one succeeds.
+    If all functions fail, it raises a `DetailedError` with details of all exceptions raised.
+    This is useful for trying multiple functions in sequence until one succeeds.
 
     :param funcs: A list of functions to call.
-    :param target_exception: The exception type(s) to catch. If None, all exceptions are caught.
+    :param target: The exception type(s) to catch. Default is `Exception`.
+    :param detailed_exc_type: The type of exception to raise if all functions fail. Default is `DetailedError`.
     :return: A function that returns the result of the first successful call.
     """
     if not funcs:
         raise ValueError("No functions provided.")
-    target_exception = target_exception if target_exception is not None else Exception
 
-    def any(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
-        last_exception = None
-        failed_funcs = []
-
-        for func in funcs:
+    def coalesce(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
+        error = None
+        for index, func in enumerate(funcs):
             try:
                 return func(*args, **kwargs)
-            except target_exception as exc:
-                name = getattr(func, "__name__", repr(func))
-                failed_funcs.append(name)
-                last_exception = exc
-                continue
+            except target as exc:
+                if error is None:
+                    error = detailed_exc_type.from_exception(
+                        exc,
+                        location=[f"func[{index}]"],
+                    )
+                else:
+                    error.add(
+                        exc,
+                        location=[f"func[{index}]"],
+                    )
+        if error is not None:
+            raise error
 
-        func_list = ", ".join(failed_funcs) or "no functions"
-        raise ValueError(
-            f"All functions failed ({func_list}). Most recent error - {type(last_exception).__name__}: {last_exception}"
-        ) from last_exception
-
-    return any
+    return coalesce

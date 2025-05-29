@@ -38,22 +38,40 @@ class Pipeline(typing.NamedTuple):
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
-        try:
-            for validator in self.validators:
+        """
+        Run the pipeline of validators.
+
+        :param value: The value to validate
+        :param adapter: The type adapter being used
+        :param args: Additional positional arguments to pass to the validators
+        :param kwargs: Additional keyword arguments to pass to the validators or to use for validation (e.g, `fail_fast`).
+        :raises ValidationError: If any of the validators fail
+        :return: None if all validators pass
+        """
+        fail_fast = kwargs.pop("fail_fast", False)
+        msg = self.message or "Validation pipeline failed."
+        name = getattr(adapter, "name", None)
+        error = None
+        for validator in self.validators:
+            try:
                 validator(value, adapter, *args, **kwargs)
-        except (ValueError, ValidationError) as exc:
-            name = adapter.name if adapter and adapter.name else "value"
-            msg = self.message or "Validation pipeline failed for {name} - {value!r}"
-            raise ValidationError(
-                msg.format_map(
-                    {
-                        "name": name,
-                        "value": value,
-                        "validators": self.validators,
-                        "adapter": adapter,
-                    }
-                )
-            ) from exc
+            except (ValueError, ValidationError) as exc:
+                if fail_fast:
+                    raise ValidationError.from_exception(
+                        exc,
+                        message=msg,
+                        name=name,
+                    )
+                elif error is None:
+                    error = ValidationError.from_exception(
+                        exc,
+                        message=msg,
+                        name=name,
+                    )
+                else:
+                    error.add(exc)
+        if error:
+            raise error
 
     def __hash__(self) -> int:
         return hash(self.validators)
@@ -101,31 +119,35 @@ class Or(typing.NamedTuple):
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
-        error: typing.Optional[Exception] = None
+        """
+        Run the OR validator.
+
+        :param value: The value to validate
+        :param adapter: The type adapter being used
+        :param args: Additional positional arguments to pass to the validators
+        :param kwargs: Additional keyword arguments to pass to the validators or to use for validation (e.g, `fail_fast`).
+        :raises ValidationError: If all validators fail
+        :return: None if at least one validator passes
+        """
+        msg = self.message or "All validation failed."
+        name = getattr(adapter, "name", None)
+        error = None
         for validator in self.validators:
             try:
                 validator(value, adapter, *args, **kwargs)
                 return
             except (ValueError, ValidationError) as exc:
-                error = exc
-                continue
+                if error is None:
+                    error = ValidationError.from_exception(
+                        exc,
+                        message=msg,
+                        name=name,
+                    )
+                else:
+                    error.add(exc)
 
-        name = adapter.name if adapter and adapter.name else "value"
-        msg = (
-            self.message
-            or "All validators failed for {name} - {value!r}. Last failure: "
-            + str(error or "Unknown error")
-        )
-        raise ValidationError(
-            msg.format_map(
-                {
-                    "name": name,
-                    "value": value,
-                    "validators": self.validators,
-                    "adapter": adapter,
-                }
-            )
-        )
+        if error:
+            raise error
 
     def __hash__(self) -> int:
         return hash(self.validators)
@@ -177,23 +199,26 @@ class FieldValidator(typing.NamedTuple):
         value: typing.Any,
         adapter: typing.Optional[TypeAdapter] = None,
         instance: typing.Optional[typing.Any] = None,
+        fail_fast: bool = False,
     ) -> None:
+        msg = self.message or "Field validation failed"
+        name = getattr(adapter, "name", None)
         try:
-            self.func(value, adapter, instance)
-        except (ValueError, TypeError) as exc:
-            msg = self.message or "Validation failed for {name} - {value!r}. " + str(
-                exc
+            self.func(
+                value,
+                adapter,
+                instance,
+                fail_fast=fail_fast,
             )
-            name = adapter.name if adapter and adapter.name else "value"
-            raise ValidationError(
-                msg.format_map(
-                    {
-                        "name": name,
-                        "value": value,
-                        "adapter": adapter,
-                    }
-                )
-            ) from exc
+        except (ValueError, TypeError) as exc:
+            raise ValidationError.from_exception(
+                exc,
+                message=msg,
+                name=name,
+                parent_name=type(instance).__name__ if instance else None,
+                input_type=type(value),
+                expected_type=getattr(adapter, "typestr", None),
+            )
 
     def __hash__(self) -> int:
         try:
@@ -323,7 +348,7 @@ def number_validator_factory(
 
         :return: A validator function
         """
-        msg = message or "'{value} {symbol} {bound}' is not True for {name!r}"
+        msg = message or "'{value} {symbol} {bound}' is not True"
 
         def validator(
             value: typing.Any,
@@ -346,17 +371,22 @@ def number_validator_factory(
             if isinstance(value, (int, float)) and comparison_func(value, bound):
                 return
 
-            name = adapter.name if adapter and adapter.name else "value"
+            name = getattr(adapter, "name", None)
             raise ValidationError(
                 msg.format_map(
                     {
                         "value": value,
                         "symbol": symbol,
                         "bound": bound,
-                        "name": name,
-                        "adapter": adapter,
-                    }
-                )
+                    },
+                ),
+                name=name,
+                expected_type=type(bound),
+                input_type=type(value),
+                code="value_out_of_bounds",
+                context={
+                    "symbol": symbol,
+                },
             )
 
         validator.__name__ = f"number({symbol}{bound})"
@@ -414,9 +444,17 @@ def number_range(
         nonlocal msg
 
         if not (min_val <= value <= max_val):
-            name = adapter.name if adapter and adapter.name else "value"
+            name = getattr(adapter, "name", None)
             raise ValidationError(
                 msg.format(name=name, min=min_val, max=max_val, value=value),
+                name=name,
+                expected_type=type(min_val),
+                input_type=type(value),
+                code="value_not_in_range",
+                context={
+                    "min": min_val,
+                    "max": max_val,
+                },
             )
 
     validator.__name__ = f"number_range({min_val},{max_val})"
@@ -449,7 +487,7 @@ def length_validator_factory(
 
         :return: A validator function
         """
-        msg = message or "'len({name}) {symbol} {bound}' is not True, got {length}"
+        msg = message or "Value length must be {symbol} {bound}"
 
         def validator(
             value: Countable,
@@ -472,19 +510,27 @@ def length_validator_factory(
 
             if comparison_func(len(value), bound):
                 return
-            name = adapter.name if adapter and adapter.name else "value"
+            name = getattr(adapter, "name", None)
             length = len(value)
             raise ValidationError(
                 msg.format_map(
                     {
                         "name": name,
-                        "adapter": adapter,
                         "symbol": symbol,
                         "bound": bound,
                         "value": value,
                         "length": length,
                     }
-                )
+                ),
+                name=name,
+                expected_type="countable",
+                input_type=type(value),
+                code="invalid_length",
+                context={
+                    "symbol": symbol,
+                    "bound": bound,
+                    "length": length,
+                },
             )
 
         validator.__name__ = f"length({symbol}{bound})"
@@ -543,7 +589,7 @@ def pattern(
     else:
         match_func = pattern.fullmatch
 
-    msg = message or "'{name}' must match pattern {pattern!r} ({value!r} doesn't)"
+    msg = message or "Value must match pattern {pattern!r}"
 
     def validator(
         value: typing.Any,
@@ -564,7 +610,7 @@ def pattern(
         nonlocal msg
 
         if not match_func(str(value)):
-            name = adapter.name if adapter and adapter.name else "value"
+            name = getattr(adapter, "name", None)
             raise ValidationError(
                 msg.format_map(
                     {
@@ -572,7 +618,14 @@ def pattern(
                         "pattern": pattern.pattern,
                         "value": value,
                     }
-                )
+                ),
+                name=name,
+                expected_type=f"pattern[{pattern.pattern!r}]",
+                input_type=type(value),
+                code="pattern_mismatch",
+                context={
+                    "pattern": pattern.pattern,
+                },
             )
 
     validator.__name__ = f"pattern({pattern.pattern!r})"
@@ -616,7 +669,7 @@ def instance_of(
             return
 
         if not isinstance(value, cls):
-            name = adapter.name if adapter and adapter.name else "value"
+            name = getattr(adapter, "name", None)
             raise ValidationError(
                 msg.format_map(
                     {
@@ -624,9 +677,12 @@ def instance_of(
                         "value": value,
                         "type": type(value),
                         "name": name,
-                        "adapter": adapter,
                     }
-                )
+                ),
+                name=name,
+                expected_type=cls,
+                input_type=type(value),
+                code="invalid_type",
             )
 
     validator.__name__ = f"instance_of({cls!r})"
@@ -646,7 +702,7 @@ def subclass_of(
     :param message: Error message template
     :return: A validator function
     """
-    msg = message or "Value must be a subclass of {cls!r}, not {value_type!r}"
+    msg = message or "Value must be a subclass of {cls!r}, not {value_type!r}."
 
     def validator(
         value: typing.Any,
@@ -667,7 +723,7 @@ def subclass_of(
         nonlocal msg
 
         if not (inspect.isclass(value) and issubclass(value, cls)):
-            name = adapter.name if adapter and adapter.name else "value"
+            name = getattr(adapter, "name", None)
             raise ValidationError(
                 msg.format_map(
                     {
@@ -675,9 +731,12 @@ def subclass_of(
                         "value": value,
                         "value_type": type(value),
                         "name": name,
-                        "adapter": adapter,
                     }
-                )
+                ),
+                name=name,
+                expected_type=f"type[{cls!r}]",
+                input_type=f"type[{value!r}]",
+                code="invalid_type",
             )
 
     validator.__name__ = f"subclass_of({cls!r})"
@@ -729,7 +788,7 @@ def member_of(
     :param message: Error message template
     :return: A validator function
     """
-    msg = message or "{name!r} must be one of {choices!r}, not {value!r}"
+    msg = message or "Value not in choices."
     try:
         choices = set(choices)  # fast membership check. Ensures uniqueness
     except TypeError:
@@ -758,16 +817,19 @@ def member_of(
         nonlocal msg
 
         if value not in choices:
-            name = adapter.name if adapter and adapter.name else "value"
+            name = getattr(adapter, "name", None)
             raise ValidationError(
                 msg.format_map(
                     {
                         "choices": choices,
                         "value": value,
                         "name": name,
-                        "adapter": adapter,
                     }
-                )
+                ),
+                name=name,
+                expected_type=f"member_of[{[repr(c) for c in choices]}]",
+                input_type=f"{type(value)!r}",
+                code="invalid_choice",
             )
 
     validator.__name__ = f"member_of({choices!r})"
@@ -792,7 +854,7 @@ def not_(
     if not isinstance(validator, Validator):
         raise TypeError(f"Invalid validator: {validator!r}")
 
-    msg = message or "{name!r} - {value!r} must not validate {validator!r}"
+    msg = message or "Value validated when its should not."
 
     def negate_validator(
         value: typing.Any,
@@ -816,16 +878,19 @@ def not_(
             validator(value, adapter, *args, **kwargs)
         except (ValueError, ValidationError):
             return
-        name = adapter.name if adapter and adapter.name else "value"
+        name = getattr(adapter, "name", None)
         raise ValidationError(
             msg.format_map(
                 {
                     "validator": validator,
                     "value": value,
                     "name": name,
-                    "adapter": adapter,
                 }
-            )
+            ),
+            name=name,
+            expected_type=f"not[{validator!r}]",
+            input_type=type(value),
+            code="negation_failed",
         )
 
     negate_validator.__name__ = f"negate({validator!r})"
@@ -851,8 +916,14 @@ def is_callable(
     :return: None if the value is callable
     """
     if not callable(value):
-        name = adapter.name if adapter and adapter.name else "value"
-        raise ValidationError(f"'{name}' must be a callable")
+        name = getattr(adapter, "name", None)
+        raise ValidationError(
+            "Value must be a callable",
+            name=name,
+            expected_type="callable",
+            input_type=type(value),
+            code="not_callable",
+        )
 
 
 def value_validator(
@@ -875,8 +946,6 @@ def value_validator(
     if not callable(func):
         raise TypeError(f"Validator function '{func}' is not callable.")
 
-    msg = message or "'{name}' must validate {func}({value!r})"
-
     def validator_wrapper(
         value: typing.Any,
         adapter: typing.Optional[typing.Any] = None,
@@ -892,23 +961,16 @@ def value_validator(
         :raises ValidationError: If the value does not pass the validation
         :return: None if the value is valid
         """
-        nonlocal msg
 
         if not func(value):
-            name = adapter.name if adapter and adapter.name else "value"
+            name = getattr(adapter, "name", None)
             raise ValidationError(
-                msg.format_map(
-                    {
-                        "name": name,
-                        "value": value,
-                        "func": func.__name__,
-                        "adapter": adapter,
-                    }
-                )
+                message or "Validation failed.",
+                name=name,
             )
         return
 
-    validator_wrapper.__name__ = f"value_validator({func.__name__})"
+    validator_wrapper.__name__ = f"validate_value({func.__name__})"
     validator_wrapper.__doc__ = func.__doc__
     return validator_wrapper
 
@@ -1040,26 +1102,56 @@ def path(
         )
 
     if exists:
-        validators.append(value_validator(pathlib.Path.exists))
+        validators.append(
+            value_validator(pathlib.Path.exists, message="Path does not exist.")
+        )
     if is_symlink:
-        validators.append(value_validator(pathlib.Path.is_symlink))
+        validators.append(
+            value_validator(pathlib.Path.is_symlink, message="Path is not a symlink.")
+        )
     if is_dir:
-        validators.append(value_validator(pathlib.Path.is_dir))
+        validators.append(
+            value_validator(pathlib.Path.is_dir, message="Path is not a directory.")
+        )
     if is_file:
-        validators.append(value_validator(pathlib.Path.is_file))
+        validators.append(
+            value_validator(pathlib.Path.is_file, message="Path is not a file.")
+        )
         if is_executable:
-            validators.append(value_validator(lambda path: os.access(path, os.X_OK)))
+            validators.append(
+                value_validator(
+                    lambda path: os.access(path, os.X_OK),
+                    message="Path is not executable.",
+                )
+            )
 
     if is_empty:
         if is_dir:
-            validators.append(value_validator(lambda path: not any(path.iterdir())))
+            validators.append(
+                value_validator(
+                    lambda path: not any(path.iterdir()),
+                    message="Directory is not empty.",
+                )
+            )
         elif is_file:
-            validators.append(value_validator(lambda path: path.stat().st_size == 0))
+            validators.append(
+                value_validator(
+                    lambda path: path.stat().st_size == 0, message="File is not empty."
+                )
+            )
 
     if is_readable:
-        validators.append(value_validator(lambda path: os.access(path, os.R_OK)))
+        validators.append(
+            value_validator(
+                lambda path: os.access(path, os.R_OK), message="Path is not readable."
+            )
+        )
     if is_writable:
-        validators.append(value_validator(lambda path: os.access(path, os.W_OK)))
+        validators.append(
+            value_validator(
+                lambda path: os.access(path, os.W_OK), message="Path is not writable."
+            )
+        )
 
     return Pipeline(tuple(validators)) if len(validators) > 1 else validators[0]
 
@@ -1089,7 +1181,7 @@ def mapping(
         raise ValueError(
             "Either one of `key_validator` or `value_validator` must be provided."
         )
-    msg = message or "'{name}' must be a valid mapping, got {value!r}"
+    msg = message or "Value must be a valid mapping."
 
     def validate_mapping(
         value: typing.Any,
@@ -1108,18 +1200,42 @@ def mapping(
         :return: None if the value is a valid mapping
         """
         nonlocal msg
+        name = getattr(adapter, "name", None)
 
         if not is_mapping(value):
-            name = adapter.name if adapter and adapter.name else "value"
             raise ValidationError(
-                msg.format_map({"name": name, "value": value, "adapter": adapter}),
+                msg.format_map({"name": name, "value": value}),
+                name=name,
+                expected_type="mapping",
+                input_type=type(value),
+                code="invalid_type",
             )
 
         for key, val in value.items():
             if key_validator:
-                key_validator(key, adapter, *args, **kwargs)
+                try:
+                    key_validator(key, adapter, *args, **kwargs)
+                except (ValidationError, ValueError) as exc:
+                    raise ValidationError.from_exception(
+                        exc,
+                        message="Key validation failed",
+                        name=name,
+                        location=[key, ":key"],
+                        input_type=type(key),
+                        code="key_validation_failed",
+                    )
             if value_validator:
-                value_validator(val, adapter, *args, **kwargs)
+                try:
+                    value_validator(val, adapter, *args, **kwargs)
+                except (ValidationError, ValueError) as exc:
+                    raise ValidationError.from_exception(
+                        exc,
+                        message="Value validation failed",
+                        name=name,
+                        location=[key, ":value"],
+                        input_type=type(val),
+                        code="value_validation_failed",
+                    )
 
     def deep_validate_mapping(
         value: typing.Any,
@@ -1139,11 +1255,14 @@ def mapping(
         :return: None if the value is a valid mapping
         """
         nonlocal msg
-
+        name = getattr(adapter, "name", None)
         if not is_mapping(value):
-            name = adapter.name if adapter and adapter.name else "value"
             raise ValidationError(
-                msg.format_map({"name": name, "value": value, "adapter": adapter}),
+                msg.format_map({"name": name, "value": value}),
+                name=name,
+                expected_type="mapping",
+                input_type=type(value),
+                code="invalid_type",
             )
 
         # Use iterative approach to avoid recursion limit issues
@@ -1154,9 +1273,29 @@ def mapping(
             current_value = stack.pop()
             for key, val in current_value.items():
                 if key_validator:
-                    key_validator(key, adapter, *args, **kwargs)
+                    try:
+                        key_validator(key, adapter, *args, **kwargs)
+                    except (ValidationError, ValueError) as exc:
+                        raise ValidationError.from_exception(
+                            exc,
+                            message="Key validation failed",
+                            name=name,
+                            location=[key, ":key"],
+                            input_type=type(key),
+                            code="key_validation_failed",
+                        )
                 if value_validator:
-                    value_validator(val, adapter, *args, **kwargs)
+                    try:
+                        value_validator(val, adapter, *args, **kwargs)
+                    except (ValidationError, ValueError) as exc:
+                        raise ValidationError.from_exception(
+                            exc,
+                            message="Value validation failed",
+                            name=name,
+                            location=[key, ":value"],
+                            input_type=type(val),
+                            code="value_validation_failed",
+                        )
 
                 if is_mapping(val):
                     stack.appendleft(val)
@@ -1183,7 +1322,7 @@ def iterable(
     :param message: Error message template
     :return: A validator function
     """
-    msg = message or "'{name}' must be a valid iterable, got {value!r}"
+    msg = message or "Value must be a valid iterable."
 
     def validate_iterable(
         value: typing.Any,
@@ -1202,15 +1341,27 @@ def iterable(
         :return: None if the value is a valid iterable
         """
         nonlocal msg
-
+        name = getattr(adapter, "name", None)
         if not is_iterable(value):
-            name = adapter.name if adapter and adapter.name else "value"
             raise ValidationError(
-                msg.format_map({"name": name, "value": value, "adapter": adapter}),
+                msg.format_map({"name": name, "value": value}),
+                name=name,
+                expected_type="iterable",
+                input_type=type(value),
+                code="invalid_type",
             )
 
-        for item in value:
-            child_validator(item, adapter, *args, **kwargs)
+        for index, item in enumerate(value):
+            try:
+                child_validator(item, adapter, *args, **kwargs)
+            except (ValidationError, ValueError) as exc:
+                raise ValidationError.from_exception(
+                    exc,
+                    message="Item validation failed",
+                    name=name,
+                    location=[index],
+                    input_type=type(item),
+                )
 
     def deep_validate_iterable(
         value: typing.Any,
@@ -1229,22 +1380,34 @@ def iterable(
         :return: None if the value is a valid iterable
         """
         nonlocal msg
-
+        name = getattr(adapter, "name", None)
         if not is_iterable(value):
-            name = adapter.name if adapter and adapter.name else "value"
             raise ValidationError(
-                msg.format_map({"name": name, "value": value, "adapter": adapter}),
+                msg.format_map({"name": name, "value": value}),
+                name=name,
+                expected_type="iterable",
+                input_type=type(value),
+                code="invalid_type",
             )
 
         # Use iterative approach to avoid recursion limit issues
         # when dealing with deeply nested iterables. May be more
         # efficient than recursion in some cases.
-        stack = deque([value])
+        stack = deque([value, []])
         while stack:
-            current_value = stack.pop()
-            for item in current_value:
-                child_validator(item, adapter, *args, **kwargs)
+            current_value, parent_indices = stack.pop()
+            for index, item in enumerate(current_value):
+                try:
+                    child_validator(item, adapter, *args, **kwargs)
+                except (ValidationError, ValueError) as exc:
+                    raise ValidationError.from_exception(
+                        exc,
+                        message="Item validation failed",
+                        name=name,
+                        location=[*parent_indices, index],
+                        input_type=type(item),
+                    )
                 if is_iterable(item):
-                    stack.appendleft(item)
+                    stack.appendleft((item, [*parent_indices, index]))
 
     return deep_validate_iterable if deep else validate_iterable

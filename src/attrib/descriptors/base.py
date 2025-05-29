@@ -29,8 +29,8 @@ from attrib._utils import (
     is_valid_type,
     is_iterable_type,
     is_generic_type,
-    _LRUCache,
-    get_cache_key,
+    # _LRUCache,
+    # get_cache_key,
     make_jsonable,
     _get_itertype_adder,
     resolve_type,
@@ -154,9 +154,14 @@ def unsupported_serializer(
 ) -> None:
     """Raise an error for unsupported serialization."""
     raise SerializationError(
-        f"'{type(field).__name__}' does not support serialization format. "
-        f"Supported formats are: {', '.join(field.serializer.map.keys())}.",
-        field.effective_name,
+        "Unsupported serialization format.",
+        name=field.name,
+        input_type=type(value),
+        expected_type=field.typestr,
+        code="unsupported_serialization_format",
+        context={
+            "serialization_formats": list(field.serializer.map.keys()),
+        },
     )
 
 
@@ -172,8 +177,11 @@ def _unsupported_serializer_factory():
 def unsupported_deserializer(value: typing.Any, field: "Field") -> None:
     """Raise an error for unsupported deserialization."""
     raise DeserializationError(
-        f"'{type(field).__name__}' does not support deserialization '{value}'.",
-        field.effective_name,
+        "Cannot deserialize value.",
+        name=field.name,
+        input_type=type(value),
+        expected_type=field.typestr,
+        code="coercion_not_supported",
     )
 
 
@@ -295,6 +303,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         always_coerce: bool = False,
         check_coerced: bool = False,
         skip_validator: bool = False,
+        fail_fast: bool = False,
         _cache_size: Annotated[
             float, annot.Interval(ge=0.5, le=3.0), annot.MultipleOf(0.5)
         ] = 1.0,
@@ -325,6 +334,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
             Set to True if a custom deserializer is used and the return type cannot be guaranteed to match the field type.
 
         :param skip_validator: If True, the field will skip validator run after deserialization. Defaults to False.
+        :param fail_fast: If True, the field will raise an error immediately a validation fails. Defaults to False.
         :param _cache_size: Multiplier for the base cache size for serialized and validated values. Defaults to 1.
             Base cache size is 128, so the effective cache size will be 128 * _cache_size.
         """
@@ -363,11 +373,24 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         self.always_coerce = always_coerce
         self.check_coerced = check_coerced
         self.skip_validator = skip_validator
+        self.fail_fast = fail_fast
         self._init_args = ()
         self._init_kwargs = {}
         # effective_cache_size = int(128 * _cache_size)
         # self._serialized_cache = _LRUCache(maxsize=effective_cache_size)
         # self._validated_cache = _LRUCache(maxsize=effective_cache_size)
+
+    @property
+    def typestr(self) -> str:
+        """
+        Return the string representation of the field type.
+
+        This is useful for debugging and introspection.
+        """
+        value = getattr(self.field_type, "__name__", None) or str(self.field_type)
+        if self.strict:
+            return f"strict[{value}]"
+        return value
 
     def post_init_validate(self) -> None:
         """
@@ -380,16 +403,21 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         Avoid modifying the field's state in this method.
         """
         if not is_valid_type(self.field_type):
-            raise FieldError(f"{self.field_type!r} is not a valid field type.")
+            raise FieldError(
+                f"{self.field_type!r} is not a valid field type.", name=self.name
+            )
 
         default_provided = self.default is not EMPTY
         if self.required and default_provided:
-            raise FieldError("A default value is not necessary when required=True")
+            raise FieldError(
+                "A default value is not necessary when required=True", name=self.name
+            )
 
         if self.strict and self.always_coerce:
             raise FieldError(
                 "Cannot set both strict=True and always_coerce=True. "
-                "If strict is True, the field will not attempt to coerce values."
+                "If strict is True, the field will not attempt to coerce values.",
+                name=self.name,
             )
 
     def __new__(cls, *args, **kwargs):
@@ -418,7 +446,8 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
                 return default_value()  # type: ignore[call-arg]
             except Exception as exc:
                 raise FieldError(
-                    f"An error occurred while calling the default factory for '{self.effective_name}'."
+                    "An error occurred while calling the default factory.",
+                    name=self.name,
                 ) from exc
         return default_value
 
@@ -503,7 +532,8 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         """Set and validate the field value on an instance."""
         if self.required and value is EMPTY:
             raise FieldError(
-                f"'{type(instance).__name__}.{self.effective_name}' is a required field."
+                "Field is required but no value was provided.",
+                name=self.name,
             )
 
         # with self._lock:
@@ -522,8 +552,8 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         """
         field_name = self.name
         if not field_name:
-            raise FieldError(
-                f"'{type(self).__name__}' on '{type(instance).__name__}' has no name. Ensure it is bound to a class."
+            raise RuntimeError(
+                f"'{type(self).__name__}' on '{type(instance).__name__}' has no name. Ensure it is bound to a class.",
             )
 
         if hasattr(instance, "__dict__"):
@@ -548,8 +578,8 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         """
         field_name = self.name
         if not field_name:
-            raise FieldError(
-                f"'{type(self).__name__}' on '{type(instance).__name__}' has no name. Ensure it is bound to a class."
+            raise RuntimeError(
+                f"'{type(self).__name__}' on '{type(instance).__name__}' has no name. Ensure it is bound to a class.",
             )
 
         if value is EMPTY:
@@ -578,8 +608,8 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         """
         field_name = self.name
         if not field_name:
-            raise FieldError(
-                f"'{type(self).__name__}' on '{type(instance).__name__}' has no name. Ensure it is bound to a class."
+            raise RuntimeError(
+                f"'{type(self).__name__}' on '{type(instance).__name__}' has no name. Ensure it is bound to a class.",
             )
 
         if hasattr(instance, "__dict__"):
@@ -622,17 +652,41 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
             deserialized = value
         elif self.strict:
             raise ValidationError(
-                f"{type(self).__name__} - {self.effective_name!r}, expected type '{self.field_type}' but got '{type(value)}'.",
+                "Input value is not of the expected type.",
+                name=self.name,
+                parent_name=type(instance).__name__ if instance else None,
+                input_type=type(value),
+                expected_type=self.typestr,
+                code="invalid_type",
             )
         else:
             deserialized = self.deserialize(value)
             if self.check_coerced and not self.check_type(deserialized):
                 raise ValidationError(
-                    f"{type(self).__name__} - {self.effective_name!r}, expected type '{self.field_type}' but got '{type(deserialized)}'.",
+                    "Coerced value is not of the expected type.",
+                    name=self.name,
+                    parent_name=type(instance).__name__ if instance else None,
+                    input_type=type(deserialized),
+                    expected_type=self.typestr,
+                    code="invalid_type",
                 )
 
         if not self.skip_validator and self.validator:
-            self.validator(deserialized, self, instance)
+            try:
+                self.validator(
+                    deserialized,
+                    self,
+                    instance,
+                    fail_fast=self.fail_fast,
+                )
+            except (ValueError, ValidationError) as exc:
+                raise ValidationError.from_exception(
+                    exc,
+                    name=self.name,
+                    parent_name=type(instance).__name__ if instance else None,
+                    input_type=type(deserialized),
+                    expected_type=self.typestr,
+                )
 
         # with self._lock:
         # self._validated_cache[cache_key] = deserialized
@@ -660,10 +714,13 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
 
         try:
             serialiazed = self.serializer(fmt, value, self, context)
-        except (ValueError, TypeError) as exc:
-            raise SerializationError(
-                f"Failed to serialize '{type(self).__name__}', {self.effective_name} to '{fmt}'.",
-            ) from exc
+        except (ValueError, TypeError, SerializationError) as exc:
+            raise SerializationError.from_exception(
+                exc,
+                name=self.name,
+                input_type=type(value),
+                expected_type=self.typestr,
+            )
 
         # if serialiazed is not None:
         #     # with self._lock:
@@ -676,16 +733,16 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
 
         Converts the field's value to the specified type before it is set on the instance.
         """
-        field_type = typing.cast(
-            typing.Union[typing.Type[_T], typing.Tuple[typing.Type[_T]]],
-            self.field_type,
-        )
         try:
             return self.deserializer(value, self)
-        except (ValueError, TypeError) as exc:
-            raise DeserializationError(
-                f"Failed to deserialize value, '{value}' for {self.effective_name} to type '{field_type}'.",
-            ) from exc
+        except (ValueError, TypeError, DeserializationError) as exc:
+            raise DeserializationError.from_exception(
+                exc,
+                message="Failed to deserialize value.",
+                name=self.name,
+                input_type=type(value),
+                expected_type=self.typestr,
+            )
 
     COPY_EXCLUDED_ARGS: typing.Set[int] = {0}
     """
@@ -762,6 +819,8 @@ class FieldInitKwargs(typing.TypedDict, total=False):
     """
     skip_validator: bool
     """If True, the field will skip validator run after deserialization."""
+    fail_fast: bool
+    """If True, the field will raise an error immediately a validation fails."""
     _cache_size: Annotated[int, annot.Interval(ge=1, le=3), annot.MultipleOf(1)]
 
 
@@ -917,7 +976,8 @@ class Integer(Field[int]):
         super().post_init_validate()
         if not (2 <= self.base <= 36):
             raise FieldError(
-                f"Base {self.base} is not supported. Must be between 2 and 36."
+                f"Base {self.base} is not supported. Must be between 2 and 36.",
+                name=self.name,
             )
 
 
@@ -988,7 +1048,10 @@ class String(Field[str]):
     def post_init_validate(self) -> None:
         super().post_init_validate()
         if self.to_lowercase and self.to_uppercase:
-            raise FieldError("`to_lowercase` and `to_uppercase` cannot both be set.")
+            raise FieldError(
+                "`to_lowercase` and `to_uppercase` cannot both be set to True.",
+                name=self.name,
+            )
 
     def deserialize(self, value: typing.Any) -> str:
         deserialized = super().deserialize(value)
@@ -1054,7 +1117,43 @@ def iterable_json_serializer(
     :param context: Additional context for serialization.
     :return: The serialized iterable.
     """
-    return [field.child.serialize(item, fmt="json", context=context) for item in value]
+    serialized = []
+    error = None
+    for index, item in enumerate(value):
+        try:
+            serialized_item = field.child.serialize(item, fmt="json", context=context)
+        except (ValueError, TypeError, SerializationError) as exc:
+            if field.fail_fast:
+                raise SerializationError.from_exception(
+                    exc,
+                    name=field.name,
+                    input_type=type(item),
+                    expected_type=field.child.typestr,
+                    location=[index],
+                )
+            elif error is None:
+                error = SerializationError.from_exception(
+                    exc,
+                    name=field.name,
+                    input_type=type(item),
+                    expected_type=field.child.typestr,
+                    location=[index],
+                )
+            else:
+                error.add(
+                    exc,
+                    input_type=type(item),
+                    expected_type=field.child.typestr,
+                    location=[index],
+                )
+        else:
+            if error is not None:
+                raise error
+            serialized.append(serialized_item)
+
+    if error is not None:
+        raise error
+    return serialized
 
 
 def iterable_deserializer(
@@ -1072,9 +1171,41 @@ def iterable_deserializer(
     field_type = typing.cast(typing.Type[IterType], field_type)
     deserialized = field_type.__new__(field_type)  # type: ignore
 
-    for item in value:
-        deserialized_item = field.child.deserialize(item)
-        field.adder(deserialized, deserialized_item)
+    error = None
+    for index, item in enumerate(value):
+        try:
+            deserialized_item = field.child.deserialize(item)
+        except (ValueError, TypeError, DeserializationError) as exc:
+            if field.fail_fast:
+                raise DeserializationError.from_exception(
+                    exc,
+                    name=field.name,
+                    input_type=type(item),
+                    expected_type=field.child.typestr,
+                    location=[index],
+                )
+            elif error is None:
+                error = DeserializationError.from_exception(
+                    exc,
+                    name=field.name,
+                    input_type=type(item),
+                    expected_type=field.child.typestr,
+                    location=[index],
+                )
+            else:
+                error.add(
+                    exc,
+                    input_type=type(item),
+                    expected_type=field.child.typestr,
+                    location=[index],
+                )
+        else:
+            if error is not None:
+                raise error
+            field.adder(deserialized, deserialized_item)
+
+    if error is not None:
+        raise error
     return deserialized
 
 
@@ -1092,8 +1223,37 @@ def validate_iterable(
     """
     if field is None:
         return
-    for item in value:
-        field.child.validate(item, instance)
+
+    error = None
+    for index, item in enumerate(value):
+        try:
+            field.child.validate(item, instance)
+        except (ValueError, TypeError, ValidationError) as exc:
+            if field.fail_fast:
+                raise ValidationError.from_exception(
+                    exc,
+                    name=field.name,
+                    input_type=type(item),
+                    expected_type=field.child.typestr,
+                    location=[index],
+                )
+            elif error is None:
+                error = ValidationError.from_exception(
+                    exc,
+                    name=field.name,
+                    input_type=type(item),
+                    expected_type=field.child.typestr,
+                    location=[index],
+                )
+            else:
+                error.add(
+                    exc,
+                    input_type=type(item),
+                    expected_type=field.child.typestr,
+                    location=[index],
+                )
+    if error is not None:
+        raise error
 
 
 class Iterable(typing.Generic[IterType, _V], Field[IterType]):
@@ -1142,6 +1302,18 @@ class Iterable(typing.Generic[IterType, _V], Field[IterType]):
         super().__init__(field_type=field_type, **kwargs)
         self.child = child or Any()
         self.adder = _get_itertype_adder(field_type)
+
+    @property
+    def typestr(self) -> str:
+        """
+        Return the string representation of the field type.
+
+        This is useful for debugging and introspection.
+        """
+        value = f"{getattr(self.field_type, '__name__', None) or str(self.field_type)}[{self.child.typestr}]"
+        if self.strict:
+            return f"Strict[{value}]"
+        return value
 
     def bind(self, parent: typing.Type[typing.Any], name: str) -> NoneType:
         super().bind(parent, name)
@@ -1397,9 +1569,13 @@ def bytes_deserializer(
         try:
             return base64.b64decode(value.encode(encoding=field.encoding))
         except (ValueError, TypeError) as exc:
-            raise DeserializationError(
-                f"Invalid base64 string for bytes: {value!r}"
-            ) from exc
+            raise DeserializationError.from_exception(
+                exc,
+                message="Invalid base64 string for bytes",
+                name=field.name,
+                input_type=type(value),
+                expected_type=field.typestr,
+            )
     return bytes(value)
 
 

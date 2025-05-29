@@ -28,7 +28,12 @@ def timedelta_deserializer(
     """Deserialize duration data to time delta."""
     duration = parse_duration(value)
     if duration is None:
-        raise DeserializationError(f"Invalid duration value - {value}")
+        raise DeserializationError(
+            "Invalid/unsupported duration value",
+            input_type=type(value),
+            expected_type="timedelta",
+            code="invalid_duration",
+        )
     return duration
 
 

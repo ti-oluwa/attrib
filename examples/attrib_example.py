@@ -72,8 +72,8 @@ meta_adapter = attrib.TypeAdapter(
     typing.Mapping[
         str,
         typing.Union[
-            typing.Sequence[str],
             str,
+            typing.Sequence[str],
             None,
         ],
     ]
@@ -87,7 +87,10 @@ class Student(PersonalInfo, slots=True, hash=True):
     year = attrib.Nested(AcademicYear, lazy=False, allow_null=True)
     courses = attrib.List(
         child=attrib.Nested(Course, lazy=False),
-        validator=attrib.validators.min_length(1),
+        validator=attrib.validators.and_(
+            attrib.validators.min_length(1), attrib.validators.max_length(15)
+        ),
+        fail_fast=True,
     )
     gpa = attrib.Float(
         allow_null=True, default=attrib.Factory(random.uniform, a=1.5, b=5.0)
@@ -109,9 +112,9 @@ class Student(PersonalInfo, slots=True, hash=True):
     )
     # Use deserializer and serializer built by the TypeAdapter to handle complex metadata
     metadata = attrib.Field(
-        attrib.AnyType, # Use AnyType to allow any type of data
-        always_coerce=True, # Ensures that the adapter deserilizer is always used
-        deserializer=meta_adapter.deserializer, # Use deserializer from TypeAdapter if you need input and/or output data to always match adapted type
+        attrib.AnyType,  # Use AnyType to allow any type of data
+        always_coerce=True,  # Ensures that the adapter deserilizer is always used
+        deserializer=meta_adapter.deserializer,  # Use deserializer from TypeAdapter if you need input and/or output data to always match adapted type
         # serializers=meta_adapter.serializer.map, # Use serializer from TypeAdapter if you only need output data to match adapted type
         default=lambda: {
             "instagram": ["@ti_oluwa"],
@@ -126,6 +129,7 @@ class Student(PersonalInfo, slots=True, hash=True):
             "achievements": ["Dean's List", "Hackathon Winner"],
             "certifications": ["Python Programming", "Data Science"],
         },
+        allow_null=True,
     )
     joined_at = attrib.DateTime(allow_null=True, tz="Africa/Lagos")
     created_at = attrib.DateTime(default=datetime.now, tz="Africa/Lagos")
@@ -141,9 +145,8 @@ dummy_student = Student(
     courses=course_data,
     joined_at=None,
     friend=None,
+    metadata=None,
 )
-
-dummy_student.age
 
 
 def load_data(
@@ -171,21 +174,25 @@ def example():
             student,
             fmt="python",
             # options=attrib.Options(
-            #     attrib.Option(Course, exclude={"year"}, depth=0, strict=True),
+            #     attrib.Option(Course, include={"year"}, depth=1, strict=True),
+            #     attrib.Option(AcademicYear, exclude={"term", "id"}, depth=0),
             #     attrib.Option(depth=1),
             # ),
+            astuple=False,
         )
 
     for course in courses:
         attrib.serialize(
             course,
             fmt="python",
+            astuple=False,
         )
 
     for year in years:
         attrib.serialize(
             year,
             fmt="python",
+            astuple=False,
         )
 
     # import pickle

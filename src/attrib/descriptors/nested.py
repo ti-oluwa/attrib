@@ -26,13 +26,11 @@ def nested_json_serializer(
         return serialize_instance_asnamedtuple(
             fmt="json",
             instance=instance,
-            options=context.get("__options", None),
             context=context,
         )
     return serialize_instance_asdict(
         fmt="json",
         instance=instance,
-        options=context.get("__options", None) if context else None,
         context=context,
     )
 
@@ -49,13 +47,11 @@ def nested_python_serializer(
         return serialize_instance_asnamedtuple(
             fmt="python",
             instance=instance,
-            options=context.get("__options", None),
             context=context,
         )
     return serialize_instance_asdict(
         fmt="python",
         instance=instance,
-        options=context.get("__options", None) if context else None,
         context=context,
     )
 

@@ -7,7 +7,7 @@ from types import MappingProxyType
 from typing_extensions import Unpack
 
 from attrib.descriptors.base import Field, Value
-from attrib.exceptions import DeserializationError, FrozenInstanceError
+from attrib.exceptions import FrozenInstanceError, DeserializationError, ValidationError
 from attrib._typing import RawData
 
 
@@ -75,8 +75,7 @@ def _frozen_setattr(instance: "Dataclass", key: str, value: Value) -> None:
     )
     if not getattr(instance, "_initializing", False):
         raise FrozenInstanceError(
-            f"Cannot modify '{type(instance).__name__}.{key}'. "
-            f"Instance is frozen and cannot be modified after instantiation."
+            f"Immutable instance. Cannot modify '{type(instance).__name__}.{key}'. "
         ) from None
     return object.__setattr__(instance, key, value)
 
@@ -85,7 +84,7 @@ def _frozen_delattr(instance: "Dataclass", key: str) -> None:
     """Delete an attribute from a frozen dataclass instance."""
     if key in instance.base_to_effective_name_map:
         raise FrozenInstanceError(
-            f"Cannot delete '{type(instance).__name__}.{key}'. Instance is frozen"
+            f"Immutable instance. Cannot delete '{type(instance).__name__}.{key}'."
         ) from None
 
     return object.__delattr__(instance, key)
@@ -550,6 +549,7 @@ class Dataclass(metaclass=DataclassMeta):
     def __init__(
         self,
         data: RawData,
+        **kwargs: typing.Any,
     ) -> None:
         """Initialize the dataclass with raw data."""
         ...
@@ -572,7 +572,7 @@ class Dataclass(metaclass=DataclassMeta):
         """
         object.__setattr__(self, "_initializing", True)
         combined = {**dict(data or {}), **kwargs}  # type: ignore[assignment]
-        load(self, combined)
+        load(self, combined, kwargs.pop("__fail_fast", False))
         object.__setattr__(self, "_initializing", False)
 
     def __init_subclass__(cls) -> None:
@@ -585,27 +585,53 @@ class Dataclass(metaclass=DataclassMeta):
 DataclassTco = typing.TypeVar("DataclassTco", bound=Dataclass, covariant=True)
 
 
-def load(instance: DataclassTco, data: typing.Mapping[str, typing.Any]) -> DataclassTco:
+def load(
+    instance: DataclassTco,
+    data: typing.Mapping[str, typing.Any],
+    fail_fast: bool = False,
+) -> DataclassTco:
     """
     Load raw data unto the dataclass instance.
 
     :param data: Mapping of raw data to initialize the dataclass instance with.
     :return: This same instance with the raw data loaded.
     """
+    error = None
     for name, field in instance.__fields__.items():
         key = instance.base_to_effective_name_map[name]
         if key not in data:
             value = field.get_default()
         else:
             value = data[key]
+        try:
+            field.__set__(instance, value)
+        except (DeserializationError, ValidationError) as exc:
+            if fail_fast:
+                raise DeserializationError.from_exception(
+                    exc,
+                    parent_name=type(instance).__name__,
+                )
+            else:
+                if error is None:
+                    error = DeserializationError.from_exception(
+                        exc,
+                        parent_name=type(instance).__name__,
+                    )
+                else:
+                    error.add(
+                        exc,
+                        parent_name=type(instance).__name__,
+                    )
 
-        field.__set__(instance, value)
+    if error is not None:
+        raise error
     return instance
 
 
 def _from_attributes(
     dataclass_: typing.Type[DataclassTco],
     obj: typing.Any,
+    fail_fast: bool = False,
 ) -> DataclassTco:
     """
     Convert an object to a dataclass instance by loading fields using
@@ -613,6 +639,7 @@ def _from_attributes(
 
     :param obj: The object to convert.
     :param dataclass_: The dataclass type to convert to.
+    :param fail_fast: If True, stop on the first error encountered during conversion.
     :return: The dataclass instance.
     """
     if dataclass_.__config__.frozen:
@@ -620,6 +647,7 @@ def _from_attributes(
             f"Cannot convert {obj!r} to a frozen dataclass. Use the constructor instead."
         )
     instance = dataclass_()
+    error = None
     for name, field in dataclass_.__fields__.items():
         key = dataclass_.base_to_effective_name_map[name]
 
@@ -627,7 +655,28 @@ def _from_attributes(
             value = field.get_default()
         else:
             value = getattr(obj, key)
-        field.__set__(instance, value)
+        try:
+            field.__set__(instance, value)
+        except (DeserializationError, ValidationError) as exc:
+            if fail_fast:
+                raise DeserializationError.from_exception(
+                    exc,
+                    parent_name=type(instance).__name__,
+                )
+            else:
+                if error is None:
+                    error = DeserializationError.from_exception(
+                        exc,
+                        parent_name=type(instance).__name__,
+                    )
+                else:
+                    error.add(
+                        exc,
+                        parent_name=type(instance).__name__,
+                    )
+
+    if error is not None:
+        raise error
     return instance
 
 
@@ -636,6 +685,7 @@ def deserialize(
     obj: typing.Any,
     *,
     from_attributes: bool = False,
+    fail_fast: bool = False,
 ) -> DataclassTco:
     """
     Deserialize an object to a dataclass instance.
@@ -643,13 +693,14 @@ def deserialize(
     :param obj: The object to deserialize.
     :param dataclass_: The dataclass type to convert to.
     :param from_attributes: If True, load fields using the object's attributes.
+    :param fail_fast: If True, stop on the first error encountered during deserialization.
     :return: The dataclass instance.
     """
     if obj is None:
-        raise DeserializationError("Cannot deserialize 'None'")
+        raise ValueError("Cannot deserialize 'None'")
     if from_attributes:
         return _from_attributes(dataclass_, obj)
-    return dataclass_(obj)
+    return dataclass_(obj, __fail_fast=fail_fast)
 
 
 def get_field(

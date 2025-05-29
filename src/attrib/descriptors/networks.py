@@ -4,7 +4,6 @@ from typing_extensions import Unpack
 from urllib.parse import urlparse, ParseResult as Url, ParseResultBytes as UrlBytes
 
 from attrib.descriptors.base import Field, FieldInitKwargs, to_string_serializer
-from attrib import validators
 from attrib.exceptions import ValidationError
 
 
@@ -155,7 +154,7 @@ def allowed_schemes(
     if custom:
         schemes.extend(custom)
 
-    msg = message or "Scheme {scheme} not allowed."
+    msg = message or "Scheme not allowed."
     schemes = set(schemes)
 
     def validator(
@@ -169,11 +168,20 @@ def allowed_schemes(
             scheme = parsed_url.scheme
 
         if not allow_empty and not scheme:
-            raise ValidationError("Empty scheme not allowed.")
+            raise ValidationError(
+                "Empty scheme not allowed.",
+                input_type=type(value),
+                expected_type="url",
+                code="invalid_url",
+            )
 
         if scheme and scheme.lower() not in schemes:
-            raise validators.ValidationError(
+            raise ValidationError(
                 msg.format(value=value, scheme=scheme),
+                input_type=type(value),
+                expected_type="url",
+                code="invalid_scheme",
+                context={"scheme": scheme},
             )
         return None
 
@@ -217,7 +225,7 @@ def allowed_hosts(
     ) # raises ValidationError since the host is not allowed
     ```
     """
-    msg = message or "Host {host} not allowed."
+    msg = message or "Host not allowed."
     allowed_hosts = set(allowed_hosts)
 
     def validator(
@@ -231,11 +239,20 @@ def allowed_hosts(
             host = parsed_url.hostname
 
         if not allow_empty and not host:
-            raise ValidationError("Empty host not allowed.")
+            raise ValidationError(
+                "Empty host not allowed.",
+                input_type=type(value),
+                expected_type="url",
+                code="invalid_url",
+            )
 
         if host and host.lower() not in allowed_hosts:
-            raise validators.ValidationError(
+            raise ValidationError(
                 msg.format(value=value, host=host),
+                input_type=type(value),
+                expected_type="url",
+                code="disallowed_host",
+                context={"host": host},
             )
         return None
 
@@ -279,7 +296,7 @@ def allowed_ports(
     ) # raises ValidationError since the port is not allowed
     ```
     """
-    msg = message or "Port {port} not allowed."
+    msg = message or "Port not allowed."
     allowed_ports = set(allowed_ports)
 
     def validator(
@@ -293,10 +310,19 @@ def allowed_ports(
             port = parsed_url.port
 
         if not allow_empty and port is None:
-            raise ValidationError("Empty port not allowed.")
+            raise ValidationError(
+                "Empty port not allowed.",
+                input_type=type(value),
+                expected_type="url",
+                code="invalid_url",
+            )
         if port not in allowed_ports:
-            raise validators.ValidationError(
+            raise ValidationError(
                 msg.format(value=value, port=port),
+                input_type=type(value),
+                expected_type="url",
+                code="disallowed_port",
+                context={"port": port},
             )
         return None
 

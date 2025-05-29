@@ -11,7 +11,7 @@ __all__ = [
 
 hex_color_validator = validators.pattern(
     r"^#(?:[0-9a-fA-F]{3,4}){1,2}$",
-    message="'{name}' must be a valid hex color code.",
+    message="Value must be a valid hex color code.",
 )
 
 
@@ -25,7 +25,7 @@ class HexColor(String):
 
 rgb_color_validator = validators.pattern(
     r"^rgb[a]?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*(\d{1,3})\s*)?\)$",
-    message="'{name}' must be a valid RGB color code.",
+    message="Value must be a valid RGB color code.",
 )
 
 
@@ -56,7 +56,7 @@ class RGBColor(String):
 
 hsl_color_validator = validators.pattern(
     r"^hsl[a]?\(\s*(\d{1,3})\s*,\s*(\d{1,3})%?\s*,\s*(\d{1,3})%?\s*(?:,\s*(\d{1,3})\s*)?\)$",
-    message="'{name}' must be a valid HSL color code.",
+    message="Value must be a valid HSL color code.",
 )
 
 
