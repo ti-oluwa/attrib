@@ -103,7 +103,7 @@ DefaultFactory = typing.Callable[[], typing.Union[_T, typing.Any]]
 FieldSerializer: typing.TypeAlias = typing.Callable[
     [
         _T,
-        typing.Union["_Field_co", typing.Any],
+        typing.Union["FieldTco", typing.Any],
         typing.Optional[typing.Dict[str, typing.Any]],
     ],
     typing.Any,
@@ -117,7 +117,7 @@ Should raise a SerializationError if serialization fails.
 FieldDeserializer: typing.TypeAlias = typing.Callable[
     [
         typing.Any,
-        typing.Union["_Field_co", typing.Any],
+        typing.Union["FieldTco", typing.Any],
     ],
     _T,
 ]
@@ -214,13 +214,17 @@ def default_deserializer(
     field_type = field.field_type
     if isinstance(field_type, collections.abc.Iterable):
         for arg in field_type:  # type: ignore
-            arg = typing.cast(typing.Type[_T], arg)
             try:
                 deserialized = arg(value)  # type: ignore[call-arg]
                 return deserialized
             except (TypeError, ValueError):
                 continue
-        return value
+        raise DeserializationError(
+            "Failed to deserialize value to any of the type arguments.",
+            name=field.name,
+            input_type=type(value),
+            expected_type=field.typestr,
+        )
 
     deserialized = field_type(value)  # type: ignore[call-arg]
     deserialized = typing.cast(_T, deserialized)
@@ -304,9 +308,6 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         check_coerced: bool = False,
         skip_validator: bool = False,
         fail_fast: bool = False,
-        _cache_size: Annotated[
-            float, annot.Interval(ge=0.5, le=3.0), annot.MultipleOf(0.5)
-        ] = 1.0,
     ) -> None:
         """
         Initialize the field.
@@ -376,9 +377,6 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         self.fail_fast = fail_fast
         self._init_args = ()
         self._init_kwargs = {}
-        # effective_cache_size = int(128 * _cache_size)
-        # self._serialized_cache = _LRUCache(maxsize=effective_cache_size)
-        # self._validated_cache = _LRUCache(maxsize=effective_cache_size)
 
     @property
     def typestr(self) -> str:
@@ -419,12 +417,6 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
                 "If strict is True, the field will not attempt to coerce values.",
                 name=self.name,
             )
-
-    def __new__(cls, *args, **kwargs):
-        instance = super().__new__(cls)
-        instance._init_args = args
-        instance._init_kwargs = kwargs
-        return instance
 
     @functools.cached_property
     def effective_name(self) -> typing.Optional[str]:
@@ -524,22 +516,20 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
 
         field_value = self.get_value(instance)
         if not field_value.is_valid:
-            # with self._lock:
             return self.set_value(instance, field_value.wrapped, True).wrapped
         return field_value.wrapped
 
     def __set__(self, instance: typing.Any, value: typing.Any):
         """Set and validate the field value on an instance."""
         if self.required and value is EMPTY:
-            raise FieldError(
-                "Field is required but no value was provided.",
+            raise ValidationError(
+                "Value is required but not provided.",
                 name=self.name,
+                parent_name=type(instance).__name__ if instance else None,
+                input_type=type(value),
+                expected_type=self.typestr,
+                code="missing_value",
             )
-
-        # with self._lock:
-        # cache_key = get_cache_key(value)
-        # if cache_key in self._serialized_cache:
-        #     del self._serialized_cache[cache_key]
         self.set_value(instance, value, not self.lazy)
 
     def get_value(self, instance: typing.Any) -> Value[_T]:
@@ -644,10 +634,6 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         if value is None and self.allow_null:
             return None
 
-        # cache_key = get_cache_key(value)
-        # if cache_key in self._validated_cache:
-        #     return self._validated_cache[cache_key]
-
         if not self.always_coerce and self.check_type(value):
             deserialized = value
         elif self.strict:
@@ -687,9 +673,6 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
                     input_type=type(deserialized),
                     expected_type=self.typestr,
                 )
-
-        # with self._lock:
-        # self._validated_cache[cache_key] = deserialized
         return deserialized
 
     def serialize(
@@ -708,10 +691,6 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         if value is None:
             return None
 
-        # cache_key = get_cache_key(value)
-        # if cache_key in self._serialized_cache:
-        #     return self._serialized_cache[cache_key]
-
         try:
             serialiazed = self.serializer(fmt, value, self, context)
         except (ValueError, TypeError, SerializationError) as exc:
@@ -721,10 +700,6 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
                 input_type=type(value),
                 expected_type=self.typestr,
             )
-
-        # if serialiazed is not None:
-        #     # with self._lock:
-        #     self._serialized_cache[cache_key] = serialiazed
         return serialiazed
 
     def deserialize(self, value: typing.Any) -> _T:
@@ -744,44 +719,8 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
                 expected_type=self.typestr,
             )
 
-    COPY_EXCLUDED_ARGS: typing.Set[int] = {0}
-    """
-    Indices of arguments that should not be copied when copying the field.
 
-    This is useful for arguments that are immutable or should not be copied to avoid shared state.
-    """
-    COPY_EXCLUDED_KWARGS: typing.Set[str] = {
-        "alias",
-        "lazy",
-        "allow_null",
-        "required",
-        "validators",
-        "serializers",
-        "deserializer",
-        "default",
-        "field_type",
-    }
-    """
-    Names of keyword arguments that should not be copied when copying the field.
-
-    This is useful for arguments that are immutable or should not be copied to avoid shared state.
-    """
-
-    def __copy__(self):
-        args = [
-            (copy.copy(arg) if index not in self.COPY_EXCLUDED_ARGS else arg)
-            for index, arg in enumerate(self._init_args)
-        ]
-        kwargs = {
-            key: (copy.copy(value) if value not in self.COPY_EXCLUDED_KWARGS else value)
-            for key, value in self._init_kwargs.items()
-        }
-        field_copy = self.__class__(*args, **kwargs)
-        field_copy.name = self.name
-        return field_copy
-
-
-_Field_co = typing.TypeVar("_Field_co", bound=Field, covariant=True)
+FieldTco = typing.TypeVar("FieldTco", bound=Field, covariant=True)
 
 
 class FieldInitKwargs(typing.TypedDict, total=False):
@@ -821,7 +760,6 @@ class FieldInitKwargs(typing.TypedDict, total=False):
     """If True, the field will skip validator run after deserialization."""
     fail_fast: bool
     """If True, the field will raise an error immediately a validation fails."""
-    _cache_size: Annotated[int, annot.Interval(ge=1, le=3), annot.MultipleOf(1)]
 
 
 class Any(Field[typing.Any]):
@@ -908,7 +846,7 @@ class Float(Field[float]):
         min_value: typing.Optional[float] = None,
         max_value: typing.Optional[float] = None,
         **kwargs: Unpack[FieldInitKwargs],
-    ):
+    ) -> None:
         validators = list(
             filter(
                 None,
@@ -954,7 +892,7 @@ class Integer(Field[int]):
         max_value: typing.Optional[int] = None,
         base: Annotated[int, annot.Interval(ge=2, le=36)] = 10,
         **kwargs: Unpack[FieldInitKwargs],
-    ):
+    ) -> None:
         validators = list(
             filter(
                 None,
@@ -1057,9 +995,10 @@ class String(Field[str]):
         deserialized = super().deserialize(value)
         if self.trim_whitespaces:
             deserialized = deserialized.strip()
+
         if self.to_lowercase:
             return deserialized.lower()
-        if self.to_uppercase:
+        elif self.to_uppercase:
             return deserialized.upper()
         return deserialized
 
@@ -1095,12 +1034,48 @@ def iterable_python_serializer(
     :param context: Additional context for serialization.
     :return: The serialized iterable.
     """
+    if context and context.get("__depth", None) == 0:
+        return value
+    
     field_type = field.field_type
     serialized = field_type.__new__(field_type)  # type: ignore
+    adder = field.adder
+    child_serializer = field.child.serialize
+    child_typestr = field.child.typestr
 
-    for item in value:
-        serialized_item = field.child.serialize(item, fmt="python", context=context)
-        field.adder(serialized, serialized_item)
+    error = None
+    for index, item in enumerate(value):
+        try:
+            serialized_item = child_serializer(item, fmt="python", context=context)
+        except (ValueError, TypeError, SerializationError) as exc:
+            if field.fail_fast:
+                raise SerializationError.from_exception(
+                    exc,
+                    name=field.name,
+                    input_type=type(item),
+                    expected_type=child_typestr,
+                    location=[index],
+                )
+            elif error is None:
+                error = SerializationError.from_exception(
+                    exc,
+                    name=field.name,
+                    input_type=type(item),
+                    expected_type=child_typestr,
+                    location=[index],
+                )
+            else:
+                error.add(
+                    exc,
+                    name=field.name,
+                    input_type=type(item),
+                    expected_type=child_typestr,
+                    location=[index],
+                )
+        else:
+            if error is not None:
+                raise error
+            adder(serialized, serialized_item)
     return serialized
 
 
@@ -1117,18 +1092,23 @@ def iterable_json_serializer(
     :param context: Additional context for serialization.
     :return: The serialized iterable.
     """
+    if context and context.get("__depth", None) == 0:
+        return list(value)
+    
     serialized = []
+    child_serializer = field.child.serialize
+    child_typestr = field.child.typestr
     error = None
     for index, item in enumerate(value):
         try:
-            serialized_item = field.child.serialize(item, fmt="json", context=context)
+            serialized_item = child_serializer(item, fmt="json", context=context)
         except (ValueError, TypeError, SerializationError) as exc:
             if field.fail_fast:
                 raise SerializationError.from_exception(
                     exc,
                     name=field.name,
                     input_type=type(item),
-                    expected_type=field.child.typestr,
+                    expected_type=child_typestr,
                     location=[index],
                 )
             elif error is None:
@@ -1136,14 +1116,15 @@ def iterable_json_serializer(
                     exc,
                     name=field.name,
                     input_type=type(item),
-                    expected_type=field.child.typestr,
+                    expected_type=child_typestr,
                     location=[index],
                 )
             else:
                 error.add(
                     exc,
+                    name=field.name,
                     input_type=type(item),
-                    expected_type=field.child.typestr,
+                    expected_type=child_typestr,
                     location=[index],
                 )
         else:
@@ -1170,18 +1151,21 @@ def iterable_deserializer(
     field_type = field.field_type
     field_type = typing.cast(typing.Type[IterType], field_type)
     deserialized = field_type.__new__(field_type)  # type: ignore
+    child_deserializer = field.child.deserialize
+    child_typestr = field.child.typestr
+    adder = field.adder
 
     error = None
     for index, item in enumerate(value):
         try:
-            deserialized_item = field.child.deserialize(item)
+            deserialized_item = child_deserializer(item)
         except (ValueError, TypeError, DeserializationError) as exc:
             if field.fail_fast:
                 raise DeserializationError.from_exception(
                     exc,
                     name=field.name,
                     input_type=type(item),
-                    expected_type=field.child.typestr,
+                    expected_type=child_typestr,
                     location=[index],
                 )
             elif error is None:
@@ -1189,20 +1173,21 @@ def iterable_deserializer(
                     exc,
                     name=field.name,
                     input_type=type(item),
-                    expected_type=field.child.typestr,
+                    expected_type=child_typestr,
                     location=[index],
                 )
             else:
                 error.add(
                     exc,
+                    name=field.name,
                     input_type=type(item),
-                    expected_type=field.child.typestr,
+                    expected_type=child_typestr,
                     location=[index],
                 )
         else:
             if error is not None:
                 raise error
-            field.adder(deserialized, deserialized_item)
+            adder(deserialized, deserialized_item)
 
     if error is not None:
         raise error
@@ -1213,6 +1198,8 @@ def validate_iterable(
     value: IterType,
     field: typing.Optional["Iterable[IterType, _V]"] = None,
     instance: typing.Optional[typing.Any] = None,
+    *args: typing.Any,
+    **kwargs: typing.Any,
 ) -> None:
     """
     Validate the elements of an iterable field.
@@ -1224,17 +1211,19 @@ def validate_iterable(
     if field is None:
         return
 
+    child_validator = field.child.validate
+    child_typestr = field.child.typestr
     error = None
     for index, item in enumerate(value):
         try:
-            field.child.validate(item, instance)
+            child_validator(item, instance)
         except (ValueError, TypeError, ValidationError) as exc:
             if field.fail_fast:
                 raise ValidationError.from_exception(
                     exc,
                     name=field.name,
                     input_type=type(item),
-                    expected_type=field.child.typestr,
+                    expected_type=child_typestr,
                     location=[index],
                 )
             elif error is None:
@@ -1242,14 +1231,14 @@ def validate_iterable(
                     exc,
                     name=field.name,
                     input_type=type(item),
-                    expected_type=field.child.typestr,
+                    expected_type=child_typestr,
                     location=[index],
                 )
             else:
                 error.add(
                     exc,
                     input_type=type(item),
-                    expected_type=field.child.typestr,
+                    expected_type=child_typestr,
                     location=[index],
                 )
     if error is not None:
@@ -1312,7 +1301,7 @@ class Iterable(typing.Generic[IterType, _V], Field[IterType]):
         """
         value = f"{getattr(self.field_type, '__name__', None) or str(self.field_type)}[{self.child.typestr}]"
         if self.strict:
-            return f"Strict[{value}]"
+            return f"strict[{value}]"
         return value
 
     def bind(self, parent: typing.Type[typing.Any], name: str) -> NoneType:
@@ -1540,7 +1529,7 @@ class JSON(Any):
 
 slug_validator = field_validators.pattern(
     r"^[a-zA-Z0-9_-]+$",
-    message="'{name}' must be a valid slug.",
+    message="Value must be a valid slug.",
 )
 
 

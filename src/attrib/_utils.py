@@ -19,7 +19,10 @@ from collections import defaultdict
 try:
     import orjson as json  # type: ignore[import]
 except ImportError:
-    import json
+    try:
+        import ujson as json  # type: ignore[import]
+    except ImportError:
+        import json  # Fallback to the standard library json module
 
 from attrib._typing import IterType, Serializer, EMPTY
 from attrib.exceptions import SerializationError, DetailedError
@@ -466,7 +469,7 @@ def get_cache_key(value: typing.Any) -> typing.Any:
 
 
 def unjsonable(obj: typing.Any) -> typing.Any:
-    """Raise a TypeError for unjsonable objects."""
+    """Raise a TypeError for JSON unserializable objects."""
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable.")
 
 
@@ -503,29 +506,29 @@ def make_jsonable(obj: typing.Any) -> typing.Any:
     """
     if obj is None or obj is EMPTY:
         return None
-
+    
+    obj_type = type(obj)
     if isinstance(obj, (str, int, float, bool)):
         return obj
     elif isinstance(obj, collections.abc.Mapping):
         return jsonable_mapping(obj)
     elif isinstance(obj, collections.abc.Iterable):
         return jsonable_iterable(obj)
-    elif is_named_tuple(type(obj)):
+    elif is_named_tuple(obj_type):
         return jsonable_mapping(obj._asdict())
 
-    encoder = JSON_ENCODERS.get(type(obj), None)
+    encoder = JSON_ENCODERS.get(obj_type, None)
     if encoder is not None:
-        try:
-            return encoder(obj)
-        except Exception as exc:
-            raise TypeError(f"Failed to serialize object of type {type(obj)}: {exc}")
+        return encoder(obj)
 
-    for cls, encoder in JSON_ENCODERS.items():
-        if isinstance(obj, cls):
-            encoded = encoder(obj)
-            # Update the encoders mapping to include the encoder for this type
-            JSON_ENCODERS[cls] = encoder
-            return encoded
+    mro = obj_type.__mro__
+    for i in range(1, len(mro) - 1): # Skip the first one as we already checked it
+        cls = mro[i]
+        if cls in JSON_ENCODERS:
+            encoder = JSON_ENCODERS[cls]
+            # Cache this for future use
+            JSON_ENCODERS[obj_type] = encoder
+            return encoder(obj)
 
     if hasattr(obj, "__dict__"):
         return jsonable_mapping(vars(obj))
@@ -534,14 +537,14 @@ def make_jsonable(obj: typing.Any) -> typing.Any:
             {
                 slot: getattr(obj, slot)
                 for slot in obj.__slots__
-                if slot != "__weakref__" and slot != "__dict__"
+                if slot not in {"__weakref__", "__dict__"}
             }
         )  # type: ignore[union-attr]
 
-    raise json.loads(json.dumps(obj, default=unjsonable))
+    return json.loads(json.dumps(obj, default=unjsonable))
 
 
-JSON_ENCODERS = {
+JSON_ENCODERS: typing.Dict[typing.Type, typing.Callable[[typing.Any], typing.Any]] = {
     list: jsonable_iterable,
     set: jsonable_iterable,
     frozenset: jsonable_iterable,

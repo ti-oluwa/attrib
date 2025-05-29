@@ -52,7 +52,7 @@ class ErrorDetail(typing.NamedTuple):
 
     def as_string(self) -> str:
         """Return a string representation of the error detail."""
-        details = [
+        text = [
             ".".join(
                 [
                     f"[{loc}]" if isinstance(loc, int) else str(loc)
@@ -62,23 +62,24 @@ class ErrorDetail(typing.NamedTuple):
             f"\n  {self.message} ",
         ]
 
+        info = []
         if self.input_type is not None:
             type_name = (
                 self.input_type.__name__
                 if isinstance(self.input_type, type)
                 else str(self.input_type)
             )
-            details.append(f"[input_type={type_name!r}] ")
+            info.append(f"input_type={type_name!r}")
         if self.expected_type is not None:
             type_name = (
                 self.expected_type.__name__
                 if isinstance(self.expected_type, type)
                 else str(self.expected_type)
             )
-            details.append(f"[expected_type={type_name!r}] ")
+            info.append(f"expected_type={type_name!r}")
         if self.code is not None:
-            details.append(f"[code={self.code!r}] ")
-        return "".join(details)
+            info.append(f"code={self.code!r}")
+        return "".join(text) + "[" + ", ".join(info) + "]"
 
     def as_json(self) -> typing.Dict[str, typing.Any]:
         """Return a JSON-serializable representation of the error detail."""
@@ -208,11 +209,11 @@ class DetailedError(AttribException):
         :param context: Optional context dictionary for additional information
         :return: A new `DetailedError` instance with the provided details
         """
-        msg = f"{message or ''} {exception.args[0] if exception.args else str(exception)}".strip()
+        msg = f"{message or ''}\n  {exception.args[0] if exception.args else str(exception)}".strip()
         if isinstance(exception, DetailedError):
-            new = cls(message=msg)
+            new = cls(message=msg, parent_name=parent_name)
             new.error_list.clear()
-            new.merge(exception, prefix=name)
+            new.merge(exception)
             return new
 
         new = cls(
@@ -461,12 +462,8 @@ ERROR_CODE_MAPPING = {
 }
 
 
-class UserError(AttribException):
-    """Raised for user-related errors."""
+class ConfigurationError(AttribException):
+    """Raised for configuration-related errors."""
 
-    def __init__(self, message: str):
-        super().__init__(message)
-        self.message = message
+    pass
 
-    def __str__(self) -> str:
-        return f"UserError: {self.message}"

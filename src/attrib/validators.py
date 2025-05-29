@@ -201,7 +201,7 @@ class FieldValidator(typing.NamedTuple):
         instance: typing.Optional[typing.Any] = None,
         fail_fast: bool = False,
     ) -> None:
-        msg = self.message or "Field validation failed"
+        msg = self.message or "Field validation failed."
         name = getattr(adapter, "name", None)
         try:
             self.func(

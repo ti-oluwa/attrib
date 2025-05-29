@@ -100,6 +100,8 @@ def _serialize_instance_asdict_recursive(
         context["__options"] = options or {}
     if "__fail_fast" not in context:
         context["__fail_fast"] = fail_fast
+    if "__depth" not in context:
+        context["__depth"] = 0
 
     local_options = context["__options"]
     if instance_type in local_options:
@@ -114,23 +116,23 @@ def _serialize_instance_asdict_recursive(
     elif option.exclude:
         field_names = set(field_names) - option.exclude
 
-    current_depth = context.get("__depth", 0)
     error = None
     for name in field_names:
         field = instance.__fields__[name]
         key = field.effective_name
 
         try:
-            value = field.__get__(instance, owner=type(instance))
+            value = field.__get__(instance, owner=instance_type)
             if value is EMPTY:
                 continue
-
+            
             if isinstance(value, Dataclass):
+                current_depth = context["__depth"]
                 if option.depth is not None and current_depth >= option.depth:
                     serialized_data[key] = value
                     continue
-
-                context["__depth"] = current_depth + 1
+                
+                context["__depth"] += 1 # Next level is one deeper
                 serialized_data[key] = _serialize_instance_asdict_recursive(
                     fmt=fmt,
                     instance=value,
@@ -192,7 +194,7 @@ def _serialize_instance_asdict_iterative(
     :raises SerializationError: If serialization fails.
     """
     serialized_data = {}
-    stack = deque([(instance, 0, serialized_data, [])])  # Add path tracking
+    stack = deque([(instance, 0, serialized_data)])  # Add path tracking
 
     if context is None:
         context = {}
@@ -205,7 +207,7 @@ def _serialize_instance_asdict_iterative(
     error = None
 
     while stack:
-        current_instance, current_depth, current_output, path = stack.pop()
+        current_instance, current_depth, current_output = stack.pop()
         instance_type = type(current_instance)
 
         if instance_type in local_options:
@@ -223,7 +225,6 @@ def _serialize_instance_asdict_iterative(
         for name in field_names:
             field = current_instance.__fields__[name]
             key = field.effective_name
-            current_path = path + [key]
 
             try:
                 value = field.__get__(current_instance, owner=instance_type)
@@ -238,7 +239,7 @@ def _serialize_instance_asdict_iterative(
                     nested_output = {}
                     current_output[key] = nested_output
                     stack.appendleft(
-                        (value, current_depth + 1, nested_output, current_path)
+                        (value, current_depth + 1, nested_output)
                     )
                 else:
                     current_output[key] = field.serialize(
@@ -251,21 +252,21 @@ def _serialize_instance_asdict_iterative(
                         exc,
                         parent_name=instance_type.__name__,
                         expected_type=field.typestr,
-                        location=current_path,
+                        location=[name],
                     )
                 if error is None:
                     error = SerializationError.from_exception(
                         exc,
                         parent_name=instance_type.__name__,
                         expected_type=field.typestr,
-                        location=current_path,
+                        location=[name],
                     )
                 else:
                     error.add(
                         exc,
                         parent_name=instance_type.__name__,
                         expected_type=field.typestr,
-                        location=current_path,
+                        location=[name],
                     )
 
     if error:
@@ -301,6 +302,8 @@ def _serialize_instance_asnamedtuple_recursive(
         context["__fail_fast"] = fail_fast
     if "__astuple" not in context:
         context["__astuple"] = True
+    if "__depth" not in context:
+        context["__depth"] = 0
 
     local_options = context["__options"]
     if instance_type in local_options:
@@ -315,7 +318,6 @@ def _serialize_instance_asnamedtuple_recursive(
     elif option.exclude:
         field_names = [name for name in field_names if name not in option.exclude]
 
-    current_depth = context.get("__depth", 0)
     serialized_items = []
     error = None
 
@@ -328,11 +330,12 @@ def _serialize_instance_asnamedtuple_recursive(
                 continue
 
             if isinstance(value, Dataclass):
+                current_depth = context["__depth"]
                 if option.depth is not None and current_depth >= option.depth:
                     serialized_items.append((key, value))
                     continue
 
-                context["__depth"] = current_depth + 1
+                context["__depth"] += 1  # Next level is one deeper
                 nested = _serialize_instance_asnamedtuple_recursive(
                     fmt=fmt,
                     instance=value,
@@ -398,7 +401,7 @@ def _serialize_instance_asnamedtuple_iterative(
     :raises SerializationError: If serialization fails.
     """
     serialized_items = []
-    stack = deque([(instance, 0, serialized_items, [])])  # Add path tracking
+    stack = deque([(instance, 0, serialized_items)])  # Add path tracking
 
     if context is None:
         context = {}
@@ -413,7 +416,7 @@ def _serialize_instance_asnamedtuple_iterative(
     error = None
 
     while stack:
-        current_instance, current_depth, current_output, path = stack.pop()
+        current_instance, current_depth, current_output = stack.pop()
         instance_type = type(current_instance)
 
         if instance_type in local_options:
@@ -431,7 +434,6 @@ def _serialize_instance_asnamedtuple_iterative(
         for name in field_names:
             field = current_instance.__fields__[name]
             key = field.effective_name
-            current_path = path + [key]
 
             try:
                 value = field.__get__(current_instance, owner=instance_type)
@@ -446,7 +448,7 @@ def _serialize_instance_asnamedtuple_iterative(
                     nested_output = []
                     current_output.append((key, nested_output))
                     stack.appendleft(
-                        (value, current_depth + 1, nested_output, current_path)
+                        (value, current_depth + 1, nested_output,)
                     )
                 else:
                     serialized_value = field.serialize(
@@ -462,21 +464,21 @@ def _serialize_instance_asnamedtuple_iterative(
                         exc,
                         parent_name=instance_type.__name__,
                         expected_type=field.typestr,
-                        location=current_path,
+                        location=[name],
                     )
                 if error is None:
                     error = SerializationError.from_exception(
                         exc,
                         parent_name=instance_type.__name__,
                         expected_type=field.typestr,
-                        location=current_path,
+                        location=[name],
                     )
                 else:
                     error.add(
                         exc,
                         parent_name=instance_type.__name__,
                         expected_type=field.typestr,
-                        location=current_path,
+                        location=[name],
                     )
 
     if error:

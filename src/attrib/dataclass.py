@@ -7,7 +7,12 @@ from types import MappingProxyType
 from typing_extensions import Unpack
 
 from attrib.descriptors.base import Field, Value
-from attrib.exceptions import FrozenInstanceError, DeserializationError, ValidationError
+from attrib.exceptions import (
+    FrozenInstanceError,
+    DeserializationError,
+    ValidationError,
+    ConfigurationError,
+)
 from attrib._typing import RawData
 
 
@@ -148,7 +153,7 @@ def _hash(instance: "Dataclass") -> int:
             )
         )
     except TypeError as exc:
-        raise TypeError(f"Unhashable field value in {instance}: {exc}")
+        raise TypeError(f"Unhashable value in {instance}: {exc}")
 
 
 def _eq(instance: "Dataclass", other: typing.Any) -> bool:
@@ -403,7 +408,7 @@ class DataclassMeta(type):
             attrs["__setitem__"] = _setitem
         if config.hash and "__hash__" not in attrs:
             if not config.frozen:
-                raise TypeError(
+                raise ConfigurationError(
                     "Cannot use __hash__ without frozen=True. Hashing is unsafe for mutable objects."
                     " Set frozen=True to enable hashing."
                 )
@@ -578,7 +583,7 @@ class Dataclass(metaclass=DataclassMeta):
     def __init_subclass__(cls) -> None:
         """Ensure that subclasses define fields."""
         if len(cls.__fields__) == 0:
-            raise TypeError("Subclasses must define fields")
+            raise ConfigurationError("Dataclasses must define fields")
         return
 
 
@@ -643,7 +648,7 @@ def _from_attributes(
     :return: The dataclass instance.
     """
     if dataclass_.__config__.frozen:
-        raise TypeError(
+        raise ConfigurationError(
             f"Cannot convert {obj!r} to a frozen dataclass. Use the constructor instead."
         )
     instance = dataclass_()
@@ -697,7 +702,13 @@ def deserialize(
     :return: The dataclass instance.
     """
     if obj is None:
-        raise ValueError("Cannot deserialize 'None'")
+        raise DeserializationError(
+            "Cannot deserialize 'None'",
+            parent_name=dataclass_.__name__,
+            input_type="null",
+            expected_type=dataclass_.__name__,
+            code="invalid_value",
+        )
     if from_attributes:
         return _from_attributes(dataclass_, obj)
     return dataclass_(obj, __fail_fast=fail_fast)

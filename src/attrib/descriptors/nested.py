@@ -8,6 +8,7 @@ from attrib.serializers import (
     serialize_instance_asnamedtuple,
 )
 from attrib._utils import is_iterable
+from attrib.exceptions import FieldError
 
 
 _Dataclass = typing.TypeVar("_Dataclass", bound=Dataclass)
@@ -85,10 +86,10 @@ class Nested(Field[_Dataclass]):
             return
 
         if is_iterable(field_type):
-            raise TypeError(
+            raise FieldError(
                 f"{type(self).__name__} does not support iterable types. Got {field_type}."
             )
         if not issubclass(field_type, Dataclass):
-            raise TypeError(
+            raise FieldError(
                 f"{field_type} must be a subclass of {Dataclass.__qualname__}. Got {field_type}."
             )

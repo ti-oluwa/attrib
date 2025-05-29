@@ -10,7 +10,6 @@ import attrib
 from attrib.descriptors.phonenumbers import PhoneNumber
 from utils import timeit, profileit, log
 from mock_data import course_data, student_data, year_data
-from attrs_example import Student as AttrsStudent
 
 Dataclass_co = typing.TypeVar(
     "Dataclass_co",
@@ -32,7 +31,7 @@ class Term(enum.Enum):
     THIRD = "Third"
 
 
-class AcademicYear(attrib.Dataclass, slots=False):
+class AcademicYear(attrib.Dataclass, slots=True):
     """Academic year data class"""
 
     id = attrib.Field(int, required=True)
@@ -43,7 +42,7 @@ class AcademicYear(attrib.Dataclass, slots=False):
     created_at = attrib.DateTime(default=datetime.now, tz="Africa/Lagos")
 
 
-class Course(attrib.Dataclass, slots=False):
+class Course(attrib.Dataclass, slots=True):
     """Course data class"""
 
     id = attrib.Field(int, required=True, allow_null=True)
@@ -62,8 +61,8 @@ class PersonalInfo(attrib.Dataclass):
     phone = PhoneNumber(allow_null=True, default=None)
 
     __config__ = attrib.Config(
-        slots=False,
-        frozen=True,
+        slots=True,
+        frozen=False,
         pickleable=True,
     )
 
@@ -80,7 +79,9 @@ meta_adapter = attrib.TypeAdapter(
 )
 
 
-class Student(PersonalInfo, slots=True, hash=True):
+@attrib.strict(exclude=["created_at", "joined_at"])
+@attrib.partial
+class Student(PersonalInfo, slots=True):
     """Student data class with multiple fields and a list of enrolled courses"""
 
     id = attrib.Integer(required=True)
@@ -95,58 +96,29 @@ class Student(PersonalInfo, slots=True, hash=True):
     gpa = attrib.Float(
         allow_null=True, default=attrib.Factory(random.uniform, a=1.5, b=5.0)
     )
-    friend = attrib.Field(
-        AttrsStudent,
-        lazy=False,
-        default=lambda: attrib.serialize(
-            dummy_student,
-            fmt="python",
-            options=attrib.Options(
-                attrib.Option(AcademicYear, exclude={"term"}),
-                attrib.Option(Student, exclude={"metadata"}),
-            ),
-        ),
-        allow_null=True,
-        serializers={"json": lambda x, *_: attrib.make_jsonable(x)},
-        deserializer=lambda x, _: AttrsStudent(**x),
-    )
-    # Use deserializer and serializer built by the TypeAdapter to handle complex metadata
-    metadata = attrib.Field(
-        attrib.AnyType,  # Use AnyType to allow any type of data
-        always_coerce=True,  # Ensures that the adapter deserilizer is always used
-        deserializer=meta_adapter.deserializer,  # Use deserializer from TypeAdapter if you need input and/or output data to always match adapted type
-        # serializers=meta_adapter.serializer.map, # Use serializer from TypeAdapter if you only need output data to match adapted type
-        default=lambda: {
-            "instagram": ["@ti_oluwa"],
-            "twitter": "@ti_oluwa_",
-            "facebook": None,
-            "linkedin": None,
-            "website": "https://example.com",
-            "bio": 10,
-            "hobbies": ["reading", "coding", "sports"],
-            "languages": ["English", "French"],
-            "interests": ["AI", "Blockchain", "Web Development"],
-            "achievements": ["Dean's List", "Hackathon Winner"],
-            "certifications": ["Python Programming", "Data Science"],
-        },
-        allow_null=True,
-    )
+    # # Use deserializer and serializer built by the TypeAdapter to handle complex metadata
+    # metadata = attrib.Field(
+    #     attrib.AnyType,  # Use AnyType to allow any type of data
+    #     always_coerce=True,  # Ensures that the adapter deserilizer is always used
+    #     deserializer=meta_adapter.deserializer,  # Use deserializer from TypeAdapter if you need input and/or output data to always match adapted type
+    #     # serializers=meta_adapter.serializer.map, # Use serializer from TypeAdapter if you only need output data to match adapted type
+    #     default=lambda: {
+    #         "instagram": ["@ti_oluwa"],
+    #         "twitter": "@ti_oluwa_",
+    #         "facebook": None,
+    #         "linkedin": None,
+    #         "website": "https://example.com",
+    #         "bio": 10,
+    #         "hobbies": ["reading", "coding", "sports"],
+    #         "languages": ["English", "French"],
+    #         "interests": ["AI", "Blockchain", "Web Development"],
+    #         "achievements": ["Dean's List", "Hackathon Winner"],
+    #         "certifications": ["Python Programming", "Data Science"],
+    #     },
+    #     allow_null=True,
+    # )
     joined_at = attrib.DateTime(allow_null=True, tz="Africa/Lagos")
     created_at = attrib.DateTime(default=datetime.now, tz="Africa/Lagos")
-
-
-dummy_student = Student(
-    id=0,
-    name="",
-    age=0,
-    email=None,
-    phone=None,
-    year=year_data[0],
-    courses=course_data,
-    joined_at=None,
-    friend=None,
-    metadata=None,
-)
 
 
 def load_data(
@@ -182,20 +154,13 @@ def example():
         )
 
     for course in courses:
-        attrib.serialize(
-            course,
-            fmt="python",
-            astuple=False,
-        )
+        attrib.serialize(course, fmt="python", astuple=False)
 
     for year in years:
-        attrib.serialize(
-            year,
-            fmt="python",
-            astuple=False,
-        )
+        attrib.serialize(year, fmt="python", astuple=False)
 
     # import pickle
+
     # dump = pickle.dumps(students)
     # loaded_students = pickle.loads(dump)
     # log(
@@ -206,7 +171,7 @@ def example():
     # # Access and print a student's information
     # student = students[0]  # e.g., first student in the list
     # log(
-    #     attrib.serialize(student, options={attrib.Option(depth=2)})
+    #     attrib.serialize(student, options=attrib.Options(attrib.Option(depth=2)))
     # )  # View student details in dictionary format
     # # Modify the student's academic year
     # student.year = years[1]  # Update academic year to next year
@@ -214,7 +179,7 @@ def example():
 
     # # Serialize the student's data to JSON format
     # student_json = attrib.serialize(
-    #     student, fmt="json", options={attrib.Option(depth=2)}
+    #     student, fmt="json", options=attrib.Options(attrib.Option(depth=0))
     # )
     # log("Serialized Student JSON: ", student_json)
 
@@ -232,7 +197,7 @@ def example():
     # }
     # log(
     #     f"Updated Academic Year for {student.name}: ",
-    #     attrib.serialize(student, options={attrib.Option(depth=2)}),
+    #     attrib.serialize(student, options=attrib.Options(attrib.Option(depth=2))),
     # )
 
     # # Adding a new course to a student and displaying
@@ -248,7 +213,9 @@ def example():
     # log(
     #     f"Updated Courses for {student.name}: ",
     #     [
-    #         attrib.serialize(course, fmt="json", options={attrib.Option(depth=2)})
+    #         attrib.serialize(
+    #             course, fmt="json", options=attrib.Options(attrib.Option(depth=3))
+    #         )
     #         for course in student.courses
     #     ],
     # )

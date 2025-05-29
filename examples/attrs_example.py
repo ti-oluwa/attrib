@@ -76,8 +76,11 @@ class Student(PersonalInfo):
     courses: typing.List[Course] = attrs.field(
         default=attrs.Factory(list),
         converter=lambda x: [Course(**course) for course in x],
+        validator=attrs.validators.and_(
+            attrs.validators.min_len(1),
+            attrs.validators.max_len(15),
+        ),
     )
-    friend: typing.Optional["Student"] = attrs.field(factory=lambda: dummy_student)
     joined_at: typing.Optional[datetime] = attrs.field(
         default=None,
         converter=lambda x: datetime.now() if x is None else parse(x),
@@ -85,19 +88,6 @@ class Student(PersonalInfo):
     created_at: datetime = attrs.field(
         factory=lambda: datetime.now().astimezone(zoneinfo.ZoneInfo("Africa/Lagos"))
     )
-
-
-dummy_student = Student(
-    id=0,
-    name="",
-    age=0,
-    email=None,
-    phone=None,
-    year=year_data[0],
-    courses=course_data,
-    joined_at=None,
-    friend=None,
-)
 
 
 def load_data(
@@ -121,7 +111,7 @@ def example():
         attrs.asdict(year, recurse=True)
 
 
-@timeit("attrs")
+@timeit("attrs without type coercion")
 # @profile
 def test(n: int):
     for _ in range(n):

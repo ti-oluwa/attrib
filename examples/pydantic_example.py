@@ -1,4 +1,3 @@
-# Import necessary packages and modules
 import enum
 import random
 import typing
@@ -10,7 +9,6 @@ from pydantic import Field, field_validator, model_validator, ConfigDict
 
 from utils import timeit, profileit, log
 from mock_data import course_data, student_data, year_data
-from attrs_example import Student as AttrsStudent
 
 
 ########################
@@ -88,7 +86,7 @@ class PersonalInfo(pydantic.BaseModel):
     phone: typing.Optional[str] = None
 
     model_config = ConfigDict(
-        frozen=True,
+        frozen=False,
         validate_assignment=True,
         strict=False,
     )
@@ -108,11 +106,10 @@ class Student(PersonalInfo):
 
     id: int
     year: typing.Optional[AcademicYear] = None
-    courses: typing.List[Course] = Field(min_length=1)
+    courses: typing.List[Course] = Field(min_length=1, max_length=15, fail_fast=True)
     gpa: typing.Optional[float] = Field(
         default_factory=lambda: random.uniform(1.5, 5.0)
     )
-    friend: typing.Optional[AttrsStudent] = None
     joined_at: typing.Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.now)
 
@@ -136,13 +133,6 @@ class Student(PersonalInfo):
                 pass
         return v
 
-    @model_validator(mode="before")
-    @classmethod
-    def validate_friend(cls, data):
-        if isinstance(data, dict) and "friend" in data and data["friend"] is not None:
-            if isinstance(data["friend"], dict):
-                data["friend"] = AttrsStudent(**data["friend"])
-        return data
 
 
 Model = typing.TypeVar("Model", bound=pydantic.BaseModel)

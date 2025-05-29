@@ -16,6 +16,7 @@ from ._utils import make_jsonable, iexact  # noqa
 from .adapters import TypeAdapter  # noqa
 from ._typing import EMPTY # noqa
 from . import exceptions  # noqa
+from .decorators import partial, strict # noqa
 
 
 __version__ = "0.0.1"
