@@ -5,6 +5,15 @@ P = typing.ParamSpec("P")
 R = typing.TypeVar("R")
 T = typing.TypeVar("T")
 
+Tco = typing.TypeVar("Tco", covariant=True)
+
+
+class KwArg(typing.Protocol[Tco]):
+    """Protocol for dataclass field keyword arguments."""
+
+    def __class_getitem__(cls, item: typing.Any) -> typing.Any: ...
+
+
 RawData: typing.TypeAlias = typing.Union[
     typing.Mapping[str, typing.Any],
     typing.Mapping[bytes, bytes],
@@ -24,7 +33,7 @@ JSONNamedDataTuple: typing.TypeAlias = typing.Tuple[typing.Tuple[str, JSONValue]
 
 Context: typing.TypeAlias = typing.Dict[str, typing.Any]
 
-    
+
 @typing.runtime_checkable
 class SupportsRichComparison(typing.Protocol):
     def __lt__(self, other: typing.Any, /) -> bool: ...

@@ -23,7 +23,12 @@ from attrib._utils import (
     coalesce_funcs,
     resolve_type,
 )
-from attrib.exceptions import DeserializationError, SerializationError, ValidationError
+from attrib.exceptions import (
+    DeserializationError,
+    InvalidTypeError,
+    SerializationError,
+    ValidationError,
+)
 from attrib.validators import (
     Or,
     instance_of,
@@ -589,7 +594,7 @@ def build_typeddict_deserializer(
         :param kwargs: Additional keyword arguments for deserialization
         """
         if not isinstance(value, Mapping):
-            raise DeserializationError(
+            raise InvalidTypeError(
                 "Cannot deserialize value. Expected a Mapping.",
                 input_type=type(value),
                 expected_type=target,
@@ -660,7 +665,7 @@ def build_typeddict_validator(
         :param kwargs: Additional keyword arguments for validation
         """
         if not isinstance(value, Mapping):
-            raise ValidationError(
+            raise InvalidTypeError(
                 "Cannot validate value. Expected a Mapping.",
                 input_type=type(value),
                 expected_type=target,
@@ -731,7 +736,7 @@ def build_named_tuple_deserializer(
         :param kwargs: Additional keyword arguments for deserialization
         """
         if not isinstance(value, (Mapping, Iterable)):
-            raise DeserializationError(
+            raise InvalidTypeError(
                 "Expected a Mapping or Iterable.",
                 input_type=type(value),
                 expected_type=target,
@@ -793,7 +798,7 @@ def build_named_tuple_validator(
         :param kwargs: Additional keyword arguments for validation
         """
         if not isinstance(value, (Mapping, Iterable)):
-            raise ValidationError(
+            raise InvalidTypeError(
                 "Cannot validate value. Expected a Mapping or Iterable.",
                 input_type=type(value),
                 expected_type=target,
@@ -947,7 +952,7 @@ def build_generic_type_deserializer(
             **kwargs: typing.Any,
         ) -> typing.Mapping[typing.Any, typing.Any]:
             if not isinstance(value, (Mapping, Iterable)):
-                raise DeserializationError(
+                raise InvalidTypeError(
                     "Expected a Mapping or Iterable.",
                     input_type=type(value),
                     expected_type=origin,
@@ -989,7 +994,7 @@ def build_generic_type_deserializer(
                 **kwargs: typing.Any,
             ) -> typing.Tuple[typing.Any, ...]:
                 if not isinstance(value, Iterable) or len(value) != args_count:  # type: ignore
-                    raise DeserializationError(
+                    raise InvalidTypeError(
                         f"Expected an Iterable with {args_count} items.",
                         input_type=type(value),
                         expected_type=origin,
@@ -1022,7 +1027,7 @@ def build_generic_type_deserializer(
             **kwargs: typing.Any,
         ) -> typing.Iterable[typing.Any]:
             if not isinstance(value, Iterable):
-                raise DeserializationError(
+                raise InvalidTypeError(
                     "Expected an Iterable.",
                     input_type=type(value),
                     expected_type=origin,
@@ -1175,7 +1180,7 @@ def build_generic_type_validator(
                 **kwargs: typing.Any,
             ) -> None:
                 if not isinstance(value, Iterable) or len(value) != args_count:  # type: ignore
-                    raise ValidationError(
+                    raise InvalidTypeError(
                         f"Cannot validate {value!r} as {target!r}. Expected an Iterable with {args_count} items."
                     )
 
@@ -1374,7 +1379,7 @@ def build_generic_type_serializer(
             **kwargs: typing.Any,
         ) -> typing.Mapping[typing.Any, typing.Any]:
             if not isinstance(value, (Mapping, Iterable)):
-                raise SerializationError(
+                raise InvalidTypeError(
                     f"Cannot serialize {value!r} to type {target!r}. Expected a Mapping or Iterable."
                 )
 
@@ -1414,7 +1419,7 @@ def build_generic_type_serializer(
                 **kwargs: typing.Any,
             ) -> typing.Tuple[typing.Any, ...]:
                 if not isinstance(value, Iterable) or len(value) != args_count:  # type: ignore
-                    raise SerializationError(
+                    raise InvalidTypeError(
                         f"Cannot serialize {value!r} to {target!r}. Expected an Iterable with {args_count} items."
                     )
 
@@ -1442,7 +1447,7 @@ def build_generic_type_serializer(
             **kwargs: typing.Any,
         ) -> typing.Iterable[typing.Any]:
             if not isinstance(value, Iterable):
-                raise SerializationError(
+                raise InvalidTypeError(
                     f"Cannot serialize {value!r} to type {target!r}. Expected an Iterable."
                 )
             new_iterable = []

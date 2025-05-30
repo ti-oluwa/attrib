@@ -159,13 +159,13 @@ def example():
     students = load_data(student_data, Student)
 
     for student in students:
-        student.model_dump(mode="json")
+        student.model_dump(mode="python")
 
     for course in courses:
-        course.model_dump(mode="json")
+        course.model_dump(mode="python")
 
     for year in years:
-        year.model_dump(mode="json")
+        year.model_dump(mode="python")
 
 
 @timeit("pydantic")

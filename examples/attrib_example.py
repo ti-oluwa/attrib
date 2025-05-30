@@ -11,8 +11,8 @@ from attrib.descriptors.phonenumbers import PhoneNumber
 from utils import timeit, profileit, log
 from mock_data import course_data, student_data, year_data
 
-Dataclass_co = typing.TypeVar(
-    "Dataclass_co",
+DataclassTco = typing.TypeVar(
+    "DataclassTco",
     bound=attrib.Dataclass,
     covariant=True,
 )
@@ -34,7 +34,7 @@ class Term(enum.Enum):
 class AcademicYear(attrib.Dataclass, slots=True):
     """Academic year data class"""
 
-    id = attrib.Field(int, required=True)
+    id = attrib.Integer(required=True)
     name = attrib.String(max_length=100)
     term = attrib.Choice(Term, default=Term.FIRST)
     start_date = attrib.Date(input_formats=["%d-%m-%Y", "%d/%m/%Y"])
@@ -45,7 +45,7 @@ class AcademicYear(attrib.Dataclass, slots=True):
 class Course(attrib.Dataclass, slots=True):
     """Course data class"""
 
-    id = attrib.Field(int, required=True, allow_null=True)
+    id = attrib.Integer(required=True, allow_null=True)
     name = attrib.String(max_length=100)
     code = attrib.String(max_length=20)
     year = attrib.Nested(AcademicYear, lazy=False)
@@ -62,26 +62,13 @@ class PersonalInfo(attrib.Dataclass):
 
     __config__ = attrib.Config(
         slots=True,
-        frozen=False,
+        frozen=True,
         pickleable=True,
     )
 
 
-meta_adapter = attrib.TypeAdapter(
-    typing.Mapping[
-        str,
-        typing.Union[
-            str,
-            typing.Sequence[str],
-            None,
-        ],
-    ]
-)
-
-
-# @attrib.strict(exclude=["created_at", "joined_at"])
 @attrib.partial
-class Student(PersonalInfo, slots=True):
+class Student(PersonalInfo):
     """Student data class with multiple fields and a list of enrolled courses"""
 
     id = attrib.Integer(required=True)
@@ -103,8 +90,8 @@ class Student(PersonalInfo, slots=True):
 
 def load_data(
     data_list: typing.List[typing.Dict[str, typing.Any]],
-    cls: typing.Type[Dataclass_co],
-) -> typing.List[Dataclass_co]:
+    cls: typing.Type[DataclassTco],
+) -> typing.List[DataclassTco]:
     """
     Load data into data classes
 
@@ -117,7 +104,7 @@ def load_data(
 
 def example():
     """Run example usage of the data classes"""
-    with attrib.deserialization_context(fail_fast=False):
+    with attrib.deserialization_context(fail_fast=True):
         years = load_data(year_data, AcademicYear)
         courses = load_data(course_data, Course)
         students = load_data(student_data, Student)
@@ -125,21 +112,21 @@ def example():
     for student in students:
         attrib.serialize(
             student,
-            fmt="json",
+            fmt="python",
             # options=attrib.Options(
             #     attrib.Option(Course, include={"year"}, depth=1, strict=True),
             #     attrib.Option(AcademicYear, exclude={"term", "id"}, depth=0),
             #     attrib.Option(depth=1),
             # ),
-            # astuple=False,
-            by_alias=True,
+            astuple=False,
+            # by_alias=True,
         )
 
     for course in courses:
-        attrib.serialize(course, fmt="json", astuple=False)
+        attrib.serialize(course, fmt="python", astuple=False)
 
     for year in years:
-        attrib.serialize(year, fmt="json", astuple=False)
+        attrib.serialize(year, fmt="python", astuple=False)
 
     # import pickle
 

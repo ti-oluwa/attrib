@@ -14,7 +14,7 @@ from .serializers import serialize, Option, Options  # noqa
 from . import validators  # noqa
 from ._utils import make_jsonable, iexact  # noqa
 from .adapters import TypeAdapter  # noqa
-from ._typing import EMPTY  # noqa
+from ._typing import Empty, EMPTY  # noqa
 from . import exceptions  # noqa
 from .decorators import partial, strict  # noqa
 

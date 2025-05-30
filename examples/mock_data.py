@@ -24,7 +24,7 @@ year_data = [
         "id": 4,
         "name": "2022/2023",
         "start_date": "September 1, 2022",  # non-standard format
-        "end_date": "06-30-2023",  # changed to "m-d-Y"
+        "end_date": "06-30-2023",  # changed to "m-d-Y",
     },
 ]
 

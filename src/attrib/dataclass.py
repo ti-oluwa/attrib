@@ -13,10 +13,9 @@ from attrib.exceptions import (
     FrozenInstanceError,
     DeserializationError,
     ConfigurationError,
-    InvalidTypeError,
     ValidationError,
 )
-from attrib._typing import DataDict, RawData
+from attrib._typing import R, DataDict, RawData, KwArg
 
 
 __all__ = [
@@ -184,6 +183,13 @@ def _eq(instance: "Dataclass", other: typing.Any) -> bool:
     return True
 
 
+def _iter(instance: "Dataclass") -> typing.Iterator[typing.Tuple[str, typing.Any]]:
+    """Iterate over the instance's fields and their values."""
+    owner = type(instance)
+    for key, field in instance.__fields__.items():
+        yield key, field.__get__(instance, owner=owner)
+
+
 def _get_slot_attribute_name(
     unique_prefix: str,
     field_name: str,
@@ -292,7 +298,7 @@ class Config(typing.NamedTuple):
         If False, do not sort fields."""
     hash: bool = False
     """If True, add __hash__ method to the class, if it does not exist. Should be used with `frozen=True`."""
-    eq: bool = False
+    eq: bool = True
     """If True, add __eq__ method to the class, if it does not exist."""
     getitem: bool = False
     """If True, add __getitem__ method to the class, if it does not exist."""
@@ -308,7 +314,7 @@ def build_config(
     class_config: typing.Optional[Config] = None,
     bases: typing.Optional[typing.Tuple[typing.Type[typing.Any]]] = None,
     **meta_config: Unpack[ConfigSchema],
-):
+) -> Config:
     """
     Build a configuration for Dataclass types.
 
@@ -411,6 +417,10 @@ class DataclassMeta(type):
         if config.frozen:
             attrs["__setattr__"] = _frozen_setattr
             attrs["__delattr__"] = _frozen_delattr
+            # Only allow frozen dataclasses to be iterable by default. We do not want to allow
+            # iteration over mutable dataclasses as it can lead to unexpected behavior.
+            if "__iter__" not in attrs:
+                attrs["__iter__"] = _iter
         if config.repr and "__repr__" not in attrs:
             attrs["__repr__"] = _repr
         if config.str and "__str__" not in attrs:
@@ -567,20 +577,20 @@ class Dataclass(metaclass=DataclassMeta):
     def __init__(
         self,
         data: RawData,
-        **kwargs: typing.Any,
+        **kwargs: KwArg[typing.Any],
     ) -> None:
         """Initialize the dataclass with raw data."""
         ...
 
     @typing.overload
-    def __init__(self, **kwargs: typing.Any) -> None:
+    def __init__(self, data: None = None, **kwargs: KwArg[typing.Any]) -> None:
         """Initialize the dataclass with keyword arguments."""
         ...
 
     def __init__(
         self,
         data: typing.Optional[RawData] = None,
-        **kwargs: typing.Any,
+        **kwargs: KwArg[typing.Any],
     ) -> None:
         """
         Initialize the dataclass with raw data or keyword arguments.
@@ -593,7 +603,7 @@ class Dataclass(metaclass=DataclassMeta):
         load(self, data=combined)
         object.__setattr__(self, "_initializing", False)
 
-    def __init_subclass__(cls) -> None:
+    def __init_subclass__(cls, **kwargs: Unpack[ConfigSchema]) -> None:
         """Ensure that subclasses define fields."""
         if len(cls.__fields__) == 0:
             raise ConfigurationError("Dataclasses must define fields")
@@ -753,6 +763,27 @@ def _from_attributes(
     if error is not None:
         raise error
     return instance
+
+
+@typing.overload
+def deserialize(
+    dataclass_: typing.Type[DataclassTco],
+    obj: RawData,
+    *,
+    fail_fast: typing.Optional[bool] = None,
+    ignore_extras: typing.Optional[bool] = None,
+) -> DataclassTco: ...
+
+
+@typing.overload
+def deserialize(
+    dataclass_: typing.Type[DataclassTco],
+    obj: typing.Any,
+    *,
+    from_attributes: bool = False,
+    fail_fast: typing.Optional[bool] = None,
+    ignore_extras: typing.Optional[bool] = None,
+) -> DataclassTco: ...
 
 
 def deserialize(

@@ -8,7 +8,7 @@ from collections import deque
 from annotated_types import MinLen
 from typing_extensions import Annotated, Self
 
-from attrib._typing import P, SupportsRichComparison, Validator, TypeAdapter
+from attrib._typing import SupportsRichComparison, Validator, TypeAdapter
 from attrib._utils import is_iterable, is_mapping
 from attrib.exceptions import ValidationError
 

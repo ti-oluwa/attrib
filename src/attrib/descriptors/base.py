@@ -29,6 +29,7 @@ from attrib._utils import (
     is_valid_type,
     is_iterable_type,
     is_generic_type,
+    is_iterable,
     make_jsonable,
     _get_itertype_adder,
     resolve_type,
@@ -421,6 +422,10 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
                 "If strict is True, the field will not attempt to coerce values.",
                 name=self.name,
             )
+
+    def __get_type_hints__(self):
+        """Return type information for type checkers."""
+        return {self.name: resolve_type(self.field_type)}
 
     @functools.cached_property
     def effective_name(self) -> typing.Optional[str]:
