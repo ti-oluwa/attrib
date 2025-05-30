@@ -12,7 +12,7 @@ from collections.abc import (
 from types import NoneType
 from collections import defaultdict
 
-from attrib._typing import Validator, T, Serializer, Deserializer
+from attrib._typing import JSONValue, Validator, T, Serializer, Deserializer
 from attrib._utils import (
     is_generic_type,
     is_named_tuple,
@@ -35,6 +35,9 @@ from attrib.validators import (
 )
 from attrib.serializers import serialize
 from attrib.dataclass import Dataclass, deserialize, DataclassTco
+
+
+__all__ = ["TypeAdapter"]
 
 
 @typing.final
@@ -1200,6 +1203,22 @@ def build_generic_type_validator(
     )
 
 
+@typing.overload
+def build_generic_type_serializer(
+    target: typing.Union[typing.Type[T], T],
+    *,
+    fmt: typing.Literal["python"] = ...,
+) -> Serializer[typing.Any]: ...
+
+
+@typing.overload
+def build_generic_type_serializer(
+    target: typing.Union[typing.Type[T], T],
+    *,
+    fmt: typing.Literal["json"] = ...,
+) -> Serializer[JSONValue]: ...
+
+
 @functools.lru_cache(maxsize=128)
 def build_generic_type_serializer(
     target: typing.Union[typing.Type[T], T],
@@ -1504,7 +1523,7 @@ def _dataclass_deserializer(
 
 def _non_generic_type_json_serializer(
     value: typing.Any, *_: typing.Any, **kwargs: typing.Any
-) -> typing.Any:
+) -> JSONValue:
     """
     Serialize a non-generic type.
 

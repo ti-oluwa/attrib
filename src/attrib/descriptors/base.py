@@ -9,7 +9,6 @@ import decimal
 import typing
 import base64
 import io
-import copy
 import pathlib
 from typing_extensions import Unpack, Self, Annotated
 import annotated_types as annot
@@ -20,6 +19,7 @@ from dataclasses import dataclass
 from attrib import validators as field_validators
 from attrib.exceptions import (
     FieldError,
+    InvalidTypeError,
     SerializationError,
     DeserializationError,
     ValidationError,
@@ -29,14 +29,21 @@ from attrib._utils import (
     is_valid_type,
     is_iterable_type,
     is_generic_type,
-    # _LRUCache,
-    # get_cache_key,
     make_jsonable,
     _get_itertype_adder,
     resolve_type,
     SerializerRegistry,
 )
-from attrib._typing import P, R, SupportsRichComparison, Validator, IterType, EMPTY
+from attrib._typing import (
+    P,
+    R,
+    JSONValue,
+    SupportsRichComparison,
+    Validator,
+    IterType,
+    EMPTY,
+    Context,
+)
 
 
 __all__ = [
@@ -44,7 +51,7 @@ __all__ = [
     "FieldError",
     "Field",
     "Factory",
-    "FieldInitKwargs",
+    "FieldKwargs",
     "Any",
     "Boolean",
     "String",
@@ -133,7 +140,7 @@ Should raise a DeserializationError if deserialization fails.
 def to_json_serializer(
     value: typing.Any,
     field: "Field",
-    context: typing.Optional[typing.Dict[str, typing.Any]],
+    context: typing.Optional[Context],
 ) -> typing.Any:
     return make_jsonable(value)
 
@@ -141,7 +148,7 @@ def to_json_serializer(
 def to_string_serializer(
     value: typing.Any,
     field: "Field",
-    context: typing.Optional[typing.Dict[str, typing.Any]],
+    context: typing.Optional[Context],
 ) -> str:
     """Serialize a value to a string."""
     return str(value)
@@ -150,7 +157,7 @@ def to_string_serializer(
 def unsupported_serializer(
     value: typing.Any,
     field: "Field",
-    context: typing.Optional[typing.Dict[str, typing.Any]],
+    context: typing.Optional[Context],
 ) -> None:
     """Raise an error for unsupported serialization."""
     raise SerializationError(
@@ -188,7 +195,7 @@ def unsupported_deserializer(value: typing.Any, field: "Field") -> None:
 def to_python_serializer(
     value: _T,
     field: "Field",
-    context: typing.Optional[typing.Dict[str, typing.Any]],
+    context: typing.Optional[Context],
 ) -> _T:
     """Serialize a value to Python object."""
     return value
@@ -255,7 +262,7 @@ def Factory(
     **kwargs: P.kwargs,
 ) -> typing.Callable[[], R]:
     """
-    Factory function to create a callable that invokes the provided factory with the given arguments.
+    Creates a callable that invokes the provided factory with the given arguments.
 
     :param factory: The factory function to invoke.
     :param args: Additional arguments to pass to the factory function.
@@ -296,6 +303,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         default: typing.Union[_T, DefaultFactory[_T], NoneType] = EMPTY,
         lazy: bool = False,
         alias: typing.Optional[str] = None,
+        serialization_alias: typing.Optional[str] = None,
         allow_null: bool = False,
         required: bool = False,
         strict: bool = False,
@@ -315,7 +323,8 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         :param field_type: The expected type for field values.
         :param default: A default value for the field to be used if no value is set. Defaults to `EMPTY`.
         :param lazy: If True, the field will not be validated until it is accessed.
-        :param alias: Optional string for alternative field naming. Defaults to None.
+        :param alias: Optional alias for the field, used for mainly for deserialization but can also be used for serialization.
+        :param serialization_alias: Optional alias for the field used during serialization.
         :param allow_null: If True, permits the field to be set to None. Defaults to False.
         :param required: If True, field values must be explicitly provided. Defaults to False.
         :param strict: If True, the field will only accept values of the specified type and will not attempt to coerce them.
@@ -336,11 +345,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
 
         :param skip_validator: If True, the field will skip validator run after deserialization. Defaults to False.
         :param fail_fast: If True, the field will raise an error immediately a validation fails. Defaults to False.
-        :param _cache_size: Multiplier for the base cache size for serialized and validated values. Defaults to 1.
-            Base cache size is 128, so the effective cache size will be 128 * _cache_size.
         """
-        # assert 0.5 <= _cache_size <= 3.0, "Cache size must be between 1 and 3"
-
         if isinstance(field_type, str):
             self.field_type = typing.ForwardRef(field_type)
         elif is_generic_type(field_type):
@@ -375,8 +380,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         self.check_coerced = check_coerced
         self.skip_validator = skip_validator
         self.fail_fast = fail_fast
-        self._init_args = ()
-        self._init_kwargs = {}
+        self.serialization_alias = serialization_alias
 
     @property
     def typestr(self) -> str:
@@ -530,14 +534,13 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
                 expected_type=self.typestr,
                 code="missing_value",
             )
-        self.set_value(instance, value, not self.lazy)
+        self.set_value(instance, value, validate=not self.lazy)
 
     def get_value(self, instance: typing.Any) -> Value[_T]:
         """
         Get the field value from an instance.
 
         :param instance: The instance to which the field belongs.
-        :param name: The name of the field.
         :return: The field value gotten from the instance.
         """
         field_name = self.name
@@ -556,7 +559,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         self,
         instance: typing.Any,
         value: typing.Any,
-        validate: bool = True,
+        validate: bool = False,
     ) -> Value[_T]:
         """
         Set the field's value on an instance, performing validation if required.
@@ -637,7 +640,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         if not self.always_coerce and self.check_type(value):
             deserialized = value
         elif self.strict:
-            raise ValidationError(
+            raise InvalidTypeError(
                 "Input value is not of the expected type.",
                 name=self.name,
                 parent_name=type(instance).__name__ if instance else None,
@@ -648,7 +651,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         else:
             deserialized = self.deserialize(value)
             if self.check_coerced and not self.check_type(deserialized):
-                raise ValidationError(
+                raise InvalidTypeError(
                     "Coerced value is not of the expected type.",
                     name=self.name,
                     parent_name=type(instance).__name__ if instance else None,
@@ -665,7 +668,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
                     instance,
                     fail_fast=self.fail_fast,
                 )
-            except (ValueError, ValidationError) as exc:
+            except ValueError as exc:
                 raise ValidationError.from_exception(
                     exc,
                     name=self.name,
@@ -679,7 +682,7 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
         self,
         value: _T,
         fmt: str,
-        context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+        context: typing.Optional[Context] = None,
     ) -> typing.Optional[typing.Any]:
         """
         Serialize the given value to the specified format using the field's serializer.
@@ -723,11 +726,13 @@ class Field(typing.Generic[_T], metaclass=FieldMeta):
 FieldTco = typing.TypeVar("FieldTco", bound=Field, covariant=True)
 
 
-class FieldInitKwargs(typing.TypedDict, total=False):
+class FieldKwargs(typing.TypedDict, total=False):
     """Possible keyword arguments for initializing a field."""
 
     alias: typing.Optional[str]
-    """Optional string for alternative field naming."""
+    """Optional alias for the field, used mainly for deserialization but can also be used for serialization."""
+    serialization_alias: typing.Optional[str]
+    """Optional alias for the field used during serialization."""
     lazy: bool
     """If True, the field will not be validated until it is accessed."""
     allow_null: bool
@@ -765,7 +770,7 @@ class FieldInitKwargs(typing.TypedDict, total=False):
 class Any(Field[typing.Any]):
     """Field for handling values of any type."""
 
-    def __init__(self, **kwargs: Unpack[FieldInitKwargs]):
+    def __init__(self, **kwargs: Unpack[FieldKwargs]):
         kwargs.setdefault("allow_null", True)
         super().__init__(field_type=AnyType, **kwargs)
 
@@ -781,7 +786,7 @@ def boolean_deserializer(value: typing.Any, field: "Boolean") -> bool:
 def boolean_json_serializer(
     value: bool,
     field: "Boolean",
-    context: typing.Optional[typing.Dict[str, typing.Any]],
+    context: typing.Optional[Context],
 ) -> bool:
     """Serialize a boolean value to JSON."""
     return value
@@ -814,7 +819,7 @@ class Boolean(Field[bool]):
         "json": boolean_json_serializer,
     }
 
-    def __init__(self, **kwargs: Unpack[FieldInitKwargs]):
+    def __init__(self, **kwargs: Unpack[FieldKwargs]) -> None:
         kwargs.setdefault("allow_null", True)
         super().__init__(field_type=bool, **kwargs)
 
@@ -823,7 +828,7 @@ def build_min_max_value_validators(
     min_value: typing.Optional[SupportsRichComparison],
     max_value: typing.Optional[SupportsRichComparison],
 ) -> typing.List[Validator[typing.Any]]:
-    """Construct min and max value ."""
+    """Construct min and max value validators."""
     if min_value is None and max_value is None:
         return []
     if min_value is not None and max_value is not None and min_value >= max_value:
@@ -845,7 +850,7 @@ class Float(Field[float]):
         *,
         min_value: typing.Optional[float] = None,
         max_value: typing.Optional[float] = None,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ) -> None:
         validators = list(
             filter(
@@ -891,7 +896,7 @@ class Integer(Field[int]):
         min_value: typing.Optional[int] = None,
         max_value: typing.Optional[int] = None,
         base: Annotated[int, annot.Interval(ge=2, le=36)] = 10,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ) -> None:
         validators = list(
             filter(
@@ -957,7 +962,7 @@ class String(Field[str]):
         trim_whitespaces: bool = True,
         to_lowercase: bool = False,
         to_uppercase: bool = False,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ) -> None:
         """
         Initialize the field.
@@ -1006,7 +1011,7 @@ class String(Field[str]):
 class Dict(Field[typing.Dict]):
     """Field for handling dictionary values."""
 
-    def __init__(self, **kwargs: Unpack[FieldInitKwargs]):
+    def __init__(self, **kwargs: Unpack[FieldKwargs]):
         super().__init__(dict, **kwargs)
 
 
@@ -1017,14 +1022,14 @@ class UUID(Field[uuid.UUID]):
         "json": to_string_serializer,
     }
 
-    def __init__(self, **kwargs: Unpack[FieldInitKwargs]):
+    def __init__(self, **kwargs: Unpack[FieldKwargs]):
         super().__init__(field_type=uuid.UUID, **kwargs)
 
 
 def iterable_python_serializer(
     value: IterType,
     field: "Iterable[IterType, _V]",
-    context: typing.Optional[typing.Dict[str, typing.Any]],
+    context: typing.Optional[Context],
 ) -> IterType:
     """
     Serialize an iterable to a list of serialized values.
@@ -1036,7 +1041,7 @@ def iterable_python_serializer(
     """
     if context and context.get("__depth", None) == 0:
         return value
-    
+
     field_type = field.field_type
     serialized = field_type.__new__(field_type)  # type: ignore
     adder = field.adder
@@ -1082,7 +1087,7 @@ def iterable_python_serializer(
 def iterable_json_serializer(
     value: IterType,
     field: "Iterable[IterType, _V]",
-    context: typing.Optional[typing.Dict[str, typing.Any]],
+    context: typing.Optional[Context],
 ) -> typing.List[typing.Any]:
     """
     Serialize an iterable to JSON compatible format.
@@ -1094,7 +1099,7 @@ def iterable_json_serializer(
     """
     if context and context.get("__depth", None) == 0:
         return list(value)
-    
+
     serialized = []
     child_serializer = field.child.serialize
     child_typestr = field.child.typestr
@@ -1261,7 +1266,7 @@ class Iterable(typing.Generic[IterType, _V], Field[IterType]):
         child: typing.Optional[Field[_V]] = None,
         *,
         size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ) -> NoneType:
         """
         Initialize the field.
@@ -1294,11 +1299,6 @@ class Iterable(typing.Generic[IterType, _V], Field[IterType]):
 
     @property
     def typestr(self) -> str:
-        """
-        Return the string representation of the field type.
-
-        This is useful for debugging and introspection.
-        """
         value = f"{getattr(self.field_type, '__name__', None) or str(self.field_type)}[{self.child.typestr}]"
         if self.strict:
             return f"strict[{value}]"
@@ -1335,7 +1335,7 @@ class List(Iterable[typing.List[_V], _V]):
         child: typing.Optional[Field[_V]] = None,
         *,
         size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ) -> NoneType:
         super().__init__(
             field_type=list,
@@ -1353,7 +1353,7 @@ class Set(Iterable[typing.Set[_V], _V]):
         child: typing.Optional[Field[_V]] = None,
         *,
         size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ) -> NoneType:
         super().__init__(
             field_type=set,
@@ -1371,7 +1371,7 @@ class Tuple(Iterable[typing.Tuple[_V], _V]):
         child: typing.Optional[Field[_V]] = None,
         *,
         size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ) -> NoneType:
         super().__init__(
             field_type=tuple,
@@ -1398,7 +1398,7 @@ class Decimal(Field[decimal.Decimal]):
     def __init__(
         self,
         dp: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ):
         """
         Initialize the field.
@@ -1422,7 +1422,7 @@ class Decimal(Field[decimal.Decimal]):
 
 email_validator = field_validators.pattern(
     r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
-    message="'{name}' must be a valid email address.",
+    message="Value must be a valid email address.",
 )
 
 
@@ -1460,7 +1460,7 @@ class Choice(Field[_T]):
         field_type: typing.Type[_T],
         *,
         choices: None = None,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ) -> None: ...
 
     @typing.overload
@@ -1469,7 +1469,7 @@ class Choice(Field[_T]):
         field_type: typing.Type[_T],
         *,
         choices: typing.Iterable[_T],
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ) -> None: ...
 
     def __init__(
@@ -1477,7 +1477,7 @@ class Choice(Field[_T]):
         field_type: typing.Type[_T],
         *,
         choices: typing.Optional[typing.Iterable[_T]] = None,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ) -> None:
         # Skip `in` check for Enum types since the value will always be an Enum member after deserialization
         if not choices and not issubclass(field_type, enum.Enum):
@@ -1505,26 +1505,39 @@ class Choice(Field[_T]):
 def json_serializer(
     value: typing.Any,
     field: "JSON",
-    context: typing.Optional[typing.Dict[str, typing.Any]],
-) -> typing.Any:
+    context: typing.Optional[Context],
+) -> JSONValue:
     """Serialize JSON data to a JSON-compatible format."""
     # Return value as is, since it is already been made JSON-compatible
     # by the deserializer.
     return value
 
 
-def json_deserializer(value: typing.Any, field: Field) -> typing.Any:
+def json_deserializer(value: typing.Any, field: Field) -> JSONValue:
     """Deserialize JSON data to the specified type."""
     return make_jsonable(value)
 
 
-class JSON(Any):
+class JSON(Field[JSONValue]):
     """Field for handling JSON data."""
 
     default_serializers = {
         "json": json_serializer,
     }
     default_deserializer = json_deserializer
+
+    def __init__(
+        self,
+        **kwargs: Unpack[FieldKwargs],
+    ) -> None:
+        super().__init__(field_type=AnyType, **kwargs)
+
+    @property
+    def typestr(self) -> str:
+        value = "json"
+        if self.strict:
+            return f"strict[{value}]"
+        return value
 
 
 slug_validator = field_validators.pattern(
@@ -1543,7 +1556,7 @@ class Slug(String):
 def bytes_serializer(
     value: bytes,
     field: "Bytes",
-    context: typing.Optional[typing.Dict[str, typing.Any]],
+    context: typing.Optional[Context],
 ) -> str:
     """Serialize bytes to a string."""
     return base64.b64encode(value).decode(encoding=field.encoding)
@@ -1577,7 +1590,7 @@ class Bytes(Field[bytes]):
     default_deserializer = bytes_deserializer
 
     def __init__(
-        self, encoding: str = "utf-8", **kwargs: Unpack[FieldInitKwargs]
+        self, encoding: str = "utf-8", **kwargs: Unpack[FieldKwargs]
     ) -> NoneType:
         """
         Initialize the field.
@@ -1626,7 +1639,7 @@ class Path(Field[pathlib.Path]):
     def __init__(
         self,
         resolve: bool = False,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ):
         super().__init__(field_type=pathlib.Path, **kwargs)
         self.resolve = resolve

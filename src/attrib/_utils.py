@@ -24,7 +24,7 @@ except ImportError:
     except ImportError:
         import json  # Fallback to the standard library json module
 
-from attrib._typing import IterType, Serializer, EMPTY
+from attrib._typing import IterType, JSONDict, JSONList, Serializer, EMPTY, JSONValue
 from attrib.exceptions import SerializationError, DetailedError
 
 
@@ -430,8 +430,8 @@ class SerializerRegistry(typing.NamedTuple):
     :param map: A dictionary mapping format names to their respective serializer functions.
     """
 
-    map: typing.DefaultDict[str, Serializer[typing.Any]] = defaultdict(
-        _unsupported_serializer_factory
+    map: typing.DefaultDict[str, Serializer[typing.Any]] = (
+        defaultdict(_unsupported_serializer_factory)
     )
 
     def __call__(self, fmt: str, *args: typing.Any, **kwargs: typing.Any) -> typing.Any:
@@ -468,17 +468,17 @@ def get_cache_key(value: typing.Any) -> typing.Any:
 ##################################
 
 
-def unjsonable(obj: typing.Any) -> typing.Any:
+def unjsonable(obj: typing.Any) -> typing.NoReturn:
     """Raise a TypeError for JSON unserializable objects."""
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable.")
 
 
-def jsonable_mapping(obj: typing.Mapping) -> typing.Any:
+def jsonable_mapping(obj: typing.Mapping[typing.Any, typing.Any]) -> JSONDict:
     """Attempt to convert a mapping to a JSON-serializable format."""
     return {str(key): make_jsonable(value) for key, value in obj.items()}
 
 
-def jsonable_iterable(obj: typing.Iterable) -> typing.List[typing.Any]:
+def jsonable_iterable(obj: typing.Iterable) -> JSONList:
     """Attempt to convert an iterable to a JSON-serializable format."""
     return [make_jsonable(item) for item in obj]
 
@@ -495,7 +495,7 @@ def jsonable_bytes(obj: bytes) -> str:
     return base64.b64encode(obj).decode("utf-8")
 
 
-def make_jsonable(obj: typing.Any) -> typing.Any:
+def make_jsonable(obj: typing.Any) -> JSONValue:
     """
     Attempt to convert an object to a JSON-serializable format.
 
@@ -506,7 +506,7 @@ def make_jsonable(obj: typing.Any) -> typing.Any:
     """
     if obj is None or obj is EMPTY:
         return None
-    
+
     obj_type = type(obj)
     if isinstance(obj, (str, int, float, bool)):
         return obj
@@ -522,7 +522,7 @@ def make_jsonable(obj: typing.Any) -> typing.Any:
         return encoder(obj)
 
     mro = obj_type.__mro__
-    for i in range(1, len(mro) - 1): # Skip the first one as we already checked it
+    for i in range(1, len(mro) - 1):  # Skip the first one as we already checked it
         cls = mro[i]
         if cls in JSON_ENCODERS:
             encoder = JSON_ENCODERS[cls]
@@ -544,7 +544,7 @@ def make_jsonable(obj: typing.Any) -> typing.Any:
     return json.loads(json.dumps(obj, default=unjsonable))
 
 
-JSON_ENCODERS: typing.Dict[typing.Type, typing.Callable[[typing.Any], typing.Any]] = {
+JSON_ENCODERS: typing.Dict[typing.Type, typing.Callable[[typing.Any], JSONValue]] = {
     list: jsonable_iterable,
     set: jsonable_iterable,
     frozenset: jsonable_iterable,

@@ -1,7 +1,7 @@
 import typing
 from typing_extensions import Unpack
 
-from attrib.descriptors.base import Field, FieldInitKwargs, NonTupleFieldType
+from attrib.descriptors.base import Field, FieldKwargs, NonTupleFieldType
 from attrib.dataclass import Dataclass
 from attrib.serializers import (
     serialize_instance_asdict,
@@ -9,6 +9,13 @@ from attrib.serializers import (
 )
 from attrib._utils import is_iterable
 from attrib.exceptions import FieldError
+from attrib._typing import (
+    JSONDict,
+    JSONNamedDataTuple,
+    DataDict,
+    NamedDataTuple,
+    Context,
+)
 
 
 _Dataclass = typing.TypeVar("_Dataclass", bound=Dataclass)
@@ -18,10 +25,8 @@ _Dataclass_co = typing.TypeVar("_Dataclass_co", bound=Dataclass, covariant=True)
 def nested_json_serializer(
     instance: _Dataclass_co,
     field: Field[_Dataclass_co],
-    context: typing.Optional[typing.Dict[str, typing.Any]] = None,
-) -> typing.Union[
-    typing.Dict[str, typing.Any], typing.Tuple[typing.Tuple[str, typing.Any], ...]
-]:
+    context: typing.Optional[Context] = None,
+) -> typing.Union[JSONDict, JSONNamedDataTuple]:
     """Serialize a nested dataclass instance to a dictionary."""
     if context and context.get("__astuple", False):
         return serialize_instance_asnamedtuple(
@@ -39,10 +44,8 @@ def nested_json_serializer(
 def nested_python_serializer(
     instance: _Dataclass_co,
     field: Field[_Dataclass_co],
-    context: typing.Optional[typing.Dict[str, typing.Any]] = None,
-) -> typing.Union[
-    typing.Dict[str, typing.Any], typing.Tuple[typing.Tuple[str, typing.Any], ...]
-]:
+    context: typing.Optional[Context] = None,
+) -> typing.Union[DataDict, NamedDataTuple]:
     """Serialize a nested dataclass instance to a dictionary."""
     if context and context.get("__astuple", False):
         return serialize_instance_asnamedtuple(
@@ -68,7 +71,7 @@ class Nested(Field[_Dataclass]):
     def __init__(
         self,
         dataclass_: NonTupleFieldType[_Dataclass],
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ) -> None:
         """
         Initialize a nested field.

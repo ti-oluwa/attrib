@@ -7,9 +7,23 @@ import os
 from annotated_types import Ge, MinLen
 from typing_extensions import Annotated
 
-from attrib._typing import EMPTY
+from attrib._typing import (
+    EMPTY,
+    JSONDict,
+    JSONNamedDataTuple,
+    NamedDataTuple,
+    DataDict,
+    Context,
+)
 from attrib.exceptions import DetailedError, SerializationError
 from attrib.dataclass import Dataclass
+
+
+__all__ = [
+    "Option",
+    "Options",
+    "serialize",
+]
 
 SERIALIZATION_STYLE: typing.Union[str, typing.Literal["recursive", "iterative"]] = (
     os.getenv("ATTRIB_SERIALIZATION_STYLE", "iterative").strip().lower()
@@ -78,9 +92,10 @@ def _serialize_instance_asdict_recursive(
     fmt: str,
     instance: Dataclass,
     options: typing.Optional[OptionsMap] = None,
-    context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+    context: typing.Optional[Context] = None,
     fail_fast: bool = False,
-) -> typing.Dict[str, typing.Any]:
+    by_alias: bool = False,
+) -> DataDict:
     """
     Recursively serialize a dataclass instance.
 
@@ -89,7 +104,12 @@ def _serialize_instance_asdict_recursive(
     :param options: Optional serialization options map.
     :param context: Optional context dictionary.
     :param fail_fast: If True, serialization will stop at the first error encountered.
-    :return: Serialized dictionary.
+    ::param by_alias: If True, use field aliases for serialization. Defaults to False.
+        If the field has no serialization alias, it will use the effective name which
+        resolves to the default (deserialization) alias if it was set, or the field
+        name otherwise.
+
+    :return: Dictionary representation of the instance.
     :raises SerializationError: If serialization fails.
     """
     serialized_data = {}
@@ -119,20 +139,23 @@ def _serialize_instance_asdict_recursive(
     error = None
     for name in field_names:
         field = instance.__fields__[name]
-        key = field.effective_name
+        if by_alias:
+            key = field.serialization_alias or field.effective_name
+        else:
+            key = name
 
         try:
             value = field.__get__(instance, owner=instance_type)
             if value is EMPTY:
                 continue
-            
+
             if isinstance(value, Dataclass):
                 current_depth = context["__depth"]
                 if option.depth is not None and current_depth >= option.depth:
                     serialized_data[key] = value
                     continue
-                
-                context["__depth"] += 1 # Next level is one deeper
+
+                context["__depth"] += 1  # Next level is one deeper
                 serialized_data[key] = _serialize_instance_asdict_recursive(
                     fmt=fmt,
                     instance=value,
@@ -176,9 +199,10 @@ def _serialize_instance_asdict_iterative(
     fmt: str,
     instance: Dataclass,
     options: typing.Optional[OptionsMap] = None,
-    context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+    context: typing.Optional[Context] = None,
     fail_fast: bool = False,
-) -> typing.Dict[str, typing.Any]:
+    by_alias: bool = False,
+) -> DataDict:
     """
     Iteratively serialize a dataclass instance.
 
@@ -190,7 +214,12 @@ def _serialize_instance_asdict_iterative(
     :param options: Optional serialization options.
     :param context: Optional context dictionary.
     :param fail_fast: If True, serialization will stop at the first error encountered.
-    :return: Serialized dictionary.
+    :param by_alias: If True, use field aliases for serialization. Defaults to False.
+        If the field has no serialization alias, it will use the effective name which
+        resolves to the default (deserialization) alias if it was set, or the field
+        name otherwise.
+
+    :return: Dictionary representation of the instance.
     :raises SerializationError: If serialization fails.
     """
     serialized_data = {}
@@ -224,7 +253,10 @@ def _serialize_instance_asdict_iterative(
 
         for name in field_names:
             field = current_instance.__fields__[name]
-            key = field.effective_name
+            if by_alias:
+                key = field.serialization_alias or field.effective_name
+            else:
+                key = name
 
             try:
                 value = field.__get__(current_instance, owner=instance_type)
@@ -238,9 +270,7 @@ def _serialize_instance_asdict_iterative(
 
                     nested_output = {}
                     current_output[key] = nested_output
-                    stack.appendleft(
-                        (value, current_depth + 1, nested_output)
-                    )
+                    stack.appendleft((value, current_depth + 1, nested_output))
                 else:
                     current_output[key] = field.serialize(
                         value, fmt=fmt, context=context
@@ -278,9 +308,10 @@ def _serialize_instance_asnamedtuple_recursive(
     fmt: str,
     instance: Dataclass,
     options: typing.Optional[OptionsMap] = None,
-    context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+    context: typing.Optional[Context] = None,
     fail_fast: bool = False,
-) -> typing.Tuple[typing.Tuple[str, typing.Any], ...]:
+    by_alias: bool = False,
+) -> NamedDataTuple:
     """
     Recursively serialize a dataclass instance into a tuple of (name, value) pairs.
 
@@ -289,7 +320,12 @@ def _serialize_instance_asnamedtuple_recursive(
     :param options: Optional serialization options map.
     :param context: Optional context dictionary.
     :param fail_fast: If True, serialization will stop at the first error encountered.
-    :return: Serialized tuple of (name, value) pairs.
+    :param by_alias: If True, use field aliases for serialization. Defaults to False.
+        If the field has no serialization alias, it will use the effective name which
+        resolves to the default (deserialization) alias if it was set, or the field
+        name otherwise.
+
+    :return: Tuple of (name, value) pairs representing the instance.
     :raises SerializationError: If serialization fails.
     """
     instance_type = type(instance)
@@ -323,7 +359,11 @@ def _serialize_instance_asnamedtuple_recursive(
 
     for name in field_names:
         field = instance.__fields__[name]
-        key = field.effective_name
+        if by_alias:
+            key = field.serialization_alias or field.effective_name
+        else:
+            key = name
+
         try:
             value = field.__get__(instance, owner=type(instance))
             if value is EMPTY:
@@ -383,9 +423,10 @@ def _serialize_instance_asnamedtuple_iterative(
     fmt: str,
     instance: Dataclass,
     options: typing.Optional[OptionsMap] = None,
-    context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+    context: typing.Optional[Context] = None,
     fail_fast: bool = False,
-) -> typing.Tuple[typing.Tuple[str, typing.Any], ...]:
+    by_alias: bool = False,
+) -> NamedDataTuple:
     """
     Iteratively serialize a dataclass instance into a tuple of (name, value) pairs.
 
@@ -397,7 +438,11 @@ def _serialize_instance_asnamedtuple_iterative(
     :param options: Optional serialization options.
     :param context: Optional context dictionary.
     :param fail_fast: If True, serialization will stop at the first error encountered.
-    :return: Serialized tuple of (name, value) pairs.
+    :param by_alias: If True, use field aliases for serialization. Defaults to False.
+        If the field has no serialization alias, it will use the effective name which
+        resolves to the default (deserialization) alias if it was set, or the field
+        name otherwise.
+    :return: Tuple of (name, value) pairs representing the instance.
     :raises SerializationError: If serialization fails.
     """
     serialized_items = []
@@ -433,7 +478,10 @@ def _serialize_instance_asnamedtuple_iterative(
 
         for name in field_names:
             field = current_instance.__fields__[name]
-            key = field.effective_name
+            if by_alias:
+                key = field.serialization_alias or field.effective_name
+            else:
+                key = name
 
             try:
                 value = field.__get__(current_instance, owner=instance_type)
@@ -448,7 +496,11 @@ def _serialize_instance_asnamedtuple_iterative(
                     nested_output = []
                     current_output.append((key, nested_output))
                     stack.appendleft(
-                        (value, current_depth + 1, nested_output,)
+                        (
+                            value,
+                            current_depth + 1,
+                            nested_output,
+                        )
                     )
                 else:
                     serialized_value = field.serialize(
@@ -537,11 +589,38 @@ else:
 def serialize(
     obj: Dataclass,
     *,
+    fmt: typing.Literal["python"] = ...,
+    options: typing.Optional[OptionsMap] = ...,
+    context: typing.Optional[Context] = ...,
+    astuple: typing.Literal[False] = ...,
+    fail_fast: bool = ...,
+    by_alias: bool = ...,
+) -> DataDict: ...
+
+
+@typing.overload
+def serialize(
+    obj: Dataclass,
+    *,
+    fmt: typing.Literal["json"] = ...,
+    options: typing.Optional[OptionsMap] = ...,
+    context: typing.Optional[Context] = ...,
+    astuple: typing.Literal[False] = ...,
+    fail_fast: bool = ...,
+    by_alias: bool = ...,
+) -> JSONDict: ...
+
+
+@typing.overload
+def serialize(
+    obj: Dataclass,
+    *,
     fmt: typing.Union[typing.Literal["python", "json"], str] = ...,
     options: typing.Optional[OptionsMap] = ...,
-    context: typing.Optional[typing.Dict[str, typing.Any]] = ...,
+    context: typing.Optional[Context] = ...,
     fail_fast: bool = ...,
-) -> typing.Dict[str, typing.Any]: ...
+    by_alias: bool = ...,
+) -> DataDict: ...
 
 
 @typing.overload
@@ -551,9 +630,36 @@ def serialize(
     fmt: typing.Union[typing.Literal["python", "json"], str] = ...,
     options: typing.Optional[OptionsMap] = ...,
     astuple: typing.Literal[False],
-    context: typing.Optional[typing.Dict[str, typing.Any]] = ...,
+    context: typing.Optional[Context] = ...,
     fail_fast: bool = ...,
-) -> typing.Dict[str, typing.Any]: ...
+    by_alias: bool = ...,
+) -> DataDict: ...
+
+
+@typing.overload
+def serialize(
+    obj: Dataclass,
+    *,
+    fmt: typing.Literal["python"],
+    options: typing.Optional[OptionsMap] = ...,
+    astuple: typing.Literal[True],
+    context: typing.Optional[Context] = ...,
+    fail_fast: bool = ...,
+    by_alias: bool = ...,
+) -> NamedDataTuple: ...
+
+
+@typing.overload
+def serialize(
+    obj: Dataclass,
+    *,
+    fmt: typing.Literal["json"],
+    options: typing.Optional[OptionsMap] = ...,
+    astuple: typing.Literal[True],
+    context: typing.Optional[Context] = ...,
+    fail_fast: bool = ...,
+    by_alias: bool = ...,
+) -> JSONNamedDataTuple: ...
 
 
 @typing.overload
@@ -563,9 +669,10 @@ def serialize(
     fmt: typing.Union[typing.Literal["python", "json"], str] = ...,
     options: typing.Optional[OptionsMap] = ...,
     astuple: typing.Literal[True],
-    context: typing.Optional[typing.Dict[str, typing.Any]] = ...,
+    context: typing.Optional[Context] = ...,
     fail_fast: bool = ...,
-) -> typing.Tuple[typing.Tuple[str, typing.Any], ...]: ...
+    by_alias: bool = ...,
+) -> NamedDataTuple: ...
 
 
 def serialize(
@@ -574,11 +681,10 @@ def serialize(
     fmt: typing.Union[typing.Literal["python", "json"], str] = "python",
     options: typing.Optional[OptionsMap] = None,
     astuple: bool = False,
-    context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+    context: typing.Optional[Context] = None,
     fail_fast: bool = False,
-) -> typing.Union[
-    typing.Dict[str, typing.Any], typing.Tuple[typing.Tuple[str, typing.Any], ...]
-]:
+    by_alias: bool = False,
+) -> typing.Union[DataDict, JSONDict, NamedDataTuple, JSONNamedDataTuple]:
     """
     Build a serialized representation of the dataclass.
 
@@ -594,7 +700,13 @@ def serialize(
     :param fail_fast: If True, serialization will stop at the first error encountered.
         If False, it will collect all errors and raise a `SerializationError` at the end.
 
-    :return: A serialized representation of the dataclass.
+    :param by_alias: If True, use field aliases for serialization. Defaults to False.
+        If the field has no serialization alias, it will use the effective name which
+        resolves to the default (deserialization) alias if it was set, or the field
+        name otherwise.
+
+    :return: A dictionary representation of the instance if `astuple` is False,
+        or a tuple of (name, value) pairs if `astuple` is True.
     :raises SerializationError: If serialization fails.
 
     Example:
@@ -640,6 +752,7 @@ def serialize(
             options=options,
             context=context,
             fail_fast=fail_fast,
+            by_alias=by_alias,
         )
 
     return serialize_instance_asdict(
@@ -648,4 +761,5 @@ def serialize(
         options=options,
         context=context,
         fail_fast=fail_fast,
+        by_alias=by_alias,
     )

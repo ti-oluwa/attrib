@@ -79,7 +79,7 @@ meta_adapter = attrib.TypeAdapter(
 )
 
 
-@attrib.strict(exclude=["created_at", "joined_at"])
+# @attrib.strict(exclude=["created_at", "joined_at"])
 @attrib.partial
 class Student(PersonalInfo, slots=True):
     """Student data class with multiple fields and a list of enrolled courses"""
@@ -92,31 +92,11 @@ class Student(PersonalInfo, slots=True):
             attrib.validators.min_length(1), attrib.validators.max_length(15)
         ),
         fail_fast=True,
+        serialization_alias="enrolled_in",
     )
     gpa = attrib.Float(
         allow_null=True, default=attrib.Factory(random.uniform, a=1.5, b=5.0)
     )
-    # # Use deserializer and serializer built by the TypeAdapter to handle complex metadata
-    # metadata = attrib.Field(
-    #     attrib.AnyType,  # Use AnyType to allow any type of data
-    #     always_coerce=True,  # Ensures that the adapter deserilizer is always used
-    #     deserializer=meta_adapter.deserializer,  # Use deserializer from TypeAdapter if you need input and/or output data to always match adapted type
-    #     # serializers=meta_adapter.serializer.map, # Use serializer from TypeAdapter if you only need output data to match adapted type
-    #     default=lambda: {
-    #         "instagram": ["@ti_oluwa"],
-    #         "twitter": "@ti_oluwa_",
-    #         "facebook": None,
-    #         "linkedin": None,
-    #         "website": "https://example.com",
-    #         "bio": 10,
-    #         "hobbies": ["reading", "coding", "sports"],
-    #         "languages": ["English", "French"],
-    #         "interests": ["AI", "Blockchain", "Web Development"],
-    #         "achievements": ["Dean's List", "Hackathon Winner"],
-    #         "certifications": ["Python Programming", "Data Science"],
-    #     },
-    #     allow_null=True,
-    # )
     joined_at = attrib.DateTime(allow_null=True, tz="Africa/Lagos")
     created_at = attrib.DateTime(default=datetime.now, tz="Africa/Lagos")
 
@@ -137,27 +117,29 @@ def load_data(
 
 def example():
     """Run example usage of the data classes"""
-    years = load_data(year_data, AcademicYear)
-    courses = load_data(course_data, Course)
-    students = load_data(student_data, Student)
+    with attrib.deserialization_context(fail_fast=False):
+        years = load_data(year_data, AcademicYear)
+        courses = load_data(course_data, Course)
+        students = load_data(student_data, Student)
 
     for student in students:
         attrib.serialize(
             student,
-            fmt="python",
+            fmt="json",
             # options=attrib.Options(
             #     attrib.Option(Course, include={"year"}, depth=1, strict=True),
             #     attrib.Option(AcademicYear, exclude={"term", "id"}, depth=0),
             #     attrib.Option(depth=1),
             # ),
-            astuple=False,
+            # astuple=False,
+            by_alias=True,
         )
 
     for course in courses:
-        attrib.serialize(course, fmt="python", astuple=False)
+        attrib.serialize(course, fmt="json", astuple=False)
 
     for year in years:
-        attrib.serialize(year, fmt="python", astuple=False)
+        attrib.serialize(year, fmt="json", astuple=False)
 
     # import pickle
 

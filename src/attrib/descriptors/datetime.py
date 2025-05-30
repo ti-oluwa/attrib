@@ -8,7 +8,7 @@ except ImportError:
     from backports import zoneinfo  # type: ignore[import]
 
 
-from attrib.descriptors.base import Field, FieldInitKwargs, to_string_serializer
+from attrib.descriptors.base import Field, FieldKwargs, to_string_serializer
 from attrib._utils import iso_parse, parse_duration, _LRUCache
 from attrib.exceptions import DeserializationError
 
@@ -45,7 +45,7 @@ class Duration(Field[datetime.timedelta]):
     }
     default_deserializer = timedelta_deserializer
 
-    def __init__(self, **kwargs: Unpack[FieldInitKwargs]):
+    def __init__(self, **kwargs: Unpack[FieldKwargs]):
         super().__init__(field_type=datetime.timedelta, **kwargs)
 
 
@@ -67,7 +67,7 @@ class TimeZone(Field[datetime.tzinfo]):
     }
     default_deserializer = timezone_deserializer
 
-    def __init__(self, **kwargs: Unpack[FieldInitKwargs]):
+    def __init__(self, **kwargs: Unpack[FieldKwargs]):
         super().__init__(field_type=datetime.tzinfo, **kwargs)
 
 
@@ -101,7 +101,7 @@ class DateTimeBase(Field[DatetimeType]):
         *,
         input_formats: typing.Optional[typing.Iterable[str]] = None,
         output_format: typing.Optional[str] = None,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ):
         """
         Initialize the field.
@@ -159,7 +159,7 @@ class Date(DateTimeBase[datetime.date]):
         *,
         input_formats: typing.Optional[typing.Iterable[str]] = None,
         output_format: typing.Optional[str] = None,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ):
         super().__init__(
             field_type=datetime.date,
@@ -180,7 +180,7 @@ class Time(DateTimeBase[datetime.time]):
         *,
         input_formats: typing.Optional[typing.Iterable[str]] = None,
         output_format: typing.Optional[str] = None,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ):
         super().__init__(
             field_type=datetime.time,
@@ -209,7 +209,7 @@ class DateTime(DateTimeBase[datetime.datetime]):
         tz: typing.Optional[typing.Union[datetime.tzinfo, str]] = None,
         input_formats: typing.Optional[typing.Iterable[str]] = None,
         output_format: typing.Optional[str] = None,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ):
         """
         Initialize the field.

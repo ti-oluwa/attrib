@@ -3,7 +3,7 @@ import ipaddress
 from typing_extensions import Unpack
 from urllib.parse import urlparse, ParseResult as Url, ParseResultBytes as UrlBytes
 
-from attrib.descriptors.base import Field, FieldInitKwargs, to_string_serializer
+from attrib.descriptors.base import Field, FieldKwargs, to_string_serializer
 from attrib.exceptions import ValidationError
 
 
@@ -33,7 +33,7 @@ class URL(Field[typing.Union[Url, UrlBytes]]):
     }
     default_deserializer = url_deserializer
 
-    def __init__(self, **kwargs: Unpack[FieldInitKwargs]) -> None:
+    def __init__(self, **kwargs: Unpack[FieldKwargs]) -> None:
         super().__init__(field_type=(Url, UrlBytes), **kwargs)
 
 
@@ -56,7 +56,7 @@ class IPAddress(Field[typing.Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 
     def __init__(
         self,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ):
         super().__init__(
             field_type=(

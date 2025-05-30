@@ -8,14 +8,14 @@ from collections import deque
 from annotated_types import MinLen
 from typing_extensions import Annotated, Self
 
-from attrib._typing import SupportsRichComparison, Validator, TypeAdapter
+from attrib._typing import P, SupportsRichComparison, Validator, TypeAdapter
 from attrib._utils import is_iterable, is_mapping
 from attrib.exceptions import ValidationError
 
 
-Bound = SupportsRichComparison
-Comparable = SupportsRichComparison
-Countable = typing.Sized
+Bound: typing.TypeAlias = SupportsRichComparison
+Comparable: typing.TypeAlias = SupportsRichComparison
+Countable: typing.TypeAlias = typing.Sized
 
 
 @typing.final
@@ -210,7 +210,7 @@ class FieldValidator(typing.NamedTuple):
                 instance,
                 fail_fast=fail_fast,
             )
-        except (ValueError, TypeError) as exc:
+        except (ValueError, ValidationError) as exc:
             raise ValidationError.from_exception(
                 exc,
                 message=msg,

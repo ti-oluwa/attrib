@@ -49,6 +49,7 @@ class ErrorDetail(typing.NamedTuple):
     input_type: typing.Optional[typing.Any] = None
     code: typing.Optional[str] = None
     context: typing.Optional[typing.Dict[str, typing.Any]] = None
+    origin: typing.Optional[Exception] = None
 
     def as_string(self) -> str:
         """Return a string representation of the error detail."""
@@ -79,6 +80,8 @@ class ErrorDetail(typing.NamedTuple):
             info.append(f"expected_type={type_name!r}")
         if self.code is not None:
             info.append(f"code={self.code!r}")
+        if self.origin is not None:
+            info.append(f"origin={type(self.origin).__name__}")
         return "".join(text) + "[" + ", ".join(info) + "]"
 
     def as_json(self) -> typing.Dict[str, typing.Any]:
@@ -115,6 +118,7 @@ class DetailedError(AttribException):
         location: typing.Optional[typing.Iterable[typing.Any]] = None,
         code: typing.Optional[str] = None,
         context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+        origin: typing.Optional[Exception] = None,
     ) -> None:
         """
         Initialize a `DetailedError`.
@@ -140,6 +144,7 @@ class DetailedError(AttribException):
             location=location,
             code=code or "error",
             context=context,
+            origin=origin,
         )
 
     def add_detail(
@@ -152,6 +157,7 @@ class DetailedError(AttribException):
         input_type: typing.Optional[typing.Any] = None,
         code: typing.Optional[str] = None,
         context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+        origin: typing.Optional[Exception] = None,
     ) -> None:
         """
         Add a new error detail directly to the error list.
@@ -177,6 +183,7 @@ class DetailedError(AttribException):
             location=loc,
             code=code,
             context=context,
+            origin=origin,
         )
         self.error_list.append(detail)
 
@@ -225,6 +232,7 @@ class DetailedError(AttribException):
             location=location,
             code=code or ERROR_CODE_MAPPING.get(type(exception), None),
             context=context,
+            origin=exception,
         )
         return new
 
@@ -251,6 +259,7 @@ class DetailedError(AttribException):
                 location=loc,
                 code=detail.code,
                 context=detail.context,
+                origin=detail.origin or other,
             )
 
     def add(
@@ -453,12 +462,40 @@ class DeserializationError(DetailedError):
         )
 
 
+class InvalidTypeError(ValidationError):
+    """Validation error raised when an invalid unexpected type is encountered."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        name: typing.Optional[str] = None,
+        parent_name: typing.Optional[str] = None,
+        expected_type: typing.Optional[typing.Any] = None,
+        input_type: typing.Optional[typing.Any] = None,
+        location: typing.Optional[typing.Iterable[typing.Any]] = None,
+        code: typing.Optional[str] = None,
+        context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            name=name,
+            parent_name=parent_name,
+            expected_type=expected_type,
+            input_type=input_type,
+            location=location,
+            code=code or "invalid_type",
+            context=context,
+        )
+
+
 ERROR_CODE_MAPPING = {
     TypeError: "invalid_type",
     ValueError: "invalid_value",
     ValidationError: "validation_failed",
     SerializationError: "serialization_failed",
     DeserializationError: "coercion_failed",
+    InvalidTypeError: "invalid_type",
 }
 
 
@@ -466,4 +503,3 @@ class ConfigurationError(AttribException):
     """Raised for configuration-related errors."""
 
     pass
-

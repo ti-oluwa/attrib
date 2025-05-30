@@ -1,4 +1,6 @@
-from attrib.descriptors.base import String
+from typing_extensions import Unpack
+
+from attrib.descriptors.base import FieldKwargs, String
 from attrib import validators
 
 
@@ -35,21 +37,12 @@ class RGBColor(String):
     # default_max_length = 38
     default_validator = rgb_color_validator
 
-    def __init__(
-        self,
-        *,
-        min_length=None,
-        max_length=None,
-        trim_whitespaces=True,
-        **kwargs,
-    ):
-        # Field enforces lowercase for RGB color values
-        kwargs["to_lowercase"] = True
-        kwargs["to_uppercase"] = False
+    def __init__(self, **kwargs: Unpack[FieldKwargs]) -> None:
+        # Enforces lowercase for RGB color values
         super().__init__(
-            min_length=min_length,
-            max_length=max_length,
-            trim_whitespaces=trim_whitespaces,
+            trim_whitespaces=True,
+            to_lowercase=True,
+            to_uppercase=False,
             **kwargs,
         )
 
@@ -66,20 +59,11 @@ class HSLColor(String):
     # default_max_length = 40
     default_validator = hsl_color_validator
 
-    def __init__(
-        self,
-        *,
-        min_length=None,
-        max_length=None,
-        trim_whitespaces=True,
-        **kwargs,
-    ):
-        # Field enforces lowercase for HSL color values
-        kwargs["to_lowercase"] = True
-        kwargs["to_uppercase"] = False
+    def __init__(self, **kwargs: Unpack[FieldKwargs]) -> None:
+        # Enforces lowercase for HSL color values
         super().__init__(
-            min_length=min_length,
-            max_length=max_length,
-            trim_whitespaces=trim_whitespaces,
+            trim_whitespaces=True,
+            to_lowercase=True,
+            to_uppercase=False,
             **kwargs,
         )

@@ -1,19 +1,32 @@
 """Data description classes"""
 
 from collections.abc import Sequence
+from contextvars import ContextVar
 import typing
 from functools import cache
 from types import MappingProxyType
 from typing_extensions import Unpack
+from contextlib import contextmanager
 
 from attrib.descriptors.base import Field, Value
 from attrib.exceptions import (
     FrozenInstanceError,
     DeserializationError,
-    ValidationError,
     ConfigurationError,
+    InvalidTypeError,
+    ValidationError,
 )
-from attrib._typing import RawData
+from attrib._typing import DataDict, RawData
+
+
+__all__ = [
+    "Dataclass",
+    "get_fields",
+    "load",
+    "deserialize",
+    "deserialization_context",
+    "get_field",
+]
 
 
 def get_fields(cls: typing.Type) -> typing.Dict[str, Field]:
@@ -231,7 +244,7 @@ class ConfigSchema(typing.TypedDict, total=False):
 
     frozen: bool
     """If True, the dataclass is immutable after creation."""
-    slots: typing.Union[typing.Tuple[str], bool]
+    slots: typing.Union[typing.Tuple[StrType], bool]
     """If True, use __slots__ for instance attribute storage.
         If a tuple, use as additional slots.
         If False, use __dict__ for instance attribute storage."""
@@ -264,7 +277,7 @@ class Config(typing.NamedTuple):
 
     frozen: bool = False
     """If True, the dataclass is immutable after creation."""
-    slots: typing.Union[typing.Tuple[str], bool] = False
+    slots: typing.Union[typing.Tuple[StrType], bool] = False
     """If True, use __slots__ for instance attribute storage.
         If a tuple, use as additional slots.
         If False, use __dict__ for instance attribute storage."""
@@ -293,7 +306,7 @@ class Config(typing.NamedTuple):
 
 def build_config(
     class_config: typing.Optional[Config] = None,
-    bases: typing.Optional[typing.Tuple[typing.Type]] = None,
+    bases: typing.Optional[typing.Tuple[typing.Type[typing.Any]]] = None,
     **meta_config: Unpack[ConfigSchema],
 ):
     """
@@ -577,7 +590,7 @@ class Dataclass(metaclass=DataclassMeta):
         """
         object.__setattr__(self, "_initializing", True)
         combined = {**dict(data or {}), **kwargs}  # type: ignore[assignment]
-        load(self, combined, kwargs.pop("__fail_fast", False))
+        load(self, data=combined)
         object.__setattr__(self, "_initializing", False)
 
     def __init_subclass__(cls) -> None:
@@ -589,18 +602,75 @@ class Dataclass(metaclass=DataclassMeta):
 
 DataclassTco = typing.TypeVar("DataclassTco", bound=Dataclass, covariant=True)
 
+_fail_fast: ContextVar[bool] = ContextVar("fail_fast", default=False)
+"""
+`fail_fast` context variable to control whether to stop on the first error encountered during loading
+data onto dataclass instances.
+"""
+_ignore_extras: ContextVar[bool] = ContextVar("ignore_extras", default=False)
+"""
+`ignore_extras` context variable to control whether to ignore extra fields not defined in the dataclass
+"""
+
+
+@contextmanager
+def deserialization_context(
+    fail_fast: typing.Optional[bool] = None, ignore_extras: typing.Optional[bool] = None
+) -> typing.Generator[None, None, None]:
+    """
+    Deserialization context manager.
+
+    All deserialization occurring within this context will use the defined settings.
+
+    :param fail_fast: If True, stop on the first error encountered during loading.
+    :param ignore_extras: If True, ignore extra fields not defined in the dataclass
+
+    Leaving any of this parameters as None will leave the current context variable value unchanged.
+    """
+    if fail_fast is not None:
+        fail_fast_token = _fail_fast.set(fail_fast)
+    else:
+        fail_fast_token = None
+    if ignore_extras is not None:
+        ignore_extras_token = _ignore_extras.set(ignore_extras)
+    else:
+        ignore_extras_token = None
+    try:
+        yield
+    finally:
+        if fail_fast_token is not None:
+            _fail_fast.reset(fail_fast_token)
+        if ignore_extras_token is not None:
+            _ignore_extras.reset(ignore_extras_token)
+
 
 def load(
     instance: DataclassTco,
-    data: typing.Mapping[str, typing.Any],
-    fail_fast: bool = False,
+    data: DataDict,
 ) -> DataclassTco:
     """
     Load raw data unto the dataclass instance.
 
     :param data: Mapping of raw data to initialize the dataclass instance with.
+    :param ignore_extras: If True, ignore extra fields not defined in the dataclass.
+        Else, raise a DeserializationError if extra fields are found.
+    :param fail_fast: If True, stop on the first error encountered during loading.
+    :raises DeserializationError: If there are errors during deserialization.
     :return: This same instance with the raw data loaded.
     """
+    ignore_extras = _ignore_extras.get()
+    if not ignore_extras:
+        extra_keys = set(data) - set(instance.__fields__)
+        if extra_keys:
+            raise DeserializationError(
+                f"Unknown fields found: {', '.join(extra_keys)}",
+                parent_name=type(instance).__name__,
+                input_type="dict",
+                expected_type=type(instance).__name__,
+                code="unknown_fields",
+            )
+
+    fail_fast = _fail_fast.get()
     error = None
     for name, field in instance.__fields__.items():
         key = instance.base_to_effective_name_map[name]
@@ -636,7 +706,6 @@ def load(
 def _from_attributes(
     dataclass_: typing.Type[DataclassTco],
     obj: typing.Any,
-    fail_fast: bool = False,
 ) -> DataclassTco:
     """
     Convert an object to a dataclass instance by loading fields using
@@ -651,6 +720,7 @@ def _from_attributes(
         raise ConfigurationError(
             f"Cannot convert {obj!r} to a frozen dataclass. Use the constructor instead."
         )
+    fail_fast = _fail_fast.get()
     instance = dataclass_()
     error = None
     for name, field in dataclass_.__fields__.items():
@@ -687,10 +757,11 @@ def _from_attributes(
 
 def deserialize(
     dataclass_: typing.Type[DataclassTco],
-    obj: typing.Any,
+    obj: typing.Union[RawData, typing.Any],
     *,
     from_attributes: bool = False,
-    fail_fast: bool = False,
+    fail_fast: typing.Optional[bool] = None,
+    ignore_extras: typing.Optional[bool] = None,
 ) -> DataclassTco:
     """
     Deserialize an object to a dataclass instance.
@@ -699,6 +770,7 @@ def deserialize(
     :param dataclass_: The dataclass type to convert to.
     :param from_attributes: If True, load fields using the object's attributes.
     :param fail_fast: If True, stop on the first error encountered during deserialization.
+    :param ignore_extras: If True, ignore extra fields not defined in the dataclass.
     :return: The dataclass instance.
     """
     if obj is None:
@@ -709,9 +781,11 @@ def deserialize(
             expected_type=dataclass_.__name__,
             code="invalid_value",
         )
-    if from_attributes:
-        return _from_attributes(dataclass_, obj)
-    return dataclass_(obj, __fail_fast=fail_fast)
+
+    with deserialization_context(fail_fast=fail_fast, ignore_extras=ignore_extras):
+        if from_attributes:
+            return _from_attributes(dataclass_, obj)
+        return dataclass_(obj)
 
 
 def get_field(

@@ -2,6 +2,7 @@ import copy
 from types import MappingProxyType
 import typing
 
+from attrib._typing import EMPTY
 from attrib.dataclass import DataclassTco
 from attrib.exceptions import ConfigurationError
 
@@ -69,8 +70,9 @@ def partial(
         partial_fields = {}
         for field_name in field_names:
             field = copy.copy(dataclass_.__fields__[field_name])
+            if field.default is EMPTY:
+                field.default = None
             field.required = False
-            field.default = None
             field.allow_null = True
             partial_fields[field_name] = field
 
@@ -111,6 +113,13 @@ def strict(
     typing.Type[DataclassTco],
     typing.Callable[[typing.Type[DataclassTco]], typing.Type[DataclassTco]],
 ]:
+    """
+    Create a strict dataclass with all or specific fields made strict.
+
+    :param dataclass_: The dataclass which fields should be made strict.
+    :param include: Iterable of fields to include as strict.
+    :param exclude: Iterable of fields to exclude from being strict.
+    """
     def decorator(
         dataclass_: typing.Type[DataclassTco],
     ) -> typing.Type[DataclassTco]:

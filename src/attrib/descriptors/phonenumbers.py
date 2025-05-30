@@ -1,7 +1,7 @@
 import typing
 from typing_extensions import Unpack
 
-from attrib.descriptors.base import Field, String, FieldInitKwargs
+from attrib.descriptors.base import Field, String, FieldKwargs
 from phonenumbers import (  # type: ignore[import]
     PhoneNumber as PhoneNumberType,
     parse as parse_number,
@@ -37,7 +37,7 @@ class PhoneNumber(Field[PhoneNumberType]):
     def __init__(
         self,
         output_format: typing.Optional[int] = None,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ):
         """
         Initialize the field.
@@ -77,7 +77,7 @@ class PhoneNumberString(String):
     def __init__(
         self,
         output_format: typing.Optional[int] = None,
-        **kwargs: Unpack[FieldInitKwargs],
+        **kwargs: Unpack[FieldKwargs],
     ):
         """
         Initialize the field.

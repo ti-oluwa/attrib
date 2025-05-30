@@ -12,8 +12,19 @@ RawData: typing.TypeAlias = typing.Union[
     typing.Sequence[typing.Tuple[bytes, bytes]],
 ]
 IterType = typing.TypeVar("IterType", bound=typing.Iterable[typing.Any])
+DataDict: typing.TypeAlias = typing.Dict[str, typing.Any]
+NamedDataTuple: typing.TypeAlias = typing.Tuple[typing.Tuple[str, typing.Any], ...]
 
+JSONValue: typing.TypeAlias = typing.Union[
+    int, float, str, bool, None, "JSONDict", "JSONList"
+]
+JSONDict: typing.TypeAlias = typing.Dict[str, JSONValue]
+JSONList: typing.TypeAlias = typing.List["JSONValue"]
+JSONNamedDataTuple: typing.TypeAlias = typing.Tuple[typing.Tuple[str, JSONValue], ...]
 
+Context: typing.TypeAlias = typing.Dict[str, typing.Any]
+
+    
 @typing.runtime_checkable
 class SupportsRichComparison(typing.Protocol):
     def __lt__(self, other: typing.Any, /) -> bool: ...
