@@ -31,7 +31,7 @@ from attrib._utils import (
     is_iterable_type,
     is_generic_type,
     make_jsonable,
-    _get_itertype_adder,
+    get_itertype_adder,
     resolve_type,
     SerializerRegistry,
 )
@@ -61,6 +61,7 @@ __all__ = [
     "Float",
     "Integer",
     "Dict",
+    "Iterable",
     "List",
     "Set",
     "Tuple",
@@ -1043,9 +1044,6 @@ def iterable_python_serializer(
     :param context: Additional context for serialization.
     :return: The serialized iterable.
     """
-    if context and context.get("__depth", None) == 0:
-        return value
-
     field_type = field.field_type
     serialized = field_type.__new__(field_type)  # type: ignore
     adder = field.adder
@@ -1099,9 +1097,6 @@ def iterable_json_serializer(
     :param context: Additional context for serialization.
     :return: The serialized iterable.
     """
-    if context and context.get("__depth", None) == 0:
-        return list(value)
-
     serialized = []
     child_serializer = field.child.serialize
     child_typestr = field.child.typestr
@@ -1288,7 +1283,7 @@ class Iterable(typing.Generic[IterType, V], Field[IterType]):
                 kwargs["validator"] = field_validators.pipe(*validators)
         super().__init__(field_type=field_type, **kwargs)
         self.child = child or Any()
-        self.adder = _get_itertype_adder(field_type)
+        self.adder = get_itertype_adder(field_type)
 
     @property
     def typestr(self) -> str:

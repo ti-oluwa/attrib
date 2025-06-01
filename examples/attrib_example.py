@@ -32,7 +32,7 @@ class Term(enum.Enum):
     THIRD = "Third"
 
 
-class AcademicYear(attrib.Dataclass, slots=True):
+class AcademicYear(attrib.Dataclass, slots=True, repr=True):
     """Academic year data class"""
 
     id = attrib.Integer(required=True)
@@ -112,17 +112,15 @@ def example():
         
 
     for student in students:
-        attrib.serialize(
+        log(attrib.serialize(
             student,
             fmt="json",
-            # options=attrib.Options(
-            #     attrib.Option(Course, include={"year"}, depth=1, strict=True),
-            #     attrib.Option(AcademicYear, exclude={"term", "id"}, depth=0),
-            #     attrib.Option(depth=1),
-            # ),
-            # astuple=True,
-            # by_alias=True,
-        )
+            options=attrib.Options(
+                attrib.Option(Course, include={"year"}, depth=0, strict=True),
+                attrib.Option(AcademicYear, exclude={"term", "id"}, depth=0),
+                attrib.Option(Student, depth=1),
+            ),
+        ))
 
     for course in courses:
         attrib.serialize(course, fmt="json", astuple=False)

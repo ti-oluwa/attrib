@@ -1,6 +1,7 @@
 """Dataclass serialization module."""
 
 from collections import deque
+from collections.abc import Sequence
 import functools
 import typing
 from annotated_types import Ge, MinLen
@@ -160,6 +161,14 @@ def _serialize_instance_asdict(
                     serialized_output[key] = nested_output
                     stack.appendleft((value, name, current_depth + 1, nested_output))
                 else:
+                    if (
+                        isinstance(value, (Sequence, set))
+                        and option.depth is not None
+                        and current_depth >= option.depth
+                    ):
+                        serialized_output[key] = value
+                        continue
+
                     serialized_output[key] = field.serialize(
                         value, fmt=fmt, context=context
                     )
@@ -271,6 +280,14 @@ def _serialize_instance_asnamedtuple(
                         )
                     )
                 else:
+                    if (
+                        isinstance(value, (Sequence, set))
+                        and option.depth is not None
+                        and current_depth >= option.depth
+                    ):
+                        serialized_output.append((key, value))
+                        continue
+
                     serialized_value = field.serialize(
                         value,
                         fmt=fmt,

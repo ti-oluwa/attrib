@@ -144,13 +144,13 @@ class TypeAdapter(typing.Generic[T]):
         """
         Build the adapter with the provided parameters.
 
-        *This method is idempotent. Building the adapter multiple times*
-        *will not change its state after the first build.*
+        ***This method is idempotent. Building the adapter multiple times***
+        ***will not change its state after the first build.***
 
-        :param depth: Defines how many type-levels deep the necessary deserializers
-            and validators should be built. This is especially useful for nested types or
-            self-referencing types that may cause infinite recursion of deserializer and validator building.
-            An example is a typed dict that contains a field that is a list of instances of the same typed dict.
+        :param depth: Defines how many type-levels deep the necessary mechanisms should be built. 
+            This is especially necessary for nested types or self-referencing types that may cause 
+            infinite recursion of deserializer and validator building. An example is a typed dict 
+            that contains a field that is a list of instances of the same typed dict.
 
         :param globalns: Global namespace for resolving type references. It is advisable to always provide this
             parameter. If it is not provided, the adapter will try to resolve the type from the current frame's
@@ -183,7 +183,7 @@ class TypeAdapter(typing.Generic[T]):
                 len(self.serializer.map) < 2
             ):  # Should contain at least "python" and "json" serializers
                 self.serializer = build_generic_type_serializer_registry(
-                    self.adapted, serializers=self.serializer.map
+                    self.adapted, serializers=self.serializer.map, depth=depth
                 )
 
             if self.validator is None:
@@ -203,7 +203,9 @@ class TypeAdapter(typing.Generic[T]):
             self.serializer = (
                 build_dataclass_serializer_registry(serializers)
                 if issubclass(self.adapted, Dataclass)
-                else build_non_generic_type_serializer_registry(serializers)
+                else build_non_generic_type_serializer_registry(
+                    self.adapted, serializers=serializers, depth=depth
+                )
             )
 
         if self.validator is None:
@@ -328,217 +330,77 @@ class TypeAdapter(typing.Generic[T]):
         return f"{self.__class__.__name__}(name={self.name or 'unset'}, adapted={self.adapted})"
 
 
-def build_non_generic_type_serializer_registry(
-    serializers: typing.Optional[
-        typing.Mapping[
-            str,
-            Serializer[typing.Any],
-        ]
-    ] = None,
-) -> SerializerRegistry:
-    """
-    Build a serializer registry for non-generic types.
-
-    :param serializers: A mapping of serialization formats to their respective serializer functions
-    :return: A SerializerRegistry with the provided serializers
-    """
-    serializers_map = {
-        **(serializers or {}),
-    }
-    if "json" not in serializers_map:
-        serializers_map["json"] = _non_generic_type_json_serializer
-    if "python" not in serializers_map:
-        serializers_map["python"] = _non_generic_type_python_serializer
-    return SerializerRegistry(
-        defaultdict(
-            _unsupported_serializer_factory,
-            serializers_map,
-        )
-    )
+BUILTIN_TYPES = {
+    int,
+    float,
+    bool,
+    set,
+    list,
+    tuple,
+    dict,
+    NoneType,
+    str,
+    bytes,
+    complex,
+    bytearray,
+    frozenset,
+    memoryview,
+}
 
 
-@functools.lru_cache(maxsize=128)
-def build_non_generic_type_deserializer(
-    type_: typing.Type[T],
-    depth: typing.Optional[int] = None,
-) -> Deserializer[typing.Any]:
-    """
-    Build a deserializer for a non-generic type.
-
-    :param type_: The target non-generic type to build deserializer for.
-    :param depth: The depth for nested deserialization (if applicable)
-    :param strict: Whether to enforce strict type checking and not attempt type coercion.
-    :return: A function that attempts to coerce the value to the target type
-    """
-    if is_typed_dict(type_):
-        return build_typeddict_deserializer(type_, depth=depth)
-
-    if is_named_tuple(type_):
-        return build_named_tuple_deserializer(type_, depth=depth)
-
-    if issubclass(type_, Dataclass):
-
-        def to_dataclass(
-            value: typing.Any, *args: typing.Any, **kwargs: typing.Any
-        ) -> T:
-            return _dataclass_deserializer(
-                type_,  # type: ignore[return-value]
-                value,
-                *args,
-                **kwargs,
-            )
-
-        to_type = to_dataclass
-    elif issubclass(type_, NoneType):
-
-        def to_none_type(
-            value: typing.Any, *args: typing.Any, **kwargs: typing.Any
-        ) -> T:
-            if value is not None:
-                raise DeserializationError(
-                    "Cannot deserialize value. Expected value to be None",
-                    input_type=type(value),
-                    expected_type="null",
-                )
-            return value
-
-        to_type = to_none_type
-    else:
-
-        def to_any_type(
-            value: typing.Any, *args: typing.Any, **kwargs: typing.Any
-        ) -> T:
-            if isinstance(value, type_):
-                return value
-            return type_(value)  # type: ignore[call-arg]
-
-        to_type = to_any_type
-
-    allow_any_type = type_ is typing.Any
-    type_ = typing.cast(typing.Type[T], type_)
-
-    def deserializer(
-        value: typing.Any,
-        *args: typing.Any,
-        **kwargs: typing.Any,
-    ) -> T:
-        """
-        A deserializer function that attempts to coerce the value to the target type.
-
-        :param value: The value to deserialize
-        :param args: Additional arguments for deserialization
-        :param kwargs: Additional keyword arguments for deserialization
-        """
-        if allow_any_type or isinstance(value, type_):
-            return value
-
-        if kwargs.pop("strict", False):
-            raise DeserializationError(
-                "Cannot deserialize value without coercion. Set strict=False to allow coercion.",
-                input_type=type(value),
-                expected_type=type_,
-            )
-
-        try:
-            return to_type(value, *args, **kwargs)
-        except (ValueError, TypeError) as exc:
-            raise DeserializationError.from_exception(
-                exc,
-                input_type=type(value),
-                expected_type=type_,
-            ) from exc
-
-    deserializer.__name__ = f"{type_.__name__}_deserializer"
-    return deserializer
-
-
-def build_non_generic_type_validator(
-    target: typing.Type[T],
+def _dataclass_deserializer(
+    target: typing.Type[DataclassTco],
     /,
-    depth: typing.Optional[int] = None,
-) -> Validator[typing.Any]:
+    value: typing.Any,
+    *_: typing.Any,
+    **kwargs: typing.Any,
+) -> DataclassTco:
     """
-    Build a validator for a non-generic type.
+    A deserializer function that attempts to coerce the value to the target type.
 
-    :param target: The target non-generic type.
-    :param depth: The depth for nested build operations (if applicable)
-    :return: A function that attempts to validate the value against the target type
+    :param value: The value to deserialize
+    :param args: Additional arguments for deserialization
+    :param kwargs: Additional keyword arguments for deserialization
     """
-    if is_typed_dict(target):
-        return build_typeddict_validator(target, depth=depth)
-    if is_named_tuple(target):
-        return build_named_tuple_validator(target, depth=depth)
-    return instance_of(target)
+    if isinstance(value, target):
+        return value
+
+    if type(value) not in BUILTIN_TYPES:
+        kwargs.setdefault("from_attributes", True)
+    return deserialize(target, value, **kwargs)
 
 
-def build_dataclass_serializer_registry(
-    serializers: typing.Optional[typing.Mapping[str, Serializer[typing.Any]]] = None,
-) -> SerializerRegistry:
+def _non_generic_type_json_serializer(
+    value: typing.Any, *_: typing.Any, **kwargs: typing.Any
+) -> JSONValue:
     """
-    Build a serializer registry for dataclass types.
+    Serialize a non-generic type.
 
-    :param serializers: A mapping of serialization formats to their respective serializer functions
-    :return: A SerializerRegistry with the provided serializers
+    :param value: The value to serialize
+    :return: The serialized value
     """
-    serializers_map = {
-        **(serializers or {}),
-    }
-    if "json" not in serializers_map:
-        serializers_map["json"] = lambda value, *_, **kwargs: serialize(
-            value,
-            fmt="json",
-            **kwargs,
-        )
-    if "python" not in serializers_map:
-        serializers_map["python"] = lambda value, *_, **kwargs: serialize(
-            value,
-            fmt="python",
-            **kwargs,
-        )
-    return SerializerRegistry(
-        defaultdict(
-            _unsupported_serializer_factory,
-            serializers_map,
-        )
-    )
+    if isinstance(value, Dataclass):
+        return serialize(value, fmt="json", **kwargs)
+    return make_jsonable(value)
 
 
-def build_generic_type_serializer_registry(
-    target: typing.Union[typing.Type[T], T],
-    /,
-    serializers: typing.Optional[
-        typing.Mapping[
-            str,
-            Serializer[typing.Any],
-        ]
-    ] = None,
-) -> SerializerRegistry:
+def _non_generic_type_python_serializer(
+    value: typing.Any, *_: typing.Any, **kwargs: typing.Any
+) -> typing.Any:
     """
-    Build a serializer registry for generic types.
+    Serialize a non-generic type to Python.
 
-    :param target: The target generic type.
-    :param serializers: A mapping of serialization formats to their respective serializer functions
+    :param value: The value to serialize
+    :return: The serialized value
     """
-    serializers_map = {
-        **(serializers or {}),
-    }
-    if "json" not in serializers_map:
-        serializers_map["json"] = build_generic_type_serializer(
-            target,
-            fmt="json",
-        )
-    if "python" not in serializers_map:
-        serializers_map["python"] = build_generic_type_serializer(
-            target,
-            fmt="python",
-        )
-    return SerializerRegistry(
-        defaultdict(
-            _unsupported_serializer_factory,
-            serializers_map,
-        )
-    )
+    if isinstance(value, Dataclass):
+        return serialize(value, fmt="python", **kwargs)
+    return value
 
+
+#########################
+# SPECIAL-TYPE BUILDERS #
+#########################
 
 TypeDictType = typing.TypeVar("TypeDictType", bound=typing.Mapping[str, typing.Any])
 NamedTupleType = typing.TypeVar("NamedTupleType", bound=typing.NamedTuple)
@@ -818,6 +680,218 @@ def build_named_tuple_validator(
 
 
 @functools.lru_cache(maxsize=128)
+def build_named_tuple_serializer(
+    target: typing.Type[NamedTupleType],
+    /,
+    fmt: typing.Literal["python", "json"] = "python",
+    depth: typing.Optional[int] = None,
+) -> Serializer[NamedTupleType]:
+    """
+    Build a serializer for a NamedTuple type.
+
+    :param target: The target NamedTuple type to adapt
+    :param fmt: The format to use for serialization, e.g., "json" or "python"
+    :return: A function that serializes the value to the target format
+    """
+    if not is_named_tuple(target):
+        raise TypeError(f"Cannot build serializer for non-NamedTuple type {target!r}")
+
+    annotations = typing.get_type_hints(target, include_extras=True)
+    serializer_map: typing.Dict[str, Serializer[typing.Any]] = {}
+    for key, value in annotations.items():
+        if is_generic_type(value):
+            serializer_map[key] = build_generic_type_serializer(
+                value, fmt=fmt, depth=depth
+            )
+        else:
+            if fmt == "json":
+                serializer_map[key] = _non_generic_type_json_serializer
+            else:
+                serializer_map[key] = _non_generic_type_python_serializer
+
+    def serializer(
+        value: typing.Union[NamedTupleType, typing.Any],
+        *args: typing.Any,
+        **kwargs: typing.Any,
+    ) -> typing.Any:
+        """
+        A serializer function that serializes the value to the target format.
+
+        :param value: The value to serialize
+        :param args: Additional arguments for serialization
+        :param kwargs: Additional keyword arguments for serialization
+        """
+        if not isinstance(value, (Mapping, Iterable)):
+            raise InvalidTypeError(
+                "Cannot serialize value. Expected a Mapping or Iterable.",
+                input_type=type(value),
+                expected_type=target,
+            )
+
+        if isinstance(value, Mapping):
+            items = value.items()
+        else:
+            items = zip(target._fields, value)
+
+        new_mapping = {}
+        for key, item in items:
+            if key not in serializer_map:
+                continue
+            new_mapping[key] = serializer_map[key](item, *args, **kwargs)
+
+        return new_mapping
+
+    serializer.__name__ = f"{target.__name__}_serializer"
+    return serializer
+
+
+#############################
+# NON-GENERIC TYPE BUILDERS #
+#############################
+
+
+@functools.lru_cache(maxsize=128)
+def build_non_generic_type_deserializer(
+    type_: typing.Type[T],
+    depth: typing.Optional[int] = None,
+) -> Deserializer[typing.Any]:
+    """
+    Build a deserializer for a non-generic type.
+
+    :param type_: The target non-generic type to build deserializer for.
+    :param depth: The depth for nested deserialization (if applicable)
+    :param strict: Whether to enforce strict type checking and not attempt type coercion.
+    :return: A function that attempts to coerce the value to the target type
+    """
+    if is_typed_dict(type_):
+        return build_typeddict_deserializer(type_, depth=depth)
+
+    if is_named_tuple(type_):
+        return build_named_tuple_deserializer(type_, depth=depth)
+
+    if issubclass(type_, Dataclass):
+
+        def to_dataclass(
+            value: typing.Any, *args: typing.Any, **kwargs: typing.Any
+        ) -> T:
+            return _dataclass_deserializer(
+                type_,  # type: ignore[return-value]
+                value,
+                *args,
+                **kwargs,
+            )
+
+        to_type = to_dataclass
+    elif issubclass(type_, NoneType):
+
+        def to_none_type(
+            value: typing.Any, *args: typing.Any, **kwargs: typing.Any
+        ) -> T:
+            if value is not None:
+                raise DeserializationError(
+                    "Cannot deserialize value. Expected value to be None",
+                    input_type=type(value),
+                    expected_type="null",
+                )
+            return value
+
+        to_type = to_none_type
+    else:
+
+        def to_any_type(
+            value: typing.Any, *args: typing.Any, **kwargs: typing.Any
+        ) -> T:
+            if isinstance(value, type_):
+                return value
+            return type_(value)  # type: ignore[call-arg]
+
+        to_type = to_any_type
+
+    allow_any_type = type_ is typing.Any
+    type_ = typing.cast(typing.Type[T], type_)
+
+    def deserializer(
+        value: typing.Any,
+        *args: typing.Any,
+        **kwargs: typing.Any,
+    ) -> T:
+        """
+        A deserializer function that attempts to coerce the value to the target type.
+
+        :param value: The value to deserialize
+        :param args: Additional arguments for deserialization
+        :param kwargs: Additional keyword arguments for deserialization
+        """
+        if allow_any_type or isinstance(value, type_):
+            return value
+
+        if kwargs.pop("strict", False):
+            raise DeserializationError(
+                "Cannot deserialize value without coercion. Set strict=False to allow coercion.",
+                input_type=type(value),
+                expected_type=type_,
+            )
+
+        try:
+            return to_type(value, *args, **kwargs)
+        except (ValueError, TypeError) as exc:
+            raise DeserializationError.from_exception(
+                exc,
+                input_type=type(value),
+                expected_type=type_,
+            ) from exc
+
+    deserializer.__name__ = f"{type_.__name__}_deserializer"
+    return deserializer
+
+
+def build_non_generic_type_validator(
+    target: typing.Type[T],
+    /,
+    depth: typing.Optional[int] = None,
+) -> Validator[typing.Any]:
+    """
+    Build a validator for a non-generic type.
+
+    :param target: The target non-generic type.
+    :param depth: The depth for nested build operations (if applicable)
+    :return: A function that attempts to validate the value against the target type
+    """
+    if is_typed_dict(target):
+        return build_typeddict_validator(target, depth=depth)
+    if is_named_tuple(target):
+        return build_named_tuple_validator(target, depth=depth)
+    return instance_of(target)
+
+
+def build_non_generic_type_serializer(
+    target: typing.Type[T],
+    *,
+    fmt: typing.Literal["python", "json"] = "python",
+    depth: typing.Optional[int] = None,
+) -> Serializer[typing.Any]:
+    """
+    Build a serializer for a non-generic type.
+
+    :param target: The target non-generic type to build serializer for
+    :param fmt: The format to use for serialization, e.g., "json" or "python"
+    :param depth: The depth for nested serialization (if applicable)
+    :return: A function that serializes the value to the target format
+    """
+    if is_named_tuple(target):
+        return build_named_tuple_serializer(target, fmt=fmt, depth=depth)
+
+    if fmt == "json":
+        return _non_generic_type_json_serializer
+    return _non_generic_type_python_serializer
+
+
+#########################
+# GENERIC TYPE BUILDERS #
+#########################
+
+
+@functools.lru_cache(maxsize=128)
 def build_generic_type_deserializer(
     target: typing.Union[typing.Type[T], T],
     depth: typing.Optional[int] = None,
@@ -836,12 +910,12 @@ def build_generic_type_deserializer(
             next_depth = depth - 1
 
     origin = typing.get_origin(target)
-    args = typing.get_args(target)
-    if not (origin or args):
+    type_args = typing.get_args(target)
+    if not (origin or type_args):
         raise TypeError(f"Cannot build deserializer for non-generic type {target!r}")
 
     if origin is None:
-        if not args:
+        if not type_args:
             raise TypeError(
                 f"Cannot build deserializer for non-generic type {target!r}"
             )
@@ -852,7 +926,7 @@ def build_generic_type_deserializer(
                 build_generic_type_deserializer(arg, depth=next_depth)
                 if is_generic_type(arg)
                 else build_non_generic_type_deserializer(arg, depth=next_depth)
-                for arg in args
+                for arg in type_args
             ),
             target=(
                 TypeError,
@@ -861,7 +935,7 @@ def build_generic_type_deserializer(
             ),
             detailed_exc_type=DeserializationError,
         )
-    elif origin and not args:
+    elif origin and not type_args:
         return (
             build_generic_type_deserializer(origin, depth=next_depth)
             if is_generic_type(origin)
@@ -873,7 +947,7 @@ def build_generic_type_deserializer(
             # If the origin is Literal, the deserializer should just return the value as is
             return lambda value, *args, **kwargs: value
 
-        if origin is typing.Union and NoneType in args:
+        if origin is typing.Union and NoneType in type_args:
             # If the origin is Union and NoneType is one of the arguments,
             # We have an optional type.
             any_deserializer = coalesce_funcs(
@@ -881,7 +955,7 @@ def build_generic_type_deserializer(
                     build_generic_type_deserializer(arg, depth=next_depth)
                     if is_generic_type(arg)
                     else build_non_generic_type_deserializer(arg, depth=next_depth)
-                    for arg in args
+                    for arg in type_args
                     if arg is not NoneType
                 ),
                 target=(
@@ -906,7 +980,7 @@ def build_generic_type_deserializer(
                 build_generic_type_deserializer(arg, depth=next_depth)
                 if is_generic_type(arg)
                 else build_non_generic_type_deserializer(arg, depth=next_depth)
-                for arg in args
+                for arg in type_args
             ]
         )
         return coalesce_funcs(
@@ -924,7 +998,7 @@ def build_generic_type_deserializer(
             build_generic_type_deserializer(arg, depth=next_depth)
             if is_generic_type(arg)
             else build_non_generic_type_deserializer(arg, depth=next_depth)
-            for arg in args
+            for arg in type_args
         ]
     )
     if issubclass(origin, Mapping):
@@ -971,7 +1045,7 @@ def build_generic_type_deserializer(
         return mapping_deserializer
 
     if issubclass(origin, (Sequence, Set)):
-        args_count = len(args)
+        args_count = len(type_args)
         assert args_count == len(args_deserializers), (
             f"Deserializer count mismatch. Expected {args_count} but got {len(args_deserializers)}"
         )
@@ -1000,7 +1074,7 @@ def build_generic_type_deserializer(
                         raise DeserializationError.from_exception(
                             exc,
                             input_type=type(value),
-                            expected_type=args[index],
+                            expected_type=type_args[index],
                             location=[index],
                         ) from exc
 
@@ -1036,14 +1110,14 @@ def build_generic_type_deserializer(
                                 exc,
                                 message="Failed to deserialize item at index",
                                 input_type=type(value),
-                                expected_type=args[args_index],
+                                expected_type=type_args[args_index],
                                 location=[item_index],
                             )
                         else:
                             error.add(
                                 exc,
                                 input_type=type(value),
-                                expected_type=args[args_index],
+                                expected_type=type_args[args_index],
                                 location=[item_index],
                             )
                 else:
@@ -1055,7 +1129,7 @@ def build_generic_type_deserializer(
         return iterable_deserializer
 
     raise TypeError(
-        f"Cannot build deserializer for generic type {target!r} with origin {origin!r} and arguments {args!r}"
+        f"Cannot build deserializer for generic type {target!r} with origin {origin!r} and arguments {type_args!r}"
     )
 
 
@@ -1079,12 +1153,12 @@ def build_generic_type_validator(
             next_depth = depth - 1
 
     origin = typing.get_origin(target)
-    args = typing.get_args(target)
-    if not (origin or args):
+    type_args = typing.get_args(target)
+    if not (origin or type_args):
         raise TypeError(f"Cannot build validator for non-generic type {target!r}")
 
     if origin is None:
-        if not args:
+        if not type_args:
             raise TypeError(
                 f"Cannot build deserializer for non-generic type {target!r}"
             )
@@ -1092,13 +1166,13 @@ def build_generic_type_validator(
             build_generic_type_validator(arg, depth=next_depth)
             if is_generic_type(arg)
             else build_non_generic_type_validator(arg, depth=next_depth)
-            for arg in args
+            for arg in type_args
         )
         if len(args_validators) == 1:
             return args_validators[0]
         return Or(args_validators)
 
-    elif origin and not args:
+    elif origin and not type_args:
         return (
             build_generic_type_validator(origin, depth=next_depth)
             if is_generic_type(origin)
@@ -1109,9 +1183,9 @@ def build_generic_type_validator(
     # from the arguments validators.
     if not inspect.isclass(origin):
         if origin is typing.Literal:
-            return eq(args[0]) if len(args) == 1 else member_of(args)
+            return eq(type_args[0]) if len(type_args) == 1 else member_of(type_args)
 
-        if origin is typing.Union and NoneType in args:
+        if origin is typing.Union and NoneType in type_args:
             # If the origin is Union and NoneType is one of the arguments,
             # we have an optional type.
             args_validators = tuple(
@@ -1119,13 +1193,13 @@ def build_generic_type_validator(
                     build_generic_type_validator(arg, depth=next_depth)
                     if is_generic_type(arg)
                     else build_non_generic_type_validator(arg, depth=next_depth)
-                    for arg in args
+                    for arg in type_args
                     if arg is not NoneType
                 ]
             )
             if not args_validators:
                 raise TypeError(
-                    f"Cannot build validator for generic type {target!r} with origin {origin!r} and arguments {args!r}"
+                    f"Cannot build validator for generic type {target!r} with origin {origin!r} and arguments {type_args!r}"
                 )
             if len(args_validators) == 1:
                 return optional(args_validators[0])
@@ -1136,7 +1210,7 @@ def build_generic_type_validator(
                 build_generic_type_validator(arg, depth=next_depth)
                 if is_generic_type(arg)
                 else build_non_generic_type_validator(arg, depth=next_depth)
-                for arg in args
+                for arg in type_args
             ]
         )
         return Or(args_validators)
@@ -1146,7 +1220,7 @@ def build_generic_type_validator(
             build_generic_type_validator(arg, depth=next_depth)
             if is_generic_type(arg)
             else build_non_generic_type_validator(arg, depth=next_depth)
-            for arg in args
+            for arg in type_args
         ]
     )
     if issubclass(origin, Mapping):
@@ -1157,7 +1231,7 @@ def build_generic_type_validator(
         return mapping(key_validator, value_validator)
 
     if issubclass(origin, (Sequence, Set)):
-        args_count = len(args)
+        args_count = len(type_args)
         assert args_count == len(args_validators), (
             f"Validator count mismatch. Expected {args_count} but got {len(args_validators)}"
         )
@@ -1183,7 +1257,7 @@ def build_generic_type_validator(
                         raise ValidationError.from_exception(
                             exc,
                             input_type=type(value),
-                            expected_type=args[index],
+                            expected_type=type_args[index],
                             location=[index],
                         ) from exc
 
@@ -1196,61 +1270,68 @@ def build_generic_type_validator(
         return iterable(Or(args_validators))
 
     raise TypeError(
-        f"Cannot build validator for generic type {target!r} with origin {origin!r} and arguments {args!r}"
+        f"Cannot build validator for generic type {target!r} with origin {origin!r} and arguments {type_args!r}"
     )
 
 
 @typing.overload
 def build_generic_type_serializer(
-    target: typing.Union[typing.Type[T], T],
+    target: typing.Union[typing.Type[T], T, typing.Any],
     *,
     fmt: typing.Literal["python"] = ...,
+    depth: typing.Optional[int] = None,
 ) -> Serializer[typing.Any]: ...
 
 
 @typing.overload
 def build_generic_type_serializer(
-    target: typing.Union[typing.Type[T], T],
+    target: typing.Union[typing.Type[T], T, typing.Any],
     *,
     fmt: typing.Literal["json"] = ...,
+    depth: typing.Optional[int] = None,
 ) -> Serializer[JSONValue]: ...
 
 
 @functools.lru_cache(maxsize=128)
 def build_generic_type_serializer(
-    target: typing.Union[typing.Type[T], T],
+    target: typing.Union[typing.Type[T], T, typing.Any],
     *,
     fmt: typing.Literal["json", "python"] = "python",
+    depth: typing.Optional[int] = None,
 ) -> Serializer[typing.Any]:
     """
     Build a python serializer for a generic type.
 
     :param target: The target generic type to build serializer for
+    :param depth: Optional depth for serialization
     :return: A serializer function for the target type
     """
-    origin = typing.get_origin(target)
-    args = typing.get_args(target)
+    next_depth = None
+    if depth is not None:
+        if depth <= 0:
+            return lambda value, *args, **kwargs: value
+        else:
+            next_depth = depth - 1
 
-    if not (origin or args):
+    origin = typing.get_origin(target)
+    type_args = typing.get_args(target)
+
+    if not (origin or type_args):
         raise TypeError(
             f"Cannot build {fmt!r} serializer for non-generic type {target!r}"
         )
 
     if origin is None:
-        if not args:
+        if not type_args:
             raise TypeError(
                 f"Cannot build {fmt!r} serializer for non-generic type {target!r}"
             )
         return coalesce_funcs(
             *(
-                build_generic_type_serializer(arg, fmt=fmt)
+                build_generic_type_serializer(arg, fmt=fmt, depth=next_depth)
                 if is_generic_type(arg)
-                else (
-                    _non_generic_type_python_serializer
-                    if fmt == "python"
-                    else _non_generic_type_json_serializer
-                )
-                for arg in args
+                else build_non_generic_type_serializer(arg, fmt=fmt, depth=next_depth)
+                for arg in type_args
             ),
             target=(
                 TypeError,
@@ -1260,27 +1341,19 @@ def build_generic_type_serializer(
             detailed_exc_type=SerializationError,
         )
 
-    elif origin and not args:
+    elif origin and not type_args:
         return (
-            build_generic_type_serializer(origin, fmt=fmt)
+            build_generic_type_serializer(origin, fmt=fmt, depth=next_depth)
             if is_generic_type(origin)
-            else (
-                _non_generic_type_python_serializer
-                if fmt == "python"
-                else _non_generic_type_json_serializer
-            )
+            else build_non_generic_type_serializer(origin, fmt=fmt, depth=next_depth)
         )
 
     args_serializers = tuple(
         [
-            build_generic_type_serializer(arg, fmt=fmt)
+            build_generic_type_serializer(arg, fmt=fmt, depth=next_depth)
             if is_generic_type(arg)
-            else (
-                _non_generic_type_python_serializer
-                if fmt == "python"
-                else _non_generic_type_json_serializer
-            )
-            for arg in args
+            else build_non_generic_type_serializer(arg, fmt=fmt, depth=next_depth)
+            for arg in type_args
         ]
     )
 
@@ -1290,20 +1363,18 @@ def build_generic_type_serializer(
                 return _non_generic_type_json_serializer
             return _non_generic_type_python_serializer
 
-        if origin is typing.Union and NoneType in args:
+        if origin is typing.Union and NoneType in type_args:
             # If the origin is Union and NoneType is one of the arguments,
             # we have an optional type.
             any_serializer = coalesce_funcs(
                 *(
-                    build_generic_type_serializer(arg, fmt=fmt)
+                    build_generic_type_serializer(arg, fmt=fmt, depth=next_depth)
                     if is_generic_type(arg)
-                    else (
-                        _non_generic_type_python_serializer
-                        if fmt == "python"
-                        else _non_generic_type_json_serializer
+                    else build_non_generic_type_serializer(
+                        arg, fmt=fmt, depth=next_depth
                     )
-                    for arg in args
-                    if arg is not None
+                    for arg in type_args
+                    if arg is not NoneType
                 ),
                 target=(
                     TypeError,
@@ -1324,14 +1395,10 @@ def build_generic_type_serializer(
 
         args_serializers = tuple(
             [
-                build_generic_type_serializer(arg, fmt=fmt)
+                build_generic_type_serializer(arg, fmt=fmt, depth=next_depth)
                 if is_generic_type(arg)
-                else (
-                    _non_generic_type_python_serializer
-                    if fmt == "python"
-                    else _non_generic_type_json_serializer
-                )
-                for arg in args
+                else build_non_generic_type_serializer(arg, fmt=fmt, depth=next_depth)
+                for arg in type_args
             ]
         )
         return coalesce_funcs(
@@ -1346,14 +1413,10 @@ def build_generic_type_serializer(
 
     args_serializers = tuple(
         [
-            build_generic_type_serializer(arg, fmt=fmt)
+            build_generic_type_serializer(arg, fmt=fmt, depth=next_depth)
             if is_generic_type(arg)
-            else (
-                _non_generic_type_python_serializer
-                if fmt == "python"
-                else _non_generic_type_json_serializer
-            )
-            for arg in args
+            else build_non_generic_type_serializer(arg, fmt=fmt, depth=next_depth)
+            for arg in type_args
         ]
     )
     if issubclass(origin, Mapping):
@@ -1400,7 +1463,7 @@ def build_generic_type_serializer(
         return mapping_serializer
 
     if issubclass(origin, (Sequence, Set)):
-        args_count = len(args)
+        args_count = len(type_args)
         assert args_count == len(args_serializers), (
             f"Serializer count mismatch. Expected {args_count} but got {len(args_serializers)}"
         )
@@ -1427,7 +1490,7 @@ def build_generic_type_serializer(
                         raise SerializationError.from_exception(
                             exc,
                             input_type=type(value),
-                            expected_type=args[index],
+                            expected_type=type_args[index],
                             location=[index],
                         ) from exc
                 return origin(new_tuple)
@@ -1461,14 +1524,14 @@ def build_generic_type_serializer(
                                 exc,
                                 message="Failed to serialize item at index",
                                 input_type=type(value),
-                                expected_type=args[arg_index],
+                                expected_type=type_args[arg_index],
                                 location=[item_index],
                             )
                         else:
                             error.add(
                                 exc,
                                 input_type=type(value),
-                                expected_type=args[arg_index],
+                                expected_type=type_args[arg_index],
                                 location=[item_index],
                             )
                 else:
@@ -1480,73 +1543,121 @@ def build_generic_type_serializer(
         return iterable_serializer
 
     raise TypeError(
-        f"Cannot build {fmt!r} serializer for generic type {target!r} with origin {origin!r} and arguments {args!r}"
+        f"Cannot build {fmt!r} serializer for generic type {target!r} with origin {origin!r} and arguments {type_args!r}"
     )
 
 
-BUILTIN_TYPES = {
-    int,
-    float,
-    bool,
-    set,
-    list,
-    tuple,
-    dict,
-    NoneType,
-    str,
-    bytes,
-    complex,
-    bytearray,
-    frozenset,
-    memoryview,
-}
+################################
+# SERIALIZER REGISTRY BUILDERS #
+################################
 
 
-def _dataclass_deserializer(
-    target: typing.Type[DataclassTco],
+def build_non_generic_type_serializer_registry(
+    target: typing.Type[T],
     /,
-    value: typing.Any,
-    *_: typing.Any,
-    **kwargs: typing.Any,
-) -> DataclassTco:
+    serializers: typing.Optional[
+        typing.Mapping[
+            str,
+            Serializer[typing.Any],
+        ]
+    ] = None,
+    depth: typing.Optional[int] = None,
+) -> SerializerRegistry:
     """
-    A deserializer function that attempts to coerce the value to the target type.
+    Build a serializer registry for non-generic types.
 
-    :param value: The value to deserialize
-    :param args: Additional arguments for deserialization
-    :param kwargs: Additional keyword arguments for deserialization
+    :param target: The target non-generic type.
+    :param serializers: A mapping of serialization formats to their respective serializer functions
+    :param depth: Optional depth for serialization
+    :return: A SerializerRegistry with the provided serializers
     """
-    if isinstance(value, target):
-        return value
+    serializers_map = {
+        **(serializers or {}),
+    }
+    if "json" not in serializers_map:
+        serializers_map["json"] = build_generic_type_serializer(
+            target, fmt="json", depth=depth
+        )
+    if "python" not in serializers_map:
+        serializers_map["python"] = build_generic_type_serializer(
+            target, fmt="python", depth=depth
+        )
+    return SerializerRegistry(
+        defaultdict(
+            _unsupported_serializer_factory,
+            serializers_map,
+        )
+    )
 
-    if type(value) not in BUILTIN_TYPES:
-        kwargs.setdefault("from_attributes", True)
-    return deserialize(target, value, **kwargs)
 
-
-def _non_generic_type_json_serializer(
-    value: typing.Any, *_: typing.Any, **kwargs: typing.Any
-) -> JSONValue:
+def build_dataclass_serializer_registry(
+    serializers: typing.Optional[typing.Mapping[str, Serializer[typing.Any]]] = None,
+) -> SerializerRegistry:
     """
-    Serialize a non-generic type.
+    Build a serializer registry for dataclass types.
 
-    :param value: The value to serialize
-    :return: The serialized value
+    :param serializers: A mapping of serialization formats to their respective serializer functions
+    :return: A SerializerRegistry with the provided serializers
     """
-    if isinstance(value, Dataclass):
-        return serialize(value, fmt="json", **kwargs)
-    return make_jsonable(value)
+    serializers_map = {
+        **(serializers or {}),
+    }
+    if "json" not in serializers_map:
+        serializers_map["json"] = lambda value, *_, **kwargs: serialize(
+            value,
+            fmt="json",
+            **kwargs,
+        )
+    if "python" not in serializers_map:
+        serializers_map["python"] = lambda value, *_, **kwargs: serialize(
+            value,
+            fmt="python",
+            **kwargs,
+        )
+    return SerializerRegistry(
+        defaultdict(
+            _unsupported_serializer_factory,
+            serializers_map,
+        )
+    )
 
 
-def _non_generic_type_python_serializer(
-    value: typing.Any, *_: typing.Any, **kwargs: typing.Any
-) -> typing.Any:
+def build_generic_type_serializer_registry(
+    target: typing.Union[typing.Type[T], T],
+    /,
+    serializers: typing.Optional[
+        typing.Mapping[
+            str,
+            Serializer[typing.Any],
+        ]
+    ] = None,
+    depth: typing.Optional[int] = None,
+) -> SerializerRegistry:
     """
-    Serialize a non-generic type to Python.
+    Build a serializer registry for generic types.
 
-    :param value: The value to serialize
-    :return: The serialized value
+    :param target: The target generic type.
+    :param serializers: A mapping of serialization formats to their respective serializer functions
+    :param depth: Optional depth for serialization
     """
-    if isinstance(value, Dataclass):
-        return serialize(value, fmt="python", **kwargs)
-    return value
+    serializers_map = {
+        **(serializers or {}),
+    }
+    if "json" not in serializers_map:
+        serializers_map["json"] = build_generic_type_serializer(
+            target,
+            fmt="json",
+            depth=depth,
+        )
+    if "python" not in serializers_map:
+        serializers_map["python"] = build_generic_type_serializer(
+            target,
+            fmt="python",
+            depth=depth,
+        )
+    return SerializerRegistry(
+        defaultdict(
+            _unsupported_serializer_factory,
+            serializers_map,
+        )
+    )

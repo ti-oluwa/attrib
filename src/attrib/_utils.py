@@ -14,7 +14,7 @@ import datetime
 import collections.abc
 import importlib.util
 import uuid
-from collections import defaultdict
+from collections import defaultdict, deque
 
 try:
     import orjson as json  # type: ignore[import]
@@ -157,19 +157,19 @@ def _frozenset_adder(
     frozenset_ = frozenset(list(frozenset_) + [value])
 
 
-def _get_itertype_adder(field_type: typing.Type[IterType]) -> typing.Callable:
+def get_itertype_adder(field_type: typing.Type[IterType]) -> typing.Callable:
     """
     Get the appropriate adder function for the specified iterable type.
     This function returns the method used to add elements to the iterable type.
 
     Example:
     ```python
-    adder = _get_itertype_adder(list)
+    adder = get_itertype_adder(list)
     adder([], 1)  # Adds 1 to the list
     ```
     """
-    if issubclass(field_type, list):
-        return list.append
+    if issubclass(field_type, (list, deque)):
+        return field_type.append
     if issubclass(field_type, set):
         return set.add
     if issubclass(field_type, tuple):
@@ -271,7 +271,7 @@ postgres_interval_re = re.compile(
 )
 
 
-def parse_duration(value):
+def parse_duration(value) -> typing.Optional[datetime.timedelta]:
     """
     Parse a duration string and return a datetime.timedelta.
 
@@ -512,10 +512,10 @@ def make_jsonable(obj: typing.Any) -> JSONValue:
         return obj
     elif isinstance(obj, collections.abc.Mapping):
         return jsonable_mapping(obj)
-    elif isinstance(obj, collections.abc.Iterable):
-        return jsonable_iterable(obj)
     elif is_named_tuple(obj_type):
         return jsonable_mapping(obj._asdict())
+    elif isinstance(obj, collections.abc.Iterable):
+        return jsonable_iterable(obj)
 
     encoder = JSON_ENCODERS.get(obj_type, None)
     if encoder is not None:
@@ -601,6 +601,9 @@ def coalesce_funcs(
     if not funcs:
         raise ValueError("No functions provided.")
 
+    if len(funcs) == 1:
+        return funcs[0]
+    
     def coalesce(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
         error = None
         for index, func in enumerate(funcs):
@@ -610,12 +613,12 @@ def coalesce_funcs(
                 if error is None:
                     error = detailed_exc_type.from_exception(
                         exc,
-                        location=[f"func[{index}]"],
+                        location=[func.__name__, index],
                     )
                 else:
                     error.add(
                         exc,
-                        location=[f"func[{index}]"],
+                        location=[func.__name__, index],
                     )
         if error is not None:
             raise error
