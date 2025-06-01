@@ -8,6 +8,7 @@ from memory_profiler import profile
 
 import attrib
 from attrib.descriptors.phonenumbers import PhoneNumber
+from attrib._utils import _unsupported_serializer
 from utils import timeit, profileit, log
 from mock_data import course_data, student_data, year_data
 
@@ -35,7 +36,7 @@ class AcademicYear(attrib.Dataclass, slots=True):
     """Academic year data class"""
 
     id = attrib.Integer(required=True)
-    name = attrib.String(max_length=100)
+    name = attrib.String(max_length=100, serializers={"python": _unsupported_serializer})
     term = attrib.Choice(Term, default=Term.FIRST)
     start_date = attrib.Date(input_formats=["%d-%m-%Y", "%d/%m/%Y"])
     end_date = attrib.Date(input_formats=["%d-%m-%Y", "%d/%m/%Y"])
@@ -55,7 +56,7 @@ class Course(attrib.Dataclass, slots=True):
 class PersonalInfo(attrib.Dataclass):
     """Personal information data class"""
 
-    name = attrib.String(max_length=100)
+    name = attrib.String(max_length=100, serializers={"python": _unsupported_serializer})
     age = attrib.Integer(min_value=0, max_value=30)
     email = attrib.Email(allow_null=True, default=None)
     phone = PhoneNumber(allow_null=True, default=None)
@@ -68,13 +69,13 @@ class PersonalInfo(attrib.Dataclass):
 
 
 @attrib.partial
-class Student(PersonalInfo):
+class Student(PersonalInfo, sort=True):
     """Student data class with multiple fields and a list of enrolled courses"""
 
-    id = attrib.Integer(required=True)
-    year = attrib.Nested(AcademicYear, lazy=False, allow_null=True)
+    id = attrib.Integer(required=True, serializers={"python": _unsupported_serializer})
+    year = attrib.Nested(AcademicYear, lazy=True, allow_null=True)
     courses = attrib.List(
-        child=attrib.Nested(Course, lazy=False),
+        child=attrib.Nested(Course, lazy=False, serializers={"python": _unsupported_serializer}),
         validator=attrib.validators.and_(
             attrib.validators.min_length(1), attrib.validators.max_length(15)
         ),
@@ -105,28 +106,29 @@ def load_data(
 def example():
     """Run example usage of the data classes"""
     with attrib.deserialization_context(fail_fast=True):
-        years = load_data(year_data, AcademicYear)
-        courses = load_data(course_data, Course)
         students = load_data(student_data, Student)
+        courses = load_data(course_data, Course)
+        years = load_data(year_data, AcademicYear)
+        
 
     for student in students:
         attrib.serialize(
             student,
-            fmt="python",
+            fmt="json",
             # options=attrib.Options(
             #     attrib.Option(Course, include={"year"}, depth=1, strict=True),
             #     attrib.Option(AcademicYear, exclude={"term", "id"}, depth=0),
             #     attrib.Option(depth=1),
             # ),
-            astuple=False,
+            # astuple=True,
             # by_alias=True,
         )
 
     for course in courses:
-        attrib.serialize(course, fmt="python", astuple=False)
+        attrib.serialize(course, fmt="json", astuple=False)
 
     for year in years:
-        attrib.serialize(year, fmt="python", astuple=False)
+        attrib.serialize(year, fmt="json", astuple=False)
 
     # import pickle
 

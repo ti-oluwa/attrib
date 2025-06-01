@@ -4,7 +4,7 @@ from typing_extensions import Self
 P = typing.ParamSpec("P")
 R = typing.TypeVar("R")
 T = typing.TypeVar("T")
-
+V = typing.TypeVar("V")
 Tco = typing.TypeVar("Tco", covariant=True)
 
 
@@ -27,9 +27,9 @@ NamedDataTuple: typing.TypeAlias = typing.Tuple[typing.Tuple[str, typing.Any], .
 JSONValue: typing.TypeAlias = typing.Union[
     int, float, str, bool, None, "JSONDict", "JSONList"
 ]
-JSONDict: typing.TypeAlias = typing.Dict[str, JSONValue]
+JSONDict: typing.TypeAlias = typing.Dict[str, "JSONValue"]
 JSONList: typing.TypeAlias = typing.List["JSONValue"]
-JSONNamedDataTuple: typing.TypeAlias = typing.Tuple[typing.Tuple[str, JSONValue], ...]
+JSONNamedDataTuple: typing.TypeAlias = typing.Tuple[typing.Tuple[str, "JSONValue"], ...]
 
 Context: typing.TypeAlias = typing.Dict[str, typing.Any]
 
@@ -71,43 +71,27 @@ class TypeAdapter(typing.Generic[T], typing.Protocol):
         """
         ...
 
-    @typing.overload
-    def validate(
-        self,
-        value: T,
-        *args: typing.Any,
-        **kwargs: typing.Any,
-    ) -> T: ...
-
-    @typing.overload
-    def validate(
-        self,
-        value: typing.Any,
-        *args: typing.Any,
-        **kwargs: typing.Any,
-    ) -> typing.Any: ...
-
     def validate(
         self,
         value: typing.Union[T, typing.Any],
         *args: typing.Any,
         **kwargs: typing.Any,
-    ) -> typing.Union[T, typing.Any]: ...
+    ) -> None: ...
 
     def serialize(
         self,
-        value: T,
+        value: typing.Union[T, typing.Any],
         fmt: str,
         *args: typing.Any,
         **kwargs: typing.Any,
-    ) -> typing.Any: ...
+    ) -> typing.Optional[typing.Any]: ...
 
     def deserialize(
         self,
-        value: typing.Any,
+        value: typing.Union[T, typing.Any],
         *args: typing.Any,
         **kwargs: typing.Any,
-    ) -> T: ...
+    ) -> typing.Optional[T]: ...
 
 
 @typing.runtime_checkable
@@ -123,7 +107,9 @@ class Validator(typing.Generic[T], typing.Protocol):
     def __call__(
         self,
         value: typing.Any,
-        adapter: typing.Optional[TypeAdapter[T]] = ...,
+        adapter: typing.Optional[
+            typing.Union[TypeAdapter[T], TypeAdapter[typing.Any]]
+        ] = ...,
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:

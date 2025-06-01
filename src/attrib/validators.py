@@ -56,20 +56,25 @@ class Pipeline(typing.NamedTuple):
             try:
                 validator(value, adapter, *args, **kwargs)
             except (ValueError, ValidationError) as exc:
+                loc = [name] if not isinstance(exc, ValidationError) else None
                 if fail_fast:
                     raise ValidationError.from_exception(
                         exc,
                         message=msg,
-                        name=name,
+                        location=loc,
                     )
                 elif error is None:
                     error = ValidationError.from_exception(
                         exc,
                         message=msg,
-                        name=name,
+                        location=loc,
                     )
                 else:
-                    error.add(exc)
+                    error.add(
+                        exc,
+                        message=msg,
+                        location=loc,
+                    )
         if error:
             raise error
 
@@ -137,14 +142,19 @@ class Or(typing.NamedTuple):
                 validator(value, adapter, *args, **kwargs)
                 return
             except (ValueError, ValidationError) as exc:
+                loc = [name] if not isinstance(exc, ValidationError) else None
                 if error is None:
                     error = ValidationError.from_exception(
                         exc,
                         message=msg,
-                        name=name,
+                        location=loc,
                     )
                 else:
-                    error.add(exc)
+                    error.add(
+                        exc,
+                        message=msg,
+                        location=loc,
+                    )
 
         if error:
             raise error
@@ -210,14 +220,14 @@ class FieldValidator(typing.NamedTuple):
                 instance,
                 fail_fast=fail_fast,
             )
-        except (ValueError, ValidationError) as exc:
+        except ValueError as exc:
             raise ValidationError.from_exception(
                 exc,
                 message=msg,
-                name=name,
                 parent_name=type(instance).__name__ if instance else None,
                 input_type=type(value),
                 expected_type=getattr(adapter, "typestr", None),
+                location=[name],
             )
 
     def __hash__(self) -> int:
@@ -380,9 +390,9 @@ def number_validator_factory(
                         "bound": bound,
                     },
                 ),
-                name=name,
                 expected_type=type(bound),
                 input_type=type(value),
+                location=[name],
                 code="value_out_of_bounds",
                 context={
                     "symbol": symbol,
@@ -447,9 +457,9 @@ def number_range(
             name = getattr(adapter, "name", None)
             raise ValidationError(
                 msg.format(name=name, min=min_val, max=max_val, value=value),
-                name=name,
                 expected_type=type(min_val),
                 input_type=type(value),
+                location=[name],
                 code="value_not_in_range",
                 context={
                     "min": min_val,
@@ -522,9 +532,9 @@ def length_validator_factory(
                         "length": length,
                     }
                 ),
-                name=name,
                 expected_type="countable",
                 input_type=type(value),
+                location=[name],
                 code="invalid_length",
                 context={
                     "symbol": symbol,
@@ -619,9 +629,9 @@ def pattern(
                         "value": value,
                     }
                 ),
-                name=name,
                 expected_type=f"pattern[{pattern.pattern!r}]",
                 input_type=type(value),
+                location=[name],
                 code="pattern_mismatch",
                 context={
                     "pattern": pattern.pattern,
@@ -679,9 +689,9 @@ def instance_of(
                         "name": name,
                     }
                 ),
-                name=name,
                 expected_type=cls,
                 input_type=type(value),
+                location=[name],
                 code="invalid_type",
             )
 
@@ -733,9 +743,9 @@ def subclass_of(
                         "name": name,
                     }
                 ),
-                name=name,
                 expected_type=f"type[{cls!r}]",
                 input_type=f"type[{value!r}]",
+                location=[name],
                 code="invalid_type",
             )
 
@@ -826,9 +836,9 @@ def member_of(
                         "name": name,
                     }
                 ),
-                name=name,
                 expected_type=f"member_of[{[repr(c) for c in choices]}]",
                 input_type=f"{type(value)!r}",
+                location=[name],
                 code="invalid_choice",
             )
 
@@ -887,9 +897,9 @@ def not_(
                     "name": name,
                 }
             ),
-            name=name,
             expected_type=f"not[{validator!r}]",
             input_type=type(value),
+            location=[name],
             code="negation_failed",
         )
 
@@ -919,9 +929,9 @@ def is_callable(
         name = getattr(adapter, "name", None)
         raise ValidationError(
             "Value must be a callable",
-            name=name,
             expected_type="callable",
             input_type=type(value),
+            location=[name],
             code="not_callable",
         )
 
@@ -966,7 +976,7 @@ def value_validator(
             name = getattr(adapter, "name", None)
             raise ValidationError(
                 message or "Validation failed.",
-                name=name,
+                location=[name],
             )
         return
 
@@ -1205,9 +1215,9 @@ def mapping(
         if not is_mapping(value):
             raise ValidationError(
                 msg.format_map({"name": name, "value": value}),
-                name=name,
                 expected_type="mapping",
                 input_type=type(value),
+                location=[name],
                 code="invalid_type",
             )
 
@@ -1219,8 +1229,7 @@ def mapping(
                     raise ValidationError.from_exception(
                         exc,
                         message="Key validation failed",
-                        name=name,
-                        location=[key, ":key"],
+                        location=[name, f"{key}:key"],
                         input_type=type(key),
                         code="key_validation_failed",
                     )
@@ -1231,8 +1240,7 @@ def mapping(
                     raise ValidationError.from_exception(
                         exc,
                         message="Value validation failed",
-                        name=name,
-                        location=[key, ":value"],
+                        location=[name, f"{key}:value"],
                         input_type=type(val),
                         code="value_validation_failed",
                     )
@@ -1259,9 +1267,9 @@ def mapping(
         if not is_mapping(value):
             raise ValidationError(
                 msg.format_map({"name": name, "value": value}),
-                name=name,
                 expected_type="mapping",
                 input_type=type(value),
+                location=[name],
                 code="invalid_type",
             )
 
@@ -1279,8 +1287,7 @@ def mapping(
                         raise ValidationError.from_exception(
                             exc,
                             message="Key validation failed",
-                            name=name,
-                            location=[key, ":key"],
+                            location=[name, f"{key}:key"],
                             input_type=type(key),
                             code="key_validation_failed",
                         )
@@ -1291,8 +1298,7 @@ def mapping(
                         raise ValidationError.from_exception(
                             exc,
                             message="Value validation failed",
-                            name=name,
-                            location=[key, ":value"],
+                            location=[name, f"{key}:value"],
                             input_type=type(val),
                             code="value_validation_failed",
                         )
@@ -1345,9 +1351,9 @@ def iterable(
         if not is_iterable(value):
             raise ValidationError(
                 msg.format_map({"name": name, "value": value}),
-                name=name,
                 expected_type="iterable",
                 input_type=type(value),
+                location=[name],
                 code="invalid_type",
             )
 
@@ -1358,8 +1364,7 @@ def iterable(
                 raise ValidationError.from_exception(
                     exc,
                     message="Item validation failed",
-                    name=name,
-                    location=[index],
+                    location=[name, index],
                     input_type=type(item),
                 )
 
@@ -1384,9 +1389,9 @@ def iterable(
         if not is_iterable(value):
             raise ValidationError(
                 msg.format_map({"name": name, "value": value}),
-                name=name,
                 expected_type="iterable",
                 input_type=type(value),
+                location=[name],
                 code="invalid_type",
             )
 
@@ -1403,8 +1408,7 @@ def iterable(
                     raise ValidationError.from_exception(
                         exc,
                         message="Item validation failed",
-                        name=name,
-                        location=[*parent_indices, index],
+                        location=[name, *parent_indices, index],
                         input_type=type(item),
                     )
                 if is_iterable(item):

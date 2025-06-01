@@ -18,8 +18,7 @@ __all__ = [
 
 def url_deserializer(
     value: typing.Any,
-    *_: typing.Any,
-    **__: typing.Any,
+    field: Field[typing.Any],
 ) -> typing.Union[Url, UrlBytes]:
     """Deserialize URL data to the specified type."""
     return urlparse(value)
@@ -39,8 +38,7 @@ class URL(Field[typing.Union[Url, UrlBytes]]):
 
 def ip_address_deserializer(
     value: typing.Any,
-    *_: typing.Any,
-    **__: typing.Any,
+    field: Field[typing.Any],
 ) -> typing.Any:
     """Deserialize IP address data to an IP address object."""
     return ipaddress.ip_address(value)

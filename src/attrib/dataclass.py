@@ -15,7 +15,7 @@ from attrib.exceptions import (
     ConfigurationError,
     ValidationError,
 )
-from attrib._typing import R, DataDict, RawData, KwArg
+from attrib._typing import DataDict, RawData, KwArg
 
 
 __all__ = [
@@ -87,9 +87,6 @@ def _setitem(instance: "Dataclass", key: str, value: typing.Any) -> None:
 
 def _frozen_setattr(instance: "Dataclass", key: str, value: Value) -> None:
     """Set an attribute on a frozen dataclass instance."""
-    print(
-        f"Attempting to set attribute '{key}' on frozen instance of {type(instance).__name__}"
-    )
     if not getattr(instance, "_initializing", False):
         raise FrozenInstanceError(
             f"Immutable instance. Cannot modify '{type(instance).__name__}.{key}'. "
@@ -242,7 +239,8 @@ def _build_slotted_namespace(
     return namespace
 
 
-StrType = str
+StrType: typing.TypeAlias = str
+FieldName: typing.TypeAlias = str
 
 
 class ConfigSchema(typing.TypedDict, total=False):
@@ -260,7 +258,7 @@ class ConfigSchema(typing.TypedDict, total=False):
     str: bool
     """If True, add __str__ method to the class, if it does not exist."""
     sort: typing.Union[
-        bool, typing.Callable[[typing.Tuple[StrType, Field]], typing.Any]
+        bool, typing.Callable[[typing.Tuple[FieldName, Field]], typing.Any]
     ]
     """If True, sort fields by name. If a callable, use as the sort key.
         If False, do not sort fields."""
@@ -292,7 +290,7 @@ class Config(typing.NamedTuple):
     str: bool = False
     """If True, add __str__ method to the class, if it does not exist."""
     sort: typing.Union[
-        bool, typing.Callable[[typing.Tuple[StrType, Field]], typing.Any]
+        bool, typing.Callable[[typing.Tuple[FieldName, Field]], typing.Any]
     ] = False
     """If True, sort fields by name. If a callable, use as the sort key.
         If False, do not sort fields."""
@@ -553,6 +551,7 @@ class Dataclass(metaclass=DataclassMeta):
     __slots__: typing.ClassVar[typing.Tuple[str, ...]] = (
         "__weakref__",
         "_initializing",
+        "__fields_set__",
     )
     __state_attributes__: typing.ClassVar[typing.Tuple[str, ...]] = ()
     """
@@ -596,9 +595,10 @@ class Dataclass(metaclass=DataclassMeta):
         Initialize the dataclass with raw data or keyword arguments.
 
         :param data: Raw data to initialize the dataclass with.
-        :param kwargs: Additional keyword arguments to initialize the dataclass with.
+        :param kwargs: Keyword arguments with values for the fields in the dataclass.
         """
         object.__setattr__(self, "_initializing", True)
+        self.__fields_set__: typing.Set[str] = set()
         combined = {**dict(data or {}), **kwargs}  # type: ignore[assignment]
         load(self, data=combined)
         object.__setattr__(self, "_initializing", False)
@@ -684,18 +684,18 @@ def load(
     error = None
     for name, field in instance.__fields__.items():
         key = instance.base_to_effective_name_map[name]
-        if key not in data:
-            value = field.get_default()
-        else:
-            value = data[key]
         try:
-            field.__set__(instance, value)
+            if key not in data:
+                field.set_default(instance)
+                continue
+
+            field.__set__(instance, data[key])
         except (DeserializationError, ValidationError) as exc:
             if fail_fast:
                 raise DeserializationError.from_exception(
                     exc,
                     parent_name=type(instance).__name__,
-                )
+                ) from exc
             else:
                 if error is None:
                     error = DeserializationError.from_exception(
@@ -735,29 +735,32 @@ def _from_attributes(
     error = None
     for name, field in dataclass_.__fields__.items():
         key = dataclass_.base_to_effective_name_map[name]
-
-        if not hasattr(obj, key):
-            value = field.get_default()
-        else:
-            value = getattr(obj, key)
         try:
+            if not hasattr(obj, key):
+                field.set_default(instance)
+                continue
+
+            value = getattr(obj, key)
             field.__set__(instance, value)
         except (DeserializationError, ValidationError) as exc:
             if fail_fast:
                 raise DeserializationError.from_exception(
                     exc,
                     parent_name=type(instance).__name__,
-                )
+                    location=[name],
+                ) from exc
             else:
                 if error is None:
                     error = DeserializationError.from_exception(
                         exc,
                         parent_name=type(instance).__name__,
+                        location=[name],
                     )
                 else:
                     error.add(
                         exc,
                         parent_name=type(instance).__name__,
+                        location=[name],
                     )
 
     if error is not None:

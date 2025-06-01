@@ -4,8 +4,8 @@ from typing_extensions import Unpack
 from attrib.descriptors.base import Field, FieldKwargs, NonTupleFieldType
 from attrib.dataclass import Dataclass
 from attrib.serializers import (
-    serialize_instance_asdict,
-    serialize_instance_asnamedtuple,
+    _serialize_instance_asdict,
+    _serialize_instance_asnamedtuple,
 )
 from attrib._utils import is_iterable
 from attrib.exceptions import FieldError
@@ -25,16 +25,16 @@ _Dataclass_co = typing.TypeVar("_Dataclass_co", bound=Dataclass, covariant=True)
 def nested_json_serializer(
     instance: _Dataclass_co,
     field: Field[_Dataclass_co],
-    context: typing.Optional[Context] = None,
+    context: Context,
 ) -> typing.Union[JSONDict, JSONNamedDataTuple]:
     """Serialize a nested dataclass instance to a dictionary."""
     if context and context.get("__astuple", False):
-        return serialize_instance_asnamedtuple(
+        return _serialize_instance_asnamedtuple(
             fmt="json",
             instance=instance,
             context=context,
         )
-    return serialize_instance_asdict(
+    return _serialize_instance_asdict(
         fmt="json",
         instance=instance,
         context=context,
@@ -44,16 +44,16 @@ def nested_json_serializer(
 def nested_python_serializer(
     instance: _Dataclass_co,
     field: Field[_Dataclass_co],
-    context: typing.Optional[Context] = None,
+    context: Context,
 ) -> typing.Union[DataDict, NamedDataTuple]:
     """Serialize a nested dataclass instance to a dictionary."""
     if context and context.get("__astuple", False):
-        return serialize_instance_asnamedtuple(
+        return _serialize_instance_asnamedtuple(
             fmt="python",
             instance=instance,
             context=context,
         )
-    return serialize_instance_asdict(
+    return _serialize_instance_asdict(
         fmt="python",
         instance=instance,
         context=context,

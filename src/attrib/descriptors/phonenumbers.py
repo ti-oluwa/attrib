@@ -1,6 +1,7 @@
 import typing
 from typing_extensions import Unpack
 
+from attrib._typing import Context
 from attrib.descriptors.base import Field, String, FieldKwargs
 from phonenumbers import (  # type: ignore[import]
     PhoneNumber as PhoneNumberType,
@@ -11,7 +12,9 @@ from phonenumbers import (  # type: ignore[import]
 
 
 def phone_number_serializer(
-    value: PhoneNumberType, field: "PhoneNumber", *_: typing.Any, **__: typing.Any
+    value: PhoneNumberType,
+    field: "PhoneNumber",
+    context: Context,
 ) -> str:
     """Serialize a phone number object to a string format."""
     output_format = typing.cast(int, field.output_format)
@@ -19,7 +22,7 @@ def phone_number_serializer(
 
 
 def phone_number_deserializer(
-    value: typing.Any, *_: typing.Any, **__: typing.Any
+    value: typing.Any, field: Field[typing.Any]
 ) -> PhoneNumberType:
     """Deserialize a string to a phone number object."""
     return parse_number(value)
@@ -52,14 +55,17 @@ class PhoneNumber(Field[PhoneNumberType]):
 
 
 def phone_number_string_serializer(
-    value: PhoneNumberType, field: "PhoneNumberString", *_: typing.Any, **__: typing.Any
+    value: PhoneNumberType,
+    field: "PhoneNumberString",
+    context: Context,
 ) -> str:
     """Serialize a phone number object to a string format."""
     return format_number(value, field.output_format)
 
 
 def phone_number_string_deserializer(
-    value: typing.Any, field: "PhoneNumberString", *_: typing.Any, **__: typing.Any
+    value: typing.Any,
+    field: "PhoneNumberString",
 ) -> str:
     """Deserialize a string to a phone number object."""
     return format_number(parse_number(value), field.output_format)

@@ -214,52 +214,38 @@ class TypeAdapter(typing.Generic[T]):
             )
         return
 
-    @typing.overload
-    def validate(
-        self,
-        value: T,
-        *args: typing.Any,
-        **kwargs: typing.Any,
-    ) -> T: ...
-
-    @typing.overload
-    def validate(
-        self,
-        value: typing.Any,
-        *args: typing.Any,
-        **kwargs: typing.Any,
-    ) -> typing.Any: ...
-
     def validate(
         self,
         value: typing.Union[T, typing.Any],
         *args: typing.Any,
         **kwargs: typing.Any,
-    ) -> typing.Union[T, typing.Any]:
+    ) -> None:
         """
         Validate the value using the validator.
 
         :param value: The value to validate
         :param args: Additional arguments to pass to the validator
         :param kwargs: Additional keyword arguments to pass to the validator
-        :return: None if all validators pass
         """
-        if self.validator:
-            try:
-                self.validator(value, self, *args, **kwargs)
-            except (ValidationError, ValueError, TypeError) as exc:
-                raise ValidationError(
-                    f"{value!r} is not a valid {self.name!r}"
-                ) from exc
-        return value
+        if not self.validator:
+            return
+        try:
+            self.validator(value, self, *args, **kwargs)
+        except (ValidationError, ValueError) as exc:
+            raise ValidationError.from_exception(
+                exc,
+                message="Invalid value",
+                input_type=type(value),
+                expected_type=self.adapted,
+            ) from exc
 
     def serialize(
         self,
-        value: T,
+        value: typing.Union[T, typing.Any],
         fmt: typing.Union[typing.Literal["python", "json"], str] = "python",
         *args: typing.Any,
         **kwargs: typing.Any,
-    ) -> typing.Any:
+    ) -> typing.Optional[typing.Any]:
         """
         Serialize the value using the serializer.
 
@@ -271,7 +257,10 @@ class TypeAdapter(typing.Generic[T]):
         """
         if self.serializer is None:
             raise SerializationError(
-                f"Cannot serialize value. A serializer was not initialized for '{self.name or repr(self)}'"
+                f"Cannot serialize value. A serializer was not initialized for '{self.name or repr(self)}'",
+                input_type=type(value),
+                expected_type=self.adapted,
+                code="serializer_not_initialized",
             )
         return self.serializer(fmt, value, *args, **kwargs)
 
@@ -280,7 +269,7 @@ class TypeAdapter(typing.Generic[T]):
         value: typing.Any,
         *args: typing.Any,
         **kwargs: typing.Any,
-    ) -> T:
+    ) -> typing.Optional[T]:
         """
         Deserialize the value using the deserializer.
 
@@ -294,6 +283,7 @@ class TypeAdapter(typing.Generic[T]):
                 f"Cannot deserialize value. A deserializer was not initialized for '{self.name or repr(self)}'",
                 input_type=type(value),
                 expected_type=self.adapted,
+                code="deserializer_not_initialized",
             )
 
         kwargs.setdefault("strict", self.strict)
@@ -308,14 +298,14 @@ class TypeAdapter(typing.Generic[T]):
                 context={
                     "strict": kwargs.get("strict"),
                 },
-            )
+            ) from exc
 
     def adapt(
         self,
         value: typing.Union[T, typing.Any],
         *args: typing.Any,
         **kwargs: typing.Any,
-    ) -> T:
+    ) -> typing.Optional[T]:
         """
         Adapt the value to the adapted type and validate it.
         This method is a convenience method that combines deserialization and validation.
@@ -326,8 +316,8 @@ class TypeAdapter(typing.Generic[T]):
         :return: The adapted and validated value
         """
         deserialized = self.deserialize(value, *args, **kwargs)
-        validated = self.validate(deserialized, *args, **kwargs)
-        return validated
+        self.validate(deserialized, *args, **kwargs)
+        return deserialized
 
     def __repr__(self) -> str:
         """
@@ -456,7 +446,7 @@ def build_non_generic_type_deserializer(
                 exc,
                 input_type=type(value),
                 expected_type=type_,
-            )
+            ) from exc
 
     deserializer.__name__ = f"{type_.__name__}_deserializer"
     return deserializer
@@ -621,7 +611,7 @@ def build_typeddict_deserializer(
                     input_type=type(value),
                     expected_type=target,
                     location=[key],
-                )
+                ) from exc
 
         return target(**new_mapping)
 
@@ -693,7 +683,7 @@ def build_typeddict_validator(
                     input_type=type(value),
                     expected_type=target,
                     location=[key],
-                )
+                ) from exc
 
         return None
 
@@ -757,7 +747,7 @@ def build_named_tuple_deserializer(
                     input_type=type(value),
                     expected_type=target,
                     location=[key],
-                )
+                ) from exc
 
         return target(**new_mapping)  # type: ignore[call-arg]
 
@@ -820,7 +810,7 @@ def build_named_tuple_validator(
                     input_type=type(value),
                     expected_type=target,
                     location=[key],
-                )
+                ) from exc
         return None
 
     validator.__name__ = f"{target.__name__}_validator"
@@ -975,7 +965,7 @@ def build_generic_type_deserializer(
                         input_type=type(value),
                         expected_type=origin,
                         location=[key],
-                    )
+                    ) from exc
             return new_mapping
 
         return mapping_deserializer
@@ -1012,7 +1002,7 @@ def build_generic_type_deserializer(
                             input_type=type(value),
                             expected_type=args[index],
                             location=[index],
-                        )
+                        ) from exc
 
                 return origin(new_tuple)
 
@@ -1181,7 +1171,9 @@ def build_generic_type_validator(
             ) -> None:
                 if not isinstance(value, Iterable) or len(value) != args_count:  # type: ignore
                     raise InvalidTypeError(
-                        f"Cannot validate {value!r} as {target!r}. Expected an Iterable with {args_count} items."
+                        f"Expected an Iterable with {args_count} items.",
+                        input_type=type(value),
+                        expected_type=origin,
                     )
 
                 for index, item in enumerate(value):
@@ -1193,7 +1185,7 @@ def build_generic_type_validator(
                             input_type=type(value),
                             expected_type=args[index],
                             location=[index],
-                        )
+                        ) from exc
 
                 return None
 
@@ -1380,7 +1372,9 @@ def build_generic_type_serializer(
         ) -> typing.Mapping[typing.Any, typing.Any]:
             if not isinstance(value, (Mapping, Iterable)):
                 raise InvalidTypeError(
-                    f"Cannot serialize {value!r} to type {target!r}. Expected a Mapping or Iterable."
+                    "Expected a Mapping or Iterable.",
+                    input_type=type(value),
+                    expected_type=origin,
                 )
 
             new_mapping = origin.__new__(origin)  # type: ignore[assignment]
@@ -1400,7 +1394,7 @@ def build_generic_type_serializer(
                         input_type=type(value),
                         expected_type=origin,
                         location=[key],
-                    )
+                    ) from exc
             return new_mapping
 
         return mapping_serializer
@@ -1420,7 +1414,9 @@ def build_generic_type_serializer(
             ) -> typing.Tuple[typing.Any, ...]:
                 if not isinstance(value, Iterable) or len(value) != args_count:  # type: ignore
                     raise InvalidTypeError(
-                        f"Cannot serialize {value!r} to {target!r}. Expected an Iterable with {args_count} items."
+                        f"Expected an Iterable with {args_count} items.",
+                        input_type=type(value),
+                        expected_type=origin,
                     )
 
                 new_tuple = []
@@ -1433,7 +1429,7 @@ def build_generic_type_serializer(
                             input_type=type(value),
                             expected_type=args[index],
                             location=[index],
-                        )
+                        ) from exc
                 return origin(new_tuple)
 
             return tuple_serializer
@@ -1448,7 +1444,9 @@ def build_generic_type_serializer(
         ) -> typing.Iterable[typing.Any]:
             if not isinstance(value, Iterable):
                 raise InvalidTypeError(
-                    f"Cannot serialize {value!r} to type {target!r}. Expected an Iterable."
+                    "Expected an Iterable.",
+                    input_type=type(value),
+                    expected_type=origin,
                 )
             new_iterable = []
             for item_index, item in enumerate(value):

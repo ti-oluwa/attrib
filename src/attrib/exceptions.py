@@ -1,4 +1,3 @@
-from math import e
 import typing
 from typing_extensions import Self
 from contextlib import contextmanager
@@ -54,12 +53,12 @@ class ErrorDetail(typing.NamedTuple):
     def as_string(self) -> str:
         """Return a string representation of the error detail."""
         text = [
-            ".".join(
+            "".join(
                 [
-                    f"[{loc}]" if isinstance(loc, int) else str(loc)
+                    f"[{loc}]" if isinstance(loc, int) else f".{loc}"
                     for loc in self.location
                 ]
-            ),
+            ).removeprefix("."),
             f"\n  {self.message} ",
         ]
 
@@ -111,11 +110,10 @@ class DetailedError(AttribException):
         self,
         message: str,
         *,
-        name: typing.Optional[str] = None,
         parent_name: typing.Optional[str] = None,
         expected_type: typing.Optional[typing.Any] = None,
         input_type: typing.Optional[typing.Any] = None,
-        location: typing.Optional[typing.Iterable[typing.Any]] = None,
+        location: typing.Optional[typing.List[typing.Any]] = None,
         code: typing.Optional[str] = None,
         context: typing.Optional[typing.Dict[str, typing.Any]] = None,
         origin: typing.Optional[Exception] = None,
@@ -124,7 +122,6 @@ class DetailedError(AttribException):
         Initialize a `DetailedError`.
 
         :param message: The error message for the field error
-        :param name: Optional name for the field or context where the error occurred
         :param parent_name: Optional name for the parent context
         :param expected_type: Optional expected type for the field or context
         :param input_type: Optional input type that caused the error
@@ -138,7 +135,6 @@ class DetailedError(AttribException):
         self.error_list: typing.List[ErrorDetail] = []
         self.add_detail(
             message=message,
-            name=name,
             expected_type=expected_type,
             input_type=input_type,
             location=location,
@@ -151,8 +147,7 @@ class DetailedError(AttribException):
         self,
         message: str,
         *,
-        name: typing.Optional[str] = None,
-        location: typing.Optional[typing.Iterable[typing.Any]] = None,
+        location: typing.Optional[typing.List[typing.Any]] = None,
         expected_type: typing.Optional[typing.Any] = None,
         input_type: typing.Optional[typing.Any] = None,
         code: typing.Optional[str] = None,
@@ -170,17 +165,11 @@ class DetailedError(AttribException):
         :param code: Optional error code for the error detail
         :param context: Optional context dictionary for additional information
         """
-        loc = []
-        if name:
-            loc.append(name)
-        if location:
-            loc.extend(location)
-
         detail = ErrorDetail(
             message=message,
             expected_type=expected_type,
             input_type=input_type,
-            location=loc,
+            location=list(filter(lambda x: x is not None, location or [])),
             code=code,
             context=context,
             origin=origin,
@@ -193,11 +182,10 @@ class DetailedError(AttribException):
         exception: Exception,
         *,
         message: typing.Optional[str] = None,
-        name: typing.Optional[str] = None,
         parent_name: typing.Optional[str] = None,
         expected_type: typing.Optional[typing.Any] = None,
         input_type: typing.Optional[typing.Any] = None,
-        location: typing.Optional[typing.Iterable[typing.Any]] = None,
+        location: typing.Optional[typing.List[typing.Any]] = None,
         code: typing.Optional[str] = None,
         context: typing.Optional[typing.Dict[str, typing.Any]] = None,
     ) -> Self:
@@ -206,7 +194,6 @@ class DetailedError(AttribException):
 
         :param exception: The exception to convert into a DetailedError
         :param message: Optional message to use for the error detail
-        :param name: Optional name for the field or context where the error occurred
         :param parent_name: Optional name for the parent context
         :param expected_type: Optional expected type for the field or context
         :param input_type: Optional input type that caused the error
@@ -217,14 +204,7 @@ class DetailedError(AttribException):
         :return: A new `DetailedError` instance with the provided details
         """
         msg = f"{message or ''}\n  {exception.args[0] if exception.args else str(exception)}".strip()
-        if isinstance(exception, DetailedError):
-            new = cls(message=msg, parent_name=parent_name)
-            new.error_list.clear()
-            new.merge(exception)
-            return new
-
         new = cls(
-            name=name,
             parent_name=parent_name,
             message=msg,
             expected_type=expected_type,
@@ -234,24 +214,25 @@ class DetailedError(AttribException):
             context=context,
             origin=exception,
         )
+        if isinstance(exception, DetailedError):
+            new.error_list.clear()
+            new.merge(exception, location=location)
         return new
 
     def merge(
         self,
         other: "DetailedError",
-        prefix: typing.Optional[typing.Union[str, int]] = None,
+        location: typing.Optional[typing.List[typing.Any]] = None,
     ) -> None:
         """
         Merge another `DetailedError` into this one.
 
         :param other: The other DetailedError to merge
-        :param prefix: Optional prefix to add at the start of the location of each error detail
+        :param location: Optional location(s) to prepend to the error details
         """
+        location = location or []
         for detail in other.error_list:
-            loc = list(detail.location)
-            if prefix is not None:
-                loc.insert(0, prefix)
-
+            loc = list(filter(lambda x: x is not None, [*location, *detail.location]))
             self.add_detail(
                 message=detail.message,
                 expected_type=detail.expected_type,
@@ -267,11 +248,10 @@ class DetailedError(AttribException):
         exception: Exception,
         *,
         message: typing.Optional[str] = None,
-        name: typing.Optional[str] = None,
         parent_name: typing.Optional[str] = None,
         expected_type: typing.Optional[typing.Any] = None,
         input_type: typing.Optional[typing.Any] = None,
-        location: typing.Optional[typing.Iterable[typing.Any]] = None,
+        location: typing.Optional[typing.List[typing.Any]] = None,
         code: typing.Optional[str] = None,
         context: typing.Optional[typing.Dict[str, typing.Any]] = None,
     ) -> None:
@@ -280,7 +260,6 @@ class DetailedError(AttribException):
 
         :param exception: The exception to add as an error detail
         :param message: Optional message to use for the error detail
-        :param name: Optional name for the field or context where the error occurred
         :param parent_name: Optional name for the parent context
         :param expected_type: Optional expected type for the field or context
         :param input_type: Optional input type that caused the error
@@ -290,19 +269,21 @@ class DetailedError(AttribException):
         :param code: Optional error code for the error detail
         :param context: Optional context dictionary for additional information
         """
-        self.merge(
-            self.from_exception(
-                exception,
-                message=message,
-                name=name,
-                parent_name=parent_name,
-                input_type=input_type,
-                expected_type=expected_type,
-                location=location,
-                code=code,
-                context=context,
+        if not isinstance(exception, DetailedError):
+            self.merge(
+                self.from_exception(
+                    exception,
+                    message=message,
+                    parent_name=parent_name,
+                    expected_type=expected_type,
+                    input_type=input_type,
+                    location=location,
+                    code=code,
+                    context=context,
+                ),
             )
-        )
+        else:
+            self.merge(exception, location=location)
 
     @classmethod
     @contextmanager
@@ -314,8 +295,8 @@ class DetailedError(AttribException):
         /,
         message: str = "Collected errors",
         *,
-        name: typing.Optional[str] = None,
         parent_name: typing.Optional[str] = None,
+        location: typing.Optional[typing.List[typing.Any]] = None,
     ) -> typing.Generator["DetailedError", None, None]:
         """
         Context manager to collect errors raised within a block of code.
@@ -326,21 +307,25 @@ class DetailedError(AttribException):
         will be raised at the end of the block.
 
         :param target: The exception type(s) to catch and collect
-        :param name: Optional name for the field or context where the error occurred
         :param parent_name: Optional name for the parent context
         :param message: The message to use for the `DetailedError` if multiple errors are collected
+        :param location: Optional location(s) to prepend to the error details
         :return: A `DetailedError` instance that collects errors raised in the block
         :raises DetailedError: If any errors are collected or added during the block execution
 
-        Usage:
+        Example:
         ```python
-        with DetailedError.collect((ValueError, Deta), name="user") as errors:
+        with DetailedError.collect((ValueError, TypeError), location=["parent"]) as errors:
             # Code that might raise an error or exception
             if invalid:
-                errors.add("Invalid value", location=["field"])
+                errors.add("Invalid value", location=["child"])
         ```
         """
-        errors = cls(message=message, name=name, parent_name=parent_name)
+        errors = cls(
+            message=message,
+            parent_name=parent_name,
+            location=location,
+        )
         collected = []
 
         try:
@@ -355,7 +340,7 @@ class DetailedError(AttribException):
 
         if collected or len(errors.error_list) > 1:
             for exc in collected:
-                errors.merge(exc)
+                errors.merge(exc, location=location)
             raise errors
 
     def error_messages(self) -> typing.Generator[str, None, None]:
@@ -388,23 +373,23 @@ class ValidationError(DetailedError):
         self,
         message: str,
         *,
-        name: typing.Optional[str] = None,
         parent_name: typing.Optional[str] = None,
         expected_type: typing.Optional[typing.Any] = None,
         input_type: typing.Optional[typing.Any] = None,
-        location: typing.Optional[typing.Iterable[typing.Any]] = None,
+        location: typing.Optional[typing.List[typing.Any]] = None,
         code: typing.Optional[str] = None,
         context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+        origin: typing.Optional[Exception] = None,
     ) -> None:
         super().__init__(
             message=message,
-            name=name,
             parent_name=parent_name,
             expected_type=expected_type,
             input_type=input_type,
             location=location,
             code=code or "validation_failed",
             context=context,
+            origin=origin,
         )
 
 
@@ -415,23 +400,23 @@ class SerializationError(DetailedError):
         self,
         message: str,
         *,
-        name: typing.Optional[str] = None,
         parent_name: typing.Optional[str] = None,
         expected_type: typing.Optional[typing.Any] = None,
         input_type: typing.Optional[typing.Any] = None,
-        location: typing.Optional[typing.Iterable[typing.Any]] = None,
+        location: typing.Optional[typing.List[typing.Any]] = None,
         code: typing.Optional[str] = None,
         context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+        origin: typing.Optional[Exception] = None,
     ) -> None:
         super().__init__(
             message=message,
-            name=name,
             parent_name=parent_name,
             expected_type=expected_type,
             input_type=input_type,
             location=location,
             code=code or "serialization_failed",
             context=context,
+            origin=origin,
         )
 
 
@@ -442,50 +427,50 @@ class DeserializationError(DetailedError):
         self,
         message: str,
         *,
-        name: typing.Optional[str] = None,
         parent_name: typing.Optional[str] = None,
         expected_type: typing.Optional[typing.Any] = None,
         input_type: typing.Optional[typing.Any] = None,
-        location: typing.Optional[typing.Iterable[typing.Any]] = None,
+        location: typing.Optional[typing.List[typing.Any]] = None,
         code: typing.Optional[str] = None,
         context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+        origin: typing.Optional[Exception] = None,
     ) -> None:
         super().__init__(
             message=message,
-            name=name,
             parent_name=parent_name,
             expected_type=expected_type,
             input_type=input_type,
             location=location,
             code=code or "coercion_failed",
             context=context,
+            origin=origin,
         )
 
 
-class InvalidTypeError(ValidationError):
+class InvalidTypeError(DeserializationError):
     """Validation error raised when an invalid unexpected type is encountered."""
 
     def __init__(
         self,
         message: str,
         *,
-        name: typing.Optional[str] = None,
         parent_name: typing.Optional[str] = None,
         expected_type: typing.Optional[typing.Any] = None,
         input_type: typing.Optional[typing.Any] = None,
-        location: typing.Optional[typing.Iterable[typing.Any]] = None,
+        location: typing.Optional[typing.List[typing.Any]] = None,
         code: typing.Optional[str] = None,
         context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+        origin: typing.Optional[Exception] = None,
     ) -> None:
         super().__init__(
             message=message,
-            name=name,
             parent_name=parent_name,
             expected_type=expected_type,
             input_type=input_type,
             location=location,
             code=code or "invalid_type",
             context=context,
+            origin=origin,
         )
 
 

@@ -18,17 +18,17 @@ attrib_adapter = attrib.TypeAdapter(
     defer_build=True,
 )
 
-pydantic_adapter = pydantic.TypeAdapter(
-    typing.Tuple[
-        typing.List[typing.Optional["PersonTuple"]],
-        typing.Dict[str, typing.List[int]],
-        typing.Optional[str],
-    ],
-    config=pydantic.ConfigDict(
-        defer_build=True,
-        arbitrary_types_allowed=True,
-    ),
-)
+# pydantic_adapter = pydantic.TypeAdapter(
+#     typing.Tuple[
+#         typing.List[typing.Optional["PersonTuple"]],
+#         typing.Dict[str, typing.List[int]],
+#         typing.Optional[str],
+#     ],
+#     config=pydantic.ConfigDict(
+#         defer_build=True,
+#         arbitrary_types_allowed=True,
+#     ),
+# )
 
 
 class Person(attrib.Dataclass, slots=True, frozen=True):
@@ -48,7 +48,7 @@ class PersonTuple(typing.NamedTuple):
 
     name: str
     age: int
-    friends: typing.List[typing.Optional["PersonTuple"]]
+    friends: typing.List[typing.Optional["Person"]]
 
 
 raw_data = (
@@ -78,19 +78,26 @@ raw_data = (
 
 
 def main():
-    with timeit("build_pydantic_adapter"):
-        pydantic_adapter.rebuild()
+    # with timeit("build_pydantic_adapter"):
+    #     pydantic_adapter.rebuild()
 
     with timeit("build_adapter"):
-        attrib_adapter.build(depth=10, globalns=globals())
+        attrib_adapter.build(globalns=globals())
 
-    with timeit("adapt_and_serialize_pydantic"):
-        adapted_pydantic = pydantic_adapter.validate_python(raw_data)
-        log(adapted_pydantic)
+    # with timeit("adapt_and_serialize_pydantic"):
+    #     adapted_pydantic = pydantic_adapter.validate_python(raw_data)
+    #     log(adapted_pydantic)
 
     with timeit("adapt_and_serialize"):
         adapted = attrib_adapter.adapt(raw_data)
-        log(attrib_adapter.serialize(adapted, fmt="python"))
+        log(
+            attrib_adapter.serialize(
+                adapted,
+                fmt="python",
+                astuple=True,
+                options=attrib.Options(attrib.Option(depth=2)),
+            )
+        )
 
 
 if __name__ == "__main__":
