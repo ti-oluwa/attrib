@@ -106,7 +106,12 @@ class Student(PersonalInfo):
 
     id: int
     year: typing.Optional[AcademicYear] = None
-    courses: typing.List[Course] = Field(min_length=1, max_length=15, fail_fast=True)
+    courses: typing.List[Course] = Field(
+        min_length=1,
+        max_length=15,
+        fail_fast=True,
+        serialization_alias="enrolled_in",
+    )
     gpa: typing.Optional[float] = Field(
         default_factory=lambda: random.uniform(1.5, 5.0)
     )
@@ -134,7 +139,6 @@ class Student(PersonalInfo):
         return v
 
 
-
 Model = typing.TypeVar("Model", bound=pydantic.BaseModel)
 
 
@@ -159,7 +163,12 @@ def example():
     students = load_data(student_data, Student)
 
     for student in students:
-        student.model_dump(mode="json")
+        # log(
+            student.model_dump(
+                mode="json",
+                by_alias=True,
+            )
+        # )
 
     for course in courses:
         course.model_dump(mode="json")

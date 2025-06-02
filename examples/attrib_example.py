@@ -36,14 +36,14 @@ class AcademicYear(attrib.Dataclass, slots=True, repr=True):
     """Academic year data class"""
 
     id = attrib.Integer(required=True)
-    name = attrib.String(max_length=100, serializers={"python": _unsupported_serializer})
+    name = attrib.String(max_length=100)
     term = attrib.Choice(Term, default=Term.FIRST)
     start_date = attrib.Date(input_formats=["%d-%m-%Y", "%d/%m/%Y"])
     end_date = attrib.Date(input_formats=["%d-%m-%Y", "%d/%m/%Y"])
     created_at = attrib.DateTime(default=datetime.now, tz="Africa/Lagos")
 
 
-class Course(attrib.Dataclass, slots=True):
+class Course(attrib.Dataclass, slots=True, sort=True):
     """Course data class"""
 
     id = attrib.Integer(required=True, allow_null=True)
@@ -56,7 +56,7 @@ class Course(attrib.Dataclass, slots=True):
 class PersonalInfo(attrib.Dataclass):
     """Personal information data class"""
 
-    name = attrib.String(max_length=100, serializers={"python": _unsupported_serializer})
+    name = attrib.String(max_length=100)
     age = attrib.Integer(min_value=0, max_value=30)
     email = attrib.Email(allow_null=True, default=None)
     phone = PhoneNumber(allow_null=True, default=None)
@@ -69,13 +69,13 @@ class PersonalInfo(attrib.Dataclass):
 
 
 @attrib.partial
-class Student(PersonalInfo, sort=True):
+class Student(PersonalInfo):
     """Student data class with multiple fields and a list of enrolled courses"""
 
-    id = attrib.Integer(required=True, serializers={"python": _unsupported_serializer})
-    year = attrib.Nested(AcademicYear, lazy=True, allow_null=True)
+    id = attrib.Integer(required=True)
+    level = attrib.Nested(AcademicYear, lazy=True, allow_null=True, alias="year")
     courses = attrib.List(
-        child=attrib.Nested(Course, lazy=False, serializers={"python": _unsupported_serializer}),
+        child=attrib.Nested(Course, lazy=False),
         validator=attrib.validators.and_(
             attrib.validators.min_length(1), attrib.validators.max_length(15)
         ),
@@ -83,7 +83,7 @@ class Student(PersonalInfo, sort=True):
         serialization_alias="enrolled_in",
     )
     gpa = attrib.Float(
-        allow_null=True, default=attrib.Factory(random.uniform, a=1.5, b=5.0)
+        allow_null=True, default=attrib.Factory(random.randrange, start=1, stop=5)
     )
     joined_at = attrib.DateTime(allow_null=True, tz="Africa/Lagos")
     created_at = attrib.DateTime(default=datetime.now, tz="Africa/Lagos")
@@ -105,28 +105,45 @@ def load_data(
 
 def example():
     """Run example usage of the data classes"""
-    with attrib.deserialization_context(fail_fast=True):
+    with attrib.deserialization_context(
+        fail_fast=True,
+        by_name=True,
+        ignore_extras=True,
+    ):
         students = load_data(student_data, Student)
         courses = load_data(course_data, Course)
         years = load_data(year_data, AcademicYear)
-        
 
     for student in students:
-        log(attrib.serialize(
-            student,
-            fmt="json",
-            options=attrib.Options(
-                attrib.Option(Course, include={"year"}, depth=0, strict=True),
-                attrib.Option(AcademicYear, exclude={"term", "id"}, depth=0),
-                attrib.Option(Student, depth=1),
-            ),
-        ))
+        log(
+            attrib.serialize(
+                student,
+                fmt="python",
+                options=attrib.Options(
+                    attrib.Option(
+                        Student,
+                        include={"courses", "name", "age", "gpa", "level"},
+                        depth=1,
+                    ),
+                    attrib.Option(
+                        Course,
+                        include={"code", "name", "year"},
+                        depth=0,
+                        strict=True,
+                    ),
+                    attrib.Option(exclude={"created_at", "id"}, depth=1),
+                ),
+                astuple=True,
+                by_alias=True,
+                # exclude_unset=True,
+            )
+        )
 
     for course in courses:
-        attrib.serialize(course, fmt="json", astuple=False)
+        attrib.serialize(course, fmt="python", astuple=False)
 
     for year in years:
-        attrib.serialize(year, fmt="json", astuple=False)
+        attrib.serialize(year, fmt="python", astuple=False)
 
     # import pickle
 

@@ -34,9 +34,9 @@ class Option(typing.NamedTuple):
     depth: Annotated[typing.Optional[int], Ge(0)] = None
     """Depth for nested serialization."""
     include: typing.Optional[Annotated[typing.Set[str], MinLen(1)]] = None
-    """Fields to include in serialization."""
+    """Name of fields to include in serialization."""
     exclude: typing.Optional[Annotated[typing.Set[str], MinLen(1)]] = None
-    """Fields to exclude from serialization."""
+    """Name of fields to exclude from serialization."""
     strict: bool = False
     """If False, instances of subclasses of the target class will be serialized using this
     option, if no option is defined specifically for them. If True, only direct instances of the target class will be serialized.
@@ -344,14 +344,14 @@ def Options(
                 "Cannot specify both 'include' and 'exclude' in the same Option."
             )
 
-        target_fields = set(option.target.effective_to_base_name_map)
-        if option.include:
+        target_fields = set(option.target.base_to_effective_name_map.keys())
+        if option.include and option.target is not Dataclass:
             unknown_fields = option.include - target_fields
             if unknown_fields:
                 raise ValueError(
                     f"Some included fields are not present in {option.target.__name__} - {', '.join(unknown_fields)}"
                 )
-        elif option.exclude:
+        elif option.exclude and option.target is not Dataclass:
             unknown_fields = option.exclude - target_fields
             if unknown_fields:
                 raise ValueError(
@@ -535,6 +535,7 @@ def serialize(
     ```
     """
     context = context or {}
+    context["__astuple"] = astuple
     context["__options"] = options or {}
     context["__fail_fast"] = fail_fast
     context["__by_alias"] = by_alias

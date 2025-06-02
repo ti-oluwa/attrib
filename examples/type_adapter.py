@@ -95,13 +95,13 @@ def main():
 
     with timeit("adapt_and_serialize"):
         adapted = attrib_adapter.adapt(raw_data, fail_fast=True)
-        log(attrib_adapter.serialize(
+        attrib_adapter.serialize(
             adapted,
             fmt="python",
             astuple=False,
             fail_fast=True,
             options=attrib.Options(attrib.Option(Person, depth=1)),
-        ))
+        )
 
 
 if __name__ == "__main__":
