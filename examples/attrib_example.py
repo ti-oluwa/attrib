@@ -1,6 +1,7 @@
 import enum
 import random
 import typing
+import functools
 from datetime import datetime
 import tracemalloc
 import gc
@@ -83,10 +84,19 @@ class Student(PersonalInfo):
         serialization_alias="enrolled_in",
     )
     gpa = attrib.Float(
-        allow_null=True, default=attrib.Factory(random.randrange, start=1, stop=5)
+        allow_null=True, default=attrib.Factory(random.randint, a=1, b=5)
     )
     joined_at = attrib.DateTime(allow_null=True, tz="Africa/Lagos")
     created_at = attrib.DateTime(default=datetime.now, tz="Africa/Lagos")
+
+    __config__ = attrib.Config(
+        slots=("__dict__",),
+    )
+
+    @functools.cached_property
+    def full_name(self) -> str:
+        """Return the full name of the student"""
+        return f"{self.name} (ID: {self.id})"
 
 
 def load_data(
@@ -106,8 +116,8 @@ def load_data(
 def example():
     """Run example usage of the data classes"""
     with attrib.deserialization_context(
-        fail_fast=True,
-        by_name=True,
+        # fail_fast=True,
+        # by_name=True,
         ignore_extras=True,
     ):
         students = load_data(student_data, Student)
@@ -115,35 +125,35 @@ def example():
         years = load_data(year_data, AcademicYear)
 
     for student in students:
-        log(
+        # log(
             attrib.serialize(
                 student,
-                fmt="python",
-                options=attrib.Options(
-                    attrib.Option(
-                        Student,
-                        include={"courses", "name", "age", "gpa", "level"},
-                        depth=1,
-                    ),
-                    attrib.Option(
-                        Course,
-                        include={"code", "name", "year"},
-                        depth=0,
-                        strict=True,
-                    ),
-                    attrib.Option(exclude={"created_at", "id"}, depth=1),
-                ),
-                astuple=True,
-                by_alias=True,
+                fmt="json",
+                # options=attrib.Options(
+                #     attrib.Option(
+                #         Student,
+                #         include={"courses", "name", "age", "gpa", "level"},
+                #         depth=1,
+                #     ),
+                #     attrib.Option(
+                #         Course,
+                #         include={"code", "name", "year"},
+                #         depth=0,
+                #         strict=True,
+                #     ),
+                #     attrib.Option(exclude={"created_at", "id"}, depth=1),
+                # ), 
+                astuple=False,
+                # by_alias=True,
                 # exclude_unset=True,
             )
-        )
+        # )
 
     for course in courses:
-        attrib.serialize(course, fmt="python", astuple=False)
+        attrib.serialize(course, fmt="json", astuple=False)
 
     for year in years:
-        attrib.serialize(year, fmt="python", astuple=False)
+        attrib.serialize(year, fmt="json", astuple=False)
 
     # import pickle
 

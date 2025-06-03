@@ -21,7 +21,6 @@ from attrib._typing import DataDict, RawData, KwArg
 __all__ = [
     "Dataclass",
     "get_fields",
-    "load",
     "deserialize",
     "deserialization_context",
     "get_field",
@@ -137,7 +136,9 @@ def _setstate(
 ) -> "Dataclass":
     """Set the state of the dataclass instance."""
     field_values, attributes = state
-    load(instance, field_values)
+    with deserialization_context(fail_fast=True, ignore_extras=True, by_name=True):
+        _load_data(instance, data=field_values)
+
     for key, value in attributes.items():
         if key in instance.__fields__:
             continue
@@ -187,13 +188,6 @@ def _iter(instance: "Dataclass") -> typing.Iterator[typing.Tuple[str, typing.Any
         yield key, field.__get__(instance, owner=owner)
 
 
-def _get_slot_attribute_name(
-    unique_prefix: str,
-    field_name: str,
-) -> str:
-    return f"_{unique_prefix}_{field_name}"
-
-
 def _build_slotted_namespace(
     namespace: typing.Dict[str, typing.Any],
     own_fields: typing.Iterable[str],
@@ -211,9 +205,7 @@ def _build_slotted_namespace(
     """
     # Only add slots for fields defined in the class, i.e those that are not
     # inherited from a base class.
-    slotted_attributes_names = {
-        key: _get_slot_attribute_name("slotted", key) for key in own_fields
-    }
+    slotted_attributes_names = {key: f"_slotted_{key}" for key in own_fields}
 
     slots = set(slotted_attributes_names.values())
     if additional_slots:
@@ -473,7 +465,7 @@ class Dataclass(metaclass=DataclassMeta):
     Define data structures with special descriptors.
 
     Dataclasses are defined by subclassing `Dataclass` and defining fields as class attributes.
-    Dataclasses enforce type conversion, validation, and other behaviors on the fields.
+    Dataclasses enforce type coercion, validation, and other behaviors on the fields.
 
     :param frozen: If True, the dataclass is immutable after creation.
     :param slots: If True, use __slots__ for instance attribute storage.
@@ -483,6 +475,10 @@ class Dataclass(metaclass=DataclassMeta):
     :param str: If True, use dict representation for __str__ or to use the default.
     :param sort: If True, sort fields by name. If a callable, use as the sort key.
         If False, do not sort fields.
+    :param hash: If True, add __hash__ method to the class, if it does not exist.
+    :param eq: If True, add __eq__ method to the class, if it does not exist.
+    :param pickleable: If True, adds __getstate__, __setstate__, and __getnewargs__ methods to the class,
+        if they do not exist. If False, do not add these methods.
     :param getitem: If True, add __getitem__ method to the class.
     :param setitem: If True, add __setitem__ method to the class.
 
@@ -563,9 +559,9 @@ class Dataclass(metaclass=DataclassMeta):
     __fields__: typing.ClassVar[typing.Mapping[str, Field[typing.Any]]] = {}
     """Mapping of field names to their corresponding Field instances."""
     base_to_effective_name_map: typing.ClassVar[typing.Mapping[str, str]] = {}
-    """Mapping of base field names to effective field names."""
+    """Mapping of actual field names to effective field names."""
     effective_to_base_name_map: typing.ClassVar[typing.Mapping[str, str]] = {}
-    """Mapping of effective field names to base field names."""
+    """Mapping of effective field names to actual field names."""
 
     @typing.overload
     def __init__(self, data: None = None) -> None:
@@ -600,7 +596,7 @@ class Dataclass(metaclass=DataclassMeta):
         object.__setattr__(self, "_initializing", True)
         self.__fields_set__: typing.Set[str] = set()
         combined = {**dict(data or {}), **kwargs}  # type: ignore[assignment]
-        load(self, data=combined)
+        _load_data(self, data=combined)
         object.__setattr__(self, "_initializing", False)
 
     def __init_subclass__(cls, **kwargs: Unpack[ConfigSchema]) -> None:
@@ -663,23 +659,22 @@ def deserialization_context(
             context_var.reset(token)
 
 
-def load(
-    instance: DataclassTco,
-    data: DataDict,
-) -> DataclassTco:
+_missing = object()
+"""Sentinel representing a missing value in a data dict"""
+
+
+def _load_data(instance: DataclassTco, data: DataDict) -> DataclassTco:
     """
     Load raw data unto the dataclass instance.
 
+    :param instance: The dataclass instance to load data unto.
     :param data: Mapping of raw data to initialize the dataclass instance with.
-    :param ignore_extras: If True, ignore extra fields not defined in the dataclass.
-        Else, raise a DeserializationError if extra fields are found.
-    :param fail_fast: If True, stop on the first error encountered during loading.
     :raises DeserializationError: If there are errors during deserialization.
     :return: This same instance with the raw data loaded.
     """
     ignore_extras = _ignore_extras.get()
     if not ignore_extras:
-        extra_keys = set(data) - set(instance.__fields__)
+        extra_keys = set(data.keys()) - set(instance.__fields__)
         if extra_keys:
             raise DeserializationError(
                 f"Unknown field(s) found: {', '.join(extra_keys)}",
@@ -693,17 +688,19 @@ def load(
     fail_fast = _fail_fast.get()
     by_name = _by_name.get()
     for name, field in instance.__fields__.items():
-        if by_name:
-            key = name
-        else:
-            key = instance.base_to_effective_name_map[name]
-
         try:
-            if key not in data:
-                field.set_default(instance)
-                continue
+            if by_name:
+                if (value := data.get(name, _missing)) is _missing:
+                    field.set_default(instance)
+                    continue
+            else:
+                effective_name = instance.base_to_effective_name_map[name]
+                if (value := data.get(effective_name, _missing)) is _missing:
+                    if (value := data.get(name, _missing)) is _missing:
+                        field.set_default(instance)
+                        continue
 
-            field.__set__(instance, data[key])
+            field.__set__(instance, value)
         except (DeserializationError, ValidationError) as exc:
             if fail_fast:
                 raise DeserializationError.from_exception(
@@ -728,64 +725,30 @@ def load(
 
 
 def _from_attributes(
-    dataclass_: typing.Type[DataclassTco],
-    obj: typing.Any,
+    dataclass_: typing.Type[DataclassTco], obj: typing.Any
 ) -> DataclassTco:
     """
     Convert an object to a dataclass instance by loading fields using
     the object's attributes
 
+    :param dataclass_: The target dataclass type to convert to.
     :param obj: The object to convert.
-    :param dataclass_: The dataclass type to convert to.
-    :param fail_fast: If True, stop on the first error encountered during conversion.
     :return: The dataclass instance.
     """
-    if dataclass_.__config__.frozen:
-        raise ConfigurationError(
-            f"Cannot convert {obj!r} to a frozen dataclass. Use the constructor instead."
-        )
-
-    instance = dataclass_()
-    error = None
-    fail_fast = _fail_fast.get()
+    values = {}
     by_name = _by_name.get()
-    for name, field in dataclass_.__fields__.items():
+    for name in dataclass_.__fields__.keys():
         if by_name:
-            key = name
+            if (value := getattr(obj, name, _missing)) is not _missing:
+                values[name] = value
         else:
-            key = instance.base_to_effective_name_map[name]
+            effective_name = dataclass_.base_to_effective_name_map[name]
+            if (value := getattr(obj, effective_name, _missing)) is not _missing:
+                values[name] = value
+            elif (value := getattr(obj, name, _missing)) is not _missing:
+                values[name] = value
 
-        try:
-            if not hasattr(obj, key):
-                field.set_default(instance)
-                continue
-
-            value = getattr(obj, key)
-            field.__set__(instance, value)
-        except (DeserializationError, ValidationError) as exc:
-            if fail_fast:
-                raise DeserializationError.from_exception(
-                    exc,
-                    parent_name=type(instance).__name__,
-                    location=[name],
-                ) from exc
-            else:
-                if error is None:
-                    error = DeserializationError.from_exception(
-                        exc,
-                        parent_name=type(instance).__name__,
-                        location=[name],
-                    )
-                else:
-                    error.add(
-                        exc,
-                        parent_name=type(instance).__name__,
-                        location=[name],
-                    )
-
-    if error is not None:
-        raise error
-    return instance
+    return dataclass_(**values)
 
 
 @typing.overload
@@ -848,6 +811,45 @@ def deserialize(
         if from_attributes:
             return _from_attributes(dataclass_, obj)
         return dataclass_(obj)
+
+
+def copy(
+    instance: DataclassTco, update: typing.Optional[DataDict] = None
+) -> DataclassTco:
+    """
+    Create a copy of the dataclass instance.
+
+    This implementation uses the state management methods of the dataclass,
+    `__getstate__` and `__setstate__`.
+
+    It is important to note that copying involves loading or deserializing
+    the state of the original instance unto a new instance(aopy), applying
+    any updates as needed.
+
+    :param instance: The dataclass instance to copy.
+    :param update: Optional dictionary to update fields in the copied instance.
+    :return: A new dataclass instance that is a copy of the original.
+    """
+    getstate = getattr(instance, "__getstate__", _getstate)
+    setstate = getattr(instance, "__setstate__", _setstate)
+    field_values, attributes = getstate(instance)
+    if update:
+        # Convert any aliases in the update data to field names
+        normalized_updates = {}
+        for key, value in update.items():
+            if key in instance.effective_to_base_name_map:
+                field_name = instance.effective_to_base_name_map[key]
+                normalized_updates[field_name] = value
+        field_values.update(normalized_updates)
+
+    new_instance = type(instance).__new__(type(instance))
+    with deserialization_context(
+        fail_fast=True,
+        ignore_extras=True,
+        by_name=True,
+    ):
+        setstate(new_instance, (field_values, attributes))
+    return new_instance
 
 
 def get_field(

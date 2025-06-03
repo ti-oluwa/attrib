@@ -430,8 +430,8 @@ class SerializerRegistry(typing.NamedTuple):
     :param map: A dictionary mapping format names to their respective serializer functions.
     """
 
-    map: typing.DefaultDict[str, Serializer[typing.Any]] = (
-        defaultdict(_unsupported_serializer_factory)
+    map: typing.DefaultDict[str, Serializer[typing.Any]] = defaultdict(
+        _unsupported_serializer_factory
     )
 
     def __call__(self, fmt: str, *args: typing.Any, **kwargs: typing.Any) -> typing.Any:
@@ -603,7 +603,7 @@ def coalesce_funcs(
 
     if len(funcs) == 1:
         return funcs[0]
-    
+
     def coalesce(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
         error = None
         for index, func in enumerate(funcs):

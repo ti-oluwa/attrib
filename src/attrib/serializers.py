@@ -324,9 +324,7 @@ def _serialize_instance_asnamedtuple(
 
 
 @functools.lru_cache(maxsize=128)
-def Options(
-    *options: Option,
-) -> OptionsMap:
+def Options(*options: Option) -> OptionsMap:
     """
     Process a variable number of serialization `Option` instances into a mapping.
 
@@ -501,12 +499,13 @@ def serialize(
     Example:
     ```python
     import attrib
+    from attrib.descriptors.phonenumbers import PhoneNumber
 
     class Person(attrib.Dataclass):
         name = attrib.String()
         age = attrib.Integer()
         email = attrib.String()
-        phone = attrib.String()
+        phone = PhoneNumber(serialization_alias="phone_number")
         address = attrib.String()
 
     john = Person(
@@ -523,6 +522,7 @@ def serialize(
         options=attrib.Options(
             attrib.Option(exclude={"address"}),
         ),
+        by_alias=True,
     )
     print(data)
     # Output:
@@ -530,7 +530,7 @@ def serialize(
     #     "name": "John Doe",
     #     "age": 30,
     #     "email": "john.doe@example.com",
-    #     "phone": "+1234567890",
+    #     "phone_number": "+1-234-567-890",
     # }
     ```
     """
@@ -540,7 +540,6 @@ def serialize(
     context["__fail_fast"] = fail_fast
     context["__by_alias"] = by_alias
     context["__exclude_unset"] = exclude_unset
-
     if astuple:
         return _serialize_instance_asnamedtuple(
             fmt,

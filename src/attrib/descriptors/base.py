@@ -218,13 +218,12 @@ def default_deserializer(
 
 
 @typing.final
-@dataclass(frozen=True, slots=True)
-class Value(typing.Generic[T]):
+class Value(typing.NamedTuple):
     """
     Wrapper for field values.
     """
 
-    wrapped: typing.Union[T, typing.Any]
+    wrapped: typing.Any
     is_valid: bool = False
 
     def __bool__(self) -> bool:
@@ -532,7 +531,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         self.set_value(instance, value, lazy=self.lazy)
         instance.__fields_set__.add(self.name)  # type: ignore[attr-defined]
 
-    def get_value(self, instance: typing.Any) -> Value[T]:
+    def get_value(self, instance: typing.Any) -> Value:
         """
         Get the field value from an instance.
 
@@ -557,7 +556,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         value: typing.Any,
         lazy: bool = False,
         is_lazy_valid: bool = False,
-    ) -> Value[typing.Any]:
+    ) -> Value:
         """
         Set the field's value on an instance, performing validation if required.
 
