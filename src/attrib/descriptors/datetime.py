@@ -122,10 +122,13 @@ _datetime_cache = _LRUCache[str, datetime.datetime](maxsize=128)
 
 
 def cached_iso_parse(
-    value: str,
+    value: typing.Any,
     fmt: typing.Optional[typing.Iterable[str]] = None,
 ) -> datetime.datetime:
     """Parse a datetime string in ISO format with caching."""
+    if isinstance(value, datetime.datetime):
+        return value
+
     if value in _datetime_cache:
         return _datetime_cache[value]
 
@@ -197,8 +200,25 @@ def datetime_deserializer(
     return cached_iso_parse(value, fmt=field.input_formats)
 
 
+def is_aware_datetime(value: datetime.datetime) -> bool:
+    """Check if a datetime object is timezone-aware."""
+    return value.tzinfo is not None and value.tzinfo.utcoffset(value) is not None
+
+
 class DateTime(DateTimeBase[datetime.datetime]):
-    """Field for handling datetime values."""
+    """
+    Field for handling datetime values.
+
+    Datetime values returned by this field will be never be naive.
+
+    If no timezone is defined for the field, and the input datetime is naive,
+    it will be assumed to be in UTC timezone.
+
+    Note that if a default value is provided, it should be a timezone-aware
+    datetime object, or a callable that returns one. If a naive datetime is
+    provided as a default, it will remain naive as default values are treated
+    as valid input values and will not be modified by the field.
+    """
 
     default_output_format = "%Y-%m-%d %H:%M:%S%z"
     default_deserializer = datetime_deserializer
@@ -241,8 +261,10 @@ class DateTime(DateTimeBase[datetime.datetime]):
         if deserialized is None:
             return None
 
-        if self.tz and deserialized.tzinfo:
+        tz_available = self.tz is not None
+        is_aware = is_aware_datetime(deserialized)
+        if is_aware and tz_available:
             return deserialized.astimezone(self.tz)
-        if self.tz:
-            return deserialized.replace(tzinfo=self.tz)
-        return deserialized
+        if is_aware and not tz_available:
+            return deserialized
+        return deserialized.replace(tzinfo=self.tz or zoneinfo.ZoneInfo("UTC"))

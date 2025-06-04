@@ -28,6 +28,19 @@ from attrib._typing import IterType, JSONDict, JSONList, Serializer, EMPTY, JSON
 from attrib.exceptions import SerializationError, DetailedError
 
 
+__all__ = [
+    "iexact",
+    "is_valid_type",
+    "resolve_type",
+    "parse_duration",
+    "rfc3339_parse",
+    "iso_parse",
+    "now",
+    "make_jsonable",
+    "coalesce_funcs",
+]
+
+
 def has_package(package_name) -> bool:
     """Check if a package is installed."""
     return importlib.util.find_spec(package_name) is not None
@@ -271,7 +284,7 @@ postgres_interval_re = re.compile(
 )
 
 
-def parse_duration(value) -> typing.Optional[datetime.timedelta]:
+def parse_duration(value: str) -> typing.Optional[datetime.timedelta]:
     """
     Parse a duration string and return a datetime.timedelta.
 
@@ -366,6 +379,23 @@ def iso_parse(
     if HAS_DATEUTIL:
         return parser.parse(s)  # type: ignore
     raise ValueError(f"Could not parse datetime string {s}")
+
+
+def now(
+    tz: typing.Optional[typing.Union[str, zoneinfo.ZoneInfo]] = None,
+) -> datetime.datetime:
+    """
+    Get the current time in the specified timezone.
+
+    If no timezone is specified, it returns the current time in UTC.
+    """
+    if tz is None:
+        return datetime.datetime.now(datetime.timezone.utc)
+
+    if isinstance(tz, str):
+        tz = zoneinfo.ZoneInfo(tz)
+
+    return datetime.datetime.now(tz).astimezone(tz)
 
 
 K = typing.TypeVar("K")

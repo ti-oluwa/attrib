@@ -1,11 +1,11 @@
 """Data description classes"""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from contextvars import ContextVar, Token
 import typing
-from functools import cache
+from functools import partial
 from types import MappingProxyType
-from typing_extensions import Unpack
+from typing_extensions import Unpack, Self
 from contextlib import contextmanager
 
 from attrib.descriptors.base import Field, Value
@@ -20,10 +20,12 @@ from attrib._typing import DataDict, RawData, KwArg
 
 __all__ = [
     "Dataclass",
-    "get_fields",
+    "Config",
     "deserialize",
     "deserialization_context",
+    "copy",
     "get_field",
+    "get_fields",
 ]
 
 
@@ -151,19 +153,37 @@ def _getnewargs(instance: "Dataclass") -> typing.Tuple:
     return (), instance.__getstate__()  # type: ignore[return-value]
 
 
+def _hash_any(value: typing.Any) -> int:
+    """Compute the hash of a value, handling exceptions for unhashable types."""
+    try:
+        return hash(value)
+    except TypeError:
+        return id(value)
+
+
 def _hash(instance: "Dataclass") -> int:
     """Compute the hash of the dataclass instance based on descriptor fields."""
-    fields = instance.__fields__
-    instance_type = type(instance)
-    try:
-        return hash(
-            tuple(
-                hash(field.__get__(instance, instance_type))
-                for field in fields.values()
+    if (computed_hash := instance.__cache__.get("__hash__", None)) is None:
+        instance_type = type(instance)
+        values = []
+        for field in instance.__fields__.values():
+            value = field.__get__(instance, owner=instance_type)
+            if isinstance(value, Iterable) and not isinstance(
+                value, (str, bytes, Mapping)
+            ):
+                values.append(tuple(_hash_any(item) for item in value))
+            else:
+                values.append(_hash_any(value))
+
+        computed_hash = hash(
+            (
+                instance_type,
+                tuple(values),
+                tuple(instance.__state_attributes__),
             )
         )
-    except TypeError as exc:
-        raise TypeError(f"Unhashable value in {instance}: {exc}")
+        instance.__cache__["__hash__"] = computed_hash
+    return typing.cast(int, computed_hash)
 
 
 def _eq(instance: "Dataclass", other: typing.Any) -> bool:
@@ -173,9 +193,10 @@ def _eq(instance: "Dataclass", other: typing.Any) -> bool:
     if instance is other:
         return True
 
+    instance_type = type(instance)
     for field in instance.__fields__.values():
-        if field.__get__(instance, type(instance)) != field.__get__(
-            other, type(instance)
+        if field.__get__(instance, instance_type) != field.__get__(
+            other, instance_type
         ):
             return False
     return True
@@ -425,9 +446,7 @@ class DataclassMeta(type):
                     "Cannot use __hash__ without frozen=True. Hashing is unsafe for mutable objects."
                     " Set frozen=True to enable hashing."
                 )
-            attrs["__hash__"] = cache(
-                _hash
-            )  # Cache the hash value since the instance is frozen
+            attrs["__hash__"] = _hash
         if config.eq and "__eq__" not in attrs:
             attrs["__eq__"] = _eq
         if config.pickleable:
@@ -548,6 +567,7 @@ class Dataclass(metaclass=DataclassMeta):
         "__weakref__",
         "_initializing",
         "__fields_set__",
+        "__cache__",
     )
     __state_attributes__: typing.ClassVar[typing.Tuple[str, ...]] = ()
     """
@@ -562,6 +582,19 @@ class Dataclass(metaclass=DataclassMeta):
     """Mapping of actual field names to effective field names."""
     effective_to_base_name_map: typing.ClassVar[typing.Mapping[str, str]] = {}
     """Mapping of effective field names to actual field names."""
+
+    def __new__(cls, *args: typing.Any, **kwargs: typing.Any) -> Self:
+        """
+        Create a new instance of the dataclass.
+
+        :param args: Positional arguments to pass to the dataclass constructor
+        :param kwargs: Keyword arguments to pass to the dataclass constructor
+        :return: A new instance of the dataclass.
+        """
+        instance = super().__new__(cls)
+        object.__setattr__(instance, "__fields_set__", set())
+        object.__setattr__(instance, "__cache__", {})
+        return instance
 
     @typing.overload
     def __init__(self, data: None = None) -> None:
@@ -593,8 +626,10 @@ class Dataclass(metaclass=DataclassMeta):
         :param data: Raw data to initialize the dataclass with.
         :param kwargs: Keyword arguments with values for the fields in the dataclass.
         """
+        self.__fields_set__: typing.Set[str]
+        self.__cache__: typing.Dict[str, typing.Any]
+
         object.__setattr__(self, "_initializing", True)
-        self.__fields_set__: typing.Set[str] = set()
         combined = {**dict(data or {}), **kwargs}  # type: ignore[assignment]
         _load_data(self, data=combined)
         object.__setattr__(self, "_initializing", False)
@@ -830,9 +865,10 @@ def copy(
     :param update: Optional dictionary to update fields in the copied instance.
     :return: A new dataclass instance that is a copy of the original.
     """
-    getstate = getattr(instance, "__getstate__", _getstate)
-    setstate = getattr(instance, "__setstate__", _setstate)
-    field_values, attributes = getstate(instance)
+    if (getstate := getattr(instance, "__getstate__", None)) is None:
+        getstate = partial(_getstate, instance)
+
+    field_values, attributes = getstate()
     if update:
         # Convert any aliases in the update data to field names
         normalized_updates = {}
@@ -843,13 +879,16 @@ def copy(
         field_values.update(normalized_updates)
 
     new_instance = type(instance).__new__(type(instance))
+    if (setstate := getattr(new_instance, "__setstate__", None)) is None:
+        setstate = partial(_setstate, new_instance)
+
     with deserialization_context(
         fail_fast=True,
         ignore_extras=True,
         by_name=True,
     ):
-        setstate(new_instance, (field_values, attributes))
-    return new_instance
+        new_instance = setstate((field_values, attributes))
+    return typing.cast(DataclassTco, new_instance)
 
 
 def get_field(
