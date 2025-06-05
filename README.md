@@ -51,7 +51,7 @@ Proper documentation and tests will be included soon, but you can check the [exa
 
 ```bash
 
-uv run examples/main.py -OO -B
+uv run examples/main.py 1000 -OO -B
 ```
 
 to run benchmarks of `attrib` against `attrs + cattrs` and `pydantic`.
