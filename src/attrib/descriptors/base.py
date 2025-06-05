@@ -14,7 +14,6 @@ from typing_extensions import Unpack, Self, Annotated
 import annotated_types as annot
 from collections import defaultdict
 import collections.abc
-from dataclasses import dataclass
 
 from attrib import validators as field_validators
 from attrib.exceptions import (
@@ -294,6 +293,10 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         check_coerced: bool = False,
         skip_validator: bool = False,
         fail_fast: bool = False,
+        hash: bool = True,
+        repr: bool = True,
+        eq: bool = True,
+        init: bool = True,
     ) -> None:
         """
         Initialize the field.
@@ -323,6 +326,10 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
 
         :param skip_validator: If True, the field will skip validator run after deserialization. Defaults to False.
         :param fail_fast: If True, the field will raise an error immediately a validation fails. Defaults to False.
+        :param hash: If True, the field will be included in the hash of the class it is defined in. Defaults to True.
+        :param repr: If True, the field will be included in the repr of the class it is defined in. Defaults to True.
+        :param eq: If True, the field will be compared for equality when comparing instances of the class it is defined in. Defaults to True.
+        :param init: If True, the field will be included as an instantiation argument for the class it is defined in. Defaults to True.
         """
         if isinstance(field_type, str):
             self.field_type = typing.ForwardRef(field_type)
@@ -361,6 +368,10 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         self.skip_validator = skip_validator
         self.fail_fast = fail_fast
         self.serialization_alias = serialization_alias
+        self.hash = hash
+        self.repr = repr
+        self.eq = eq
+        self.init = init
 
     @property
     def typestr(self) -> str:
@@ -571,7 +582,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
             raise ConfigurationError(
                 f"'{type(self).__name__}' on '{type(instance).__name__}' has no name. Ensure it is bound to a class.",
             )
-        
+
         if self.required and value is EMPTY:
             raise ValidationError(
                 "Value is required but not provided.",
@@ -581,7 +592,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
                 expected_type=self.typestr,
                 code="missing_value",
             )
-        
+
         if value is EMPTY:
             field_value = Value(EMPTY, is_valid=True)
         elif lazy:
@@ -771,6 +782,14 @@ class FieldKwargs(typing.TypedDict, total=False):
     """If True, the field will skip validator run after deserialization."""
     fail_fast: bool
     """If True, the field will raise an error immediately a validation fails."""
+    hash: bool
+    """If True, the field will be included in the hash of the class it is defined in."""
+    repr: bool
+    """If True, the field will be included in the repr of the class it is defined in."""
+    eq: bool
+    """If True, the field will be compared for equality when comparing instances of the class it is defined in."""
+    init: bool
+    """If True, the field will be included as an instantiation argument for the class it is defined in."""
 
 
 class Any(Field[typing.Any]):

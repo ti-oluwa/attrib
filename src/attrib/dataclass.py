@@ -57,9 +57,10 @@ def _repr(
     fields = instance.__fields__
     field_strs = []
     instance_type = type(instance)
-    for key, field in fields.items():
+    for field_name in instance.__repr_fields__:
+        field = fields[field_name]
         value = field.__get__(instance, owner=instance_type)
-        field_strs.append(f"{key}={value}")
+        field_strs.append(f"{field_name}={value}")
     return f"{instance_type.__name__}({', '.join(field_strs)})"
 
 
@@ -70,9 +71,10 @@ def _str(
     fields = instance.__fields__
     field_values = {}
     instance_type = type(instance)
-    for key, field in fields.items():
+    for field_name in instance.__repr_fields__:
+        field = fields[field_name]
         value = field.__get__(instance, owner=instance_type)
-        field_values[key] = value
+        field_values[field_name] = value
     return field_values.__repr__()
 
 
@@ -109,17 +111,13 @@ def _getstate(
     instance: "Dataclass",
 ) -> typing.Tuple[typing.Dict[str, typing.Any], typing.Dict[str, typing.Any]]:
     """Get the state of the dataclass instance."""
-    fields = instance.__fields__
-    field_values = {}
-    instance_type = type(instance)
-    for key, field in fields.items():
-        value = field.__get__(instance, owner=instance_type)
-        field_values[key] = value
+    field_values = dict(_iter(instance))
 
     pickleable_attribute_names = getattr(instance, "__state_attributes__", [])
     if not pickleable_attribute_names:
         return field_values, {}
 
+    fields = instance.__fields__
     attributes = {}
     for attr_name in pickleable_attribute_names:
         if attr_name in fields:
@@ -166,7 +164,9 @@ def _hash(instance: "Dataclass") -> int:
     if (computed_hash := instance.__cache__.get("__hash__", None)) is None:
         instance_type = type(instance)
         values = []
-        for field in instance.__fields__.values():
+        fields = instance.__fields__
+        for field_name in instance.__hash_fields__:
+            field = fields[field_name]
             value = field.__get__(instance, owner=instance_type)
             if isinstance(value, Iterable) and not isinstance(
                 value, (str, bytes, Mapping)
@@ -194,7 +194,9 @@ def _eq(instance: "Dataclass", other: typing.Any) -> bool:
         return True
 
     instance_type = type(instance)
-    for field in instance.__fields__.values():
+    fields = instance.__fields__
+    for field_name in instance.__eq_fields__:
+        field = fields[field_name]
         if field.__get__(instance, instance_type) != field.__get__(
             other, instance_type
         ):
@@ -353,6 +355,16 @@ def build_config(
     return Config(**config)
 
 
+FieldMap: typing.TypeAlias = typing.Mapping[str, Field[typing.Any]]
+"""A mapping of field names to their corresponding Field instances."""
+FieldDict: typing.TypeAlias = typing.Dict[str, Field[typing.Any]]
+"""A mapping of field names to their corresponding Field instances."""
+NameMap: typing.TypeAlias = typing.Mapping[str, str]
+"""A mapping of names"""
+NameDict: typing.TypeAlias = typing.Dict[str, str]
+"""A mapping of names"""
+
+
 class DataclassMeta(type):
     """Metaclass for Dataclass types"""
 
@@ -378,10 +390,10 @@ class DataclassMeta(type):
             **meta_config,
         )
         attrs["__config__"] = config
-        own_fields = {}
-        fields = {}
-        base_to_effective_name_map = {}
-        effective_to_base_name_map = {}
+        own_fields: FieldDict = {}
+        fields: FieldDict = {}
+        base_to_effective_name_map: NameDict = {}
+        effective_to_base_name_map: NameDict = {}
         parent_slotted_attributes = {}
 
         # Inspect the base classes for fields and borrow them
@@ -465,6 +477,18 @@ class DataclassMeta(type):
             fields_data = sorted(fields.items(), key=sort_key)
             fields = dict(fields_data)
 
+        attrs["__init_fields__"] = tuple(
+            name for name, field in fields.items() if field.init
+        )
+        attrs["__repr_fields__"] = tuple(
+            name for name, field in fields.items() if field.repr
+        )
+        attrs["__hash_fields__"] = tuple(
+            name for name, field in fields.items() if field.hash
+        )
+        attrs["__eq_fields__"] = tuple(
+            name for name, field in fields.items() if field.eq
+        )
         # Make read-only to prevent accidental modification
         attrs["__fields__"] = MappingProxyType(fields)
         attrs["base_to_effective_name_map"] = MappingProxyType(
@@ -576,11 +600,19 @@ class Dataclass(metaclass=DataclassMeta):
     """
     __config__: typing.ClassVar[Config] = Config(slots=True)
     """Configuration for the dataclass."""
-    __fields__: typing.ClassVar[typing.Mapping[str, Field[typing.Any]]] = {}
+    __fields__: typing.ClassVar[FieldMap] = {}
     """Mapping of field names to their corresponding Field instances."""
-    base_to_effective_name_map: typing.ClassVar[typing.Mapping[str, str]] = {}
+    __init_fields__: typing.ClassVar[typing.Tuple[str, ...]] = ()
+    """Fields to include when instantiating the dataclass."""
+    __repr_fields__: typing.ClassVar[typing.Tuple[str, ...]] = ()
+    """Fields to include in the __repr__ method."""
+    __hash_fields__: typing.ClassVar[typing.Tuple[str, ...]] = ()
+    """Fields to include in the __hash__ method."""
+    __eq_fields__: typing.ClassVar[typing.Tuple[str, ...]] = ()
+    """Fields to include in the __eq__ method."""
+    base_to_effective_name_map: typing.ClassVar[NameMap] = {}
     """Mapping of actual field names to effective field names."""
-    effective_to_base_name_map: typing.ClassVar[typing.Mapping[str, str]] = {}
+    effective_to_base_name_map: typing.ClassVar[NameMap] = {}
     """Mapping of effective field names to actual field names."""
 
     def __new__(cls, *args: typing.Any, **kwargs: typing.Any) -> Self:
@@ -639,6 +671,14 @@ class Dataclass(metaclass=DataclassMeta):
         if len(cls.__fields__) == 0:
             raise ConfigurationError("Dataclasses must define fields")
         return
+
+    def __copy__(self) -> Self:
+        """
+        Create a shallow copy of the dataclass instance.
+
+        :return: A new instance of the dataclass with the same field values.
+        """
+        return copy(self)
 
 
 DataclassTco = typing.TypeVar("DataclassTco", bound=Dataclass, covariant=True)
@@ -722,7 +762,9 @@ def _load_data(instance: DataclassTco, data: DataDict) -> DataclassTco:
     error = None
     fail_fast = _fail_fast.get()
     by_name = _by_name.get()
-    for name, field in instance.__fields__.items():
+    fields = instance.__fields__
+    for name in instance.__init_fields__:
+        field = fields[name]
         try:
             if by_name:
                 if (value := data.get(name, _missing)) is _missing:
@@ -772,7 +814,7 @@ def _from_attributes(
     """
     values = {}
     by_name = _by_name.get()
-    for name in dataclass_.__fields__.keys():
+    for name in dataclass_.__init_fields__:
         if by_name:
             if (value := getattr(obj, name, _missing)) is not _missing:
                 values[name] = value
@@ -852,7 +894,7 @@ def copy(
     instance: DataclassTco, update: typing.Optional[DataDict] = None
 ) -> DataclassTco:
     """
-    Create a copy of the dataclass instance.
+    Create a (shallow) copy of the dataclass instance.
 
     This implementation uses the state management methods of the dataclass,
     `__getstate__` and `__setstate__`.

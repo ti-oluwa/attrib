@@ -1,14 +1,17 @@
-# Import necessary packages and modules
+from pathlib import Path
 import typing
+import sys
 from datetime import date, datetime
 import zoneinfo
 import attrs
+import cattrs
 import random
 from memory_profiler import profile
 
-from utils import timeit, profileit
+from utils import timeit, profileit, log
 from mock_data import course_data, student_data, year_data
 from dateutil.parser import parse
+
 
 ################
 # DATA CLASSES #
@@ -21,19 +24,17 @@ class AcademicYear:
 
     id: int = attrs.field()
     name: typing.Optional[str] = attrs.field(
-        default=None,
-        validator=attrs.validators.optional(attrs.validators.max_len(100)),
-        converter=str,
+        default=None, validator=attrs.validators.max_len(100)
     )
     start_date: date = attrs.field(
         default=None,
-        converter=lambda x: parse(x).date() if not isinstance(x, date) else x,
     )
     end_date: date = attrs.field(
         default=None,
-        converter=lambda x: parse(x).date() if not isinstance(x, date) else x,
     )
-    created_at: datetime = attrs.field(factory=datetime.now)
+    created_at: datetime = attrs.field(
+        factory=lambda: datetime.now(zoneinfo.ZoneInfo("Africa/Lagos"))
+    )
 
 
 @attrs.define(slots=True)
@@ -41,23 +42,20 @@ class Course:
     """Course data class"""
 
     id: int = attrs.field()
-    name: str = attrs.field(validator=attrs.validators.max_len(100), converter=str)
-    code: str = attrs.field(
-        validator=attrs.validators.and_(
-            attrs.validators.max_len(20), attrs.validators.instance_of(str)
-        ),
-        converter=str,
-    )
+    name: str = attrs.field(validator=attrs.validators.max_len(100))
+    code: str = attrs.field(validator=attrs.validators.max_len(20))
     year: AcademicYear = attrs.field()
-    created_at: datetime = attrs.field(factory=datetime.now)
+    created_at: datetime = attrs.field(
+        factory=lambda: datetime.now(zoneinfo.ZoneInfo("Africa/Lagos"))
+    )
 
 
 @attrs.define(slots=True, kw_only=True)
 class PersonalInfo:
     """Personal information data class"""
 
-    name: str = attrs.field(validator=attrs.validators.max_len(100), converter=str)
-    age: int = attrs.field(validator=attrs.validators.in_(range(0, 31)), converter=int)
+    name: str = attrs.field(validator=attrs.validators.max_len(100))
+    age: int = attrs.field(validator=attrs.validators.in_(range(0, 31)))
     email: typing.Optional[str] = attrs.field(default=None)
     phone: typing.Optional[str] = attrs.field(default=None)
 
@@ -67,15 +65,12 @@ class Student(PersonalInfo):
     """Student data class with multiple fields and a list of enrolled courses"""
 
     id: int = attrs.field()
-    year: typing.Optional[AcademicYear] = attrs.field(
-        converter=lambda x: AcademicYear(**x) if isinstance(x, dict) else x,
-    )
+    year: typing.Optional[AcademicYear] = attrs.field()
     gpa: float = attrs.field(
         default=attrs.Factory(lambda: random.uniform(1.5, 5.0)),
     )
     courses: typing.List[Course] = attrs.field(
         default=attrs.Factory(list),
-        converter=lambda x: [Course(**course) for course in x],
         validator=attrs.validators.and_(
             attrs.validators.min_len(1),
             attrs.validators.max_len(15),
@@ -83,17 +78,25 @@ class Student(PersonalInfo):
     )
     joined_at: typing.Optional[datetime] = attrs.field(
         default=None,
-        converter=lambda x: datetime.now() if x is None else parse(x),
     )
     created_at: datetime = attrs.field(
-        factory=lambda: datetime.now().astimezone(zoneinfo.ZoneInfo("Africa/Lagos"))
+        factory=lambda: datetime.now(zoneinfo.ZoneInfo("Africa/Lagos"))
     )
+
+
+converter = cattrs.Converter()
+converter.register_structure_hook(
+    datetime, lambda d, _: parse(d) if isinstance(d, str) else d
+)
+converter.register_structure_hook(
+    date, lambda d, _: parse(d).date() if isinstance(d, str) else d
+)
 
 
 def load_data(
-    data_list: typing.List[typing.Dict[str, typing.Any]], datacls: typing.Type
+    data_list: typing.List[typing.Dict[str, typing.Any]], cls: typing.Type
 ) -> typing.List:
-    return [datacls(**data) for data in data_list]
+    return [converter.structure(data, cls) for data in data_list]
 
 
 def example():
@@ -102,16 +105,16 @@ def example():
     students = load_data(student_data, Student)
 
     for student in students:
-        attrs.asdict(student, recurse=True)
+        converter.unstructure_attrs_asdict(student)
 
     for course in courses:
-        attrs.asdict(course, recurse=True)
+        converter.unstructure_attrs_asdict(course)
 
     for year in years:
-        attrs.asdict(year, recurse=True)
+        converter.unstructure_attrs_asdict(year)
 
 
-@timeit("attrs without type coercion")
+@timeit("attrs + cattrs")
 # @profile
 def test(n: int):
     for _ in range(n):

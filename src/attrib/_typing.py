@@ -34,7 +34,6 @@ JSONNamedDataTuple: typing.TypeAlias = typing.Tuple[typing.Tuple[str, "JSONValue
 Context: typing.TypeAlias = typing.Dict[str, typing.Any]
 
 
-@typing.runtime_checkable
 class SupportsRichComparison(typing.Protocol):
     def __lt__(self, other: typing.Any, /) -> bool: ...
     def __le__(self, other: typing.Any, /) -> bool: ...
@@ -49,7 +48,7 @@ Deserializer: typing.TypeAlias = typing.Callable[..., R]
 
 
 @typing.runtime_checkable
-class TypeAdapter(typing.Generic[T], typing.Protocol):
+class TypeAdapter(typing.Generic[Tco], typing.Protocol):
     """
     Type adapter protocol.
 
@@ -73,14 +72,14 @@ class TypeAdapter(typing.Generic[T], typing.Protocol):
 
     def validate(
         self,
-        value: typing.Union[T, typing.Any],
+        value: typing.Union[Tco, typing.Any],
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None: ...
 
     def serialize(
         self,
-        value: typing.Union[T, typing.Any],
+        value: typing.Union[Tco, typing.Any],
         fmt: str,
         *args: typing.Any,
         **kwargs: typing.Any,
@@ -88,14 +87,14 @@ class TypeAdapter(typing.Generic[T], typing.Protocol):
 
     def deserialize(
         self,
-        value: typing.Union[T, typing.Any],
+        value: typing.Union[Tco, typing.Any],
         *args: typing.Any,
         **kwargs: typing.Any,
-    ) -> typing.Optional[T]: ...
+    ) -> typing.Optional[Tco]: ...
 
 
 @typing.runtime_checkable
-class Validator(typing.Generic[T], typing.Protocol):
+class Validator(typing.Generic[Tco], typing.Protocol):
     """
     Validator protocol.
 
@@ -108,8 +107,8 @@ class Validator(typing.Generic[T], typing.Protocol):
         self,
         value: typing.Any,
         adapter: typing.Optional[
-            typing.Union[TypeAdapter[T], TypeAdapter[typing.Any]]
-        ] = ...,
+            typing.Union[TypeAdapter[Tco], TypeAdapter[typing.Any]]
+        ],
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:

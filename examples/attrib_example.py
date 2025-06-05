@@ -37,7 +37,7 @@ class Term(enum.Enum):
 class AcademicYear(attrib.Dataclass, slots=True, repr=True):
     """Academic year data class"""
 
-    id = attrib.Integer(required=True)
+    id = attrib.Field(int, required=True)
     name = attrib.String(max_length=100)
     term = attrib.Choice(Term, default=Term.FIRST)
     start_date = attrib.Date(input_formats=["%d-%m-%Y", "%d/%m/%Y"])
@@ -65,9 +65,9 @@ class PersonalInfo(attrib.Dataclass):
 
     __config__ = attrib.Config(
         slots=True,
-        frozen=True,
-        hash=True,
-        pickleable=True,
+        # frozen=True,
+        # hash=True,
+        # pickleable=True,
     )
 
 
@@ -86,7 +86,7 @@ class Student(PersonalInfo):
         serialization_alias="enrolled_in",
     )
     gpa = attrib.Float(
-        allow_null=True, default=attrib.Factory(random.randint, a=1, b=5)
+        allow_null=True, default=attrib.Factory(random.uniform, a=1, b=5)
     )
     joined_at = attrib.DateTime(allow_null=True, tz="Africa/Lagos")
     created_at = attrib.DateTime(
@@ -94,9 +94,10 @@ class Student(PersonalInfo):
     )
 
     __config__ = attrib.Config(
-        slots=("__dict__",),
+        slots=("__dict__",), # For compatibility with functools.cached_property
         frozen=True,
         hash=True,
+        repr=True,
     )
 
     @functools.cached_property
@@ -133,7 +134,7 @@ def example():
     for student in students:
         attrib.serialize(
             student,
-            fmt="json",
+            fmt="python",
             # options=attrib.Options(
             #     attrib.Option(
             #         Student,
@@ -160,10 +161,10 @@ def example():
         )
 
     for course in courses:
-        attrib.serialize(course, fmt="json", astuple=False)
+        attrib.serialize(course, fmt="python", astuple=False)
 
     for year in years:
-        attrib.serialize(year, fmt="json", astuple=False)
+        attrib.serialize(year, fmt="python", astuple=False)
 
     # import pickle
 

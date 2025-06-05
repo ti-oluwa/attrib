@@ -165,16 +165,15 @@ def example():
     for student in students:
         # log(
             student.model_dump(
-                mode="json",
-                by_alias=True,
+                mode="python",
             )
         # )
 
     for course in courses:
-        course.model_dump(mode="json")
+        course.model_dump(mode="python")
 
     for year in years:
-        year.model_dump(mode="json")
+        year.model_dump(mode="python")
 
 
 @timeit("pydantic")
