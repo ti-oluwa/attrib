@@ -1,12 +1,12 @@
-from pathlib import Path
+import copy
 import typing
-import sys
+import enum
 from datetime import date, datetime
 import zoneinfo
 import attrs
-import cattrs
+from cattrs import Converter
+from cattrs.gen import make_dict_unstructure_fn, override
 import random
-from memory_profiler import profile
 
 from utils import timeit, profileit, log
 from mock_data import course_data, student_data, year_data
@@ -18,6 +18,14 @@ from dateutil.parser import parse
 ################
 
 
+class Term(enum.Enum):
+    """Academic term enumeration"""
+
+    FIRST = "First"
+    SECOND = "Second"
+    THIRD = "Third"
+
+
 @attrs.define(slots=True)
 class AcademicYear:
     """Academic year data class"""
@@ -26,10 +34,11 @@ class AcademicYear:
     name: typing.Optional[str] = attrs.field(
         default=None, validator=attrs.validators.max_len(100)
     )
-    start_date: date = attrs.field(
+    term: Term = attrs.field(default=Term.FIRST)
+    start_date: typing.Optional[date] = attrs.field(
         default=None,
     )
-    end_date: date = attrs.field(
+    end_date: typing.Optional[date] = attrs.field(
         default=None,
     )
     created_at: datetime = attrs.field(
@@ -62,7 +71,7 @@ class PersonalInfo:
 
 @attrs.define(slots=True, kw_only=True)
 class Student(PersonalInfo):
-    """Student data class with multiple fields and a list of enrolled courses"""
+    """Student data class"""
 
     id: int = attrs.field()
     year: typing.Optional[AcademicYear] = attrs.field()
@@ -84,18 +93,48 @@ class Student(PersonalInfo):
     )
 
 
-converter = cattrs.Converter()
-converter.register_structure_hook(
-    datetime, lambda d, _: parse(d) if isinstance(d, str) else d
-)
-converter.register_structure_hook(
-    date, lambda d, _: parse(d).date() if isinstance(d, str) else d
-)
+def configure_converters() -> Converter:
+    """Configure cattrs converter for custom serialization/deserialization"""
+    converter = Converter()
+
+    converter.register_unstructure_hook(Term, lambda e: e.value)
+    converter.register_unstructure_hook(
+        datetime, lambda dt: dt.isoformat() if dt else None
+    )
+    converter.register_unstructure_hook(date, lambda d: d.isoformat() if d else None)
+
+    # For StudentClass, rename 'courses' to 'enrolled_in' during serialization
+    student_unstruct_hook = make_dict_unstructure_fn(
+        Student,
+        converter,
+        _cattrs_omit_if_default=False,
+        courses=override(rename="enrolled_in"),
+    )
+    converter.register_unstructure_hook(Student, student_unstruct_hook)
+
+    def structure_datetime(val, _) -> datetime:
+        if isinstance(val, datetime):
+            return val
+        return parse(val)
+
+    def structure_date(val, _) -> date:
+        if isinstance(val, datetime):
+            return val.date()
+        return parse(val).date()
+
+    converter.register_structure_hook(datetime, structure_datetime)
+    converter.register_structure_hook(date, structure_date)
+    return converter
+
+
+converter = configure_converters()
+
+AttrsclassT = typing.TypeVar("AttrsclassT")
 
 
 def load_data(
-    data_list: typing.List[typing.Dict[str, typing.Any]], cls: typing.Type
-) -> typing.List:
+    data_list: typing.List[typing.Dict[str, typing.Any]], cls: typing.Type[AttrsclassT]
+) -> typing.List[AttrsclassT]:
     return [converter.structure(data, cls) for data in data_list]
 
 
@@ -105,17 +144,19 @@ def example():
     students = load_data(student_data, Student)
 
     for student in students:
-        converter.unstructure_attrs_asdict(student)
+        converter.unstructure(student)
+        copy.copy(student)  # Ensure the object is copied correctly
 
     for course in courses:
-        converter.unstructure_attrs_asdict(course)
+        converter.unstructure(course)
+        copy.copy(course)
 
     for year in years:
-        converter.unstructure_attrs_asdict(year)
+        converter.unstructure(year)
+        copy.copy(year)
 
 
 @timeit("attrs + cattrs")
-# @profile
-def test(n: int):
+def test(n: int) -> None:
     for _ in range(n):
         example()

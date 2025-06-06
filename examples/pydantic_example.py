@@ -2,10 +2,8 @@ import enum
 import random
 import typing
 from datetime import datetime
-from memory_profiler import profile
-
 import pydantic
-from pydantic import Field, field_validator, model_validator, ConfigDict
+from pydantic import Field, field_validator, ConfigDict
 
 from utils import timeit, profileit, log
 from mock_data import course_data, student_data, year_data
@@ -102,7 +100,7 @@ class PersonalInfo(pydantic.BaseModel):
 
 
 class Student(PersonalInfo):
-    """Student data class with multiple fields and a list of enrolled courses"""
+    """Student data class"""
 
     id: int
     year: typing.Optional[AcademicYear] = None
@@ -139,13 +137,13 @@ class Student(PersonalInfo):
         return v
 
 
-Model = typing.TypeVar("Model", bound=pydantic.BaseModel)
+ModelTco = typing.TypeVar("ModelTco", bound=pydantic.BaseModel, covariant=True)
 
 
 def load_data(
     data_list: typing.List[typing.Dict[str, typing.Any]],
-    cls: typing.Type[Model],
-) -> typing.List[Model]:
+    cls: typing.Type[ModelTco],
+) -> typing.List[ModelTco]:
     """
     Load data into pydantic models
 
@@ -163,11 +161,7 @@ def example():
     students = load_data(student_data, Student)
 
     for student in students:
-        # log(
-            student.model_dump(
-                mode="python",
-            )
-        # )
+        student.model_dump(mode="python", by_alias=True)
 
     for course in courses:
         course.model_dump(mode="python")
@@ -177,8 +171,7 @@ def example():
 
 
 @timeit("pydantic")
-# @profile
-def test(n: int = 1):
+def test(n: int = 1) -> None:
     """Run the pydantic example multiple times"""
     for _ in range(n):
         example()

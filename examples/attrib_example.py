@@ -3,22 +3,12 @@ import random
 import typing
 import functools
 from datetime import datetime
-import tracemalloc
-import gc
 import zoneinfo
-from memory_profiler import profile
 
 import attrib
 from attrib.descriptors.phonenumbers import PhoneNumber
-from attrib._utils import _unsupported_serializer
 from utils import timeit, profileit, log
 from mock_data import course_data, student_data, year_data
-
-DataclassTco = typing.TypeVar(
-    "DataclassTco",
-    bound=attrib.Dataclass,
-    covariant=True,
-)
 
 
 ########################
@@ -65,18 +55,18 @@ class PersonalInfo(attrib.Dataclass):
 
     __config__ = attrib.Config(
         slots=True,
-        # frozen=True,
-        # hash=True,
-        # pickleable=True,
+        frozen=True,
+        hash=True,
+        pickleable=True,
     )
 
 
-@attrib.partial
-class Student(PersonalInfo):
-    """Student data class with multiple fields and a list of enrolled courses"""
+# @attrib.partial
+class Student(PersonalInfo, slots=("__dict__",)): # Add "__dict__" to slots to support `functools.cached_property`
+    """Student data class"""
 
     id = attrib.Integer(required=True)
-    level = attrib.Nested(AcademicYear, lazy=True, allow_null=True, alias="year")
+    level = attrib.Nested(AcademicYear, allow_null=True, alias="year")
     courses = attrib.List(
         child=attrib.Nested(Course, lazy=False),
         validator=attrib.validators.and_(
@@ -90,20 +80,21 @@ class Student(PersonalInfo):
     )
     joined_at = attrib.DateTime(allow_null=True, tz="Africa/Lagos")
     created_at = attrib.DateTime(
-        default=attrib.Factory(attrib.now, zoneinfo.ZoneInfo("Asia/Kolkata")), tz="Asia/Kolkata"
-    )
-
-    __config__ = attrib.Config(
-        slots=("__dict__",), # For compatibility with functools.cached_property
-        frozen=True,
-        hash=True,
-        repr=True,
+        default=attrib.Factory(attrib.now, zoneinfo.ZoneInfo("Asia/Kolkata")),
+        tz="Asia/Kolkata",
     )
 
     @functools.cached_property
     def full_name(self) -> str:
         """Return the full name of the student"""
         return f"{self.name} (ID: {self.id})"
+
+
+DataclassTco = typing.TypeVar(
+    "DataclassTco",
+    bound=attrib.Dataclass,
+    covariant=True,
+)
 
 
 def load_data(
@@ -120,7 +111,7 @@ def load_data(
     return [attrib.deserialize(cls, data) for data in data_list]
 
 
-def example():
+def example() -> None:
     """Run example usage of the data classes"""
     with attrib.deserialization_context(
         fail_fast=True,
@@ -156,8 +147,7 @@ def example():
             #     attrib.Option(exclude={"created_at", "id"}, depth=1),
             # ),
             astuple=False,
-            # by_alias=True,
-            # exclude_unset=True,
+            by_alias=True,
         )
 
     for course in courses:
@@ -166,77 +156,10 @@ def example():
     for year in years:
         attrib.serialize(year, fmt="python", astuple=False)
 
-    # import pickle
-
-    # dump = pickle.dumps(students)
-    # loaded_students = pickle.loads(dump)
-    # log(
-    #     "Loaded Students: ",
-    #     [attrib.serialize(student, fmt="json") for student in loaded_students],
-    # )
-
-    # # Access and print a student's information
-    # student = students[0]  # e.g., first student in the list
-    # log(
-    #     attrib.serialize(student, options=attrib.Options(attrib.Option(depth=2)))
-    # )  # View student details in dictionary format
-    # # Modify the student's academic year
-    # student.year = years[1]  # Update academic year to next year
-    # log(f"Updated Academic Year for {student.name}: ", attrib.serialize(student))
-
-    # # Serialize the student's data to JSON format
-    # student_json = attrib.serialize(
-    #     student, fmt="json", options=attrib.Options(attrib.Option(depth=0))
-    # )
-    # log("Serialized Student JSON: ", student_json)
-
-    # # Nesting and Data Validation Example
-    # # Changing a course's academic year in a nested structure
-    # courses[0].year = years[1]  # Update the academic year for a course
-    # log(f"Updated Course Year for {courses[0].name}: ", attrib.serialize(courses[0]))
-
-    # # Update the `year` attribute directly with a new dictionary
-    # student.year = {
-    #     "id": 4,
-    #     "name": "2022/2023",
-    #     "start_date": "2022-09-01",
-    #     "end_date": "2023-06-30",
-    # }
-    # log(
-    #     f"Updated Academic Year for {student.name}: ",
-    #     attrib.serialize(student, options=attrib.Options(attrib.Option(depth=2))),
-    # )
-
-    # # Adding a new course to a student and displaying
-    # new_course = Course(
-    #     {
-    #         "id": 4,
-    #         "name": "Organic Chemistry",
-    #         "code": "CHEM121",
-    #         "year": year_data[1],
-    #     }
-    # )
-    # student.courses.append(new_course)
-    # log(
-    #     f"Updated Courses for {student.name}: ",
-    #     [
-    #         attrib.serialize(
-    #             course, fmt="json", options=attrib.Options(attrib.Option(depth=3))
-    #         )
-    #         for course in student.courses
-    #     ],
-    # )
-
-    # # Update student age
-    # log(student.name, "is", student.age, "years old")
-    # student.age += 3
-    # log(student.name, "is now", student.age, "years old")
-
 
 # @profileit("attrib", max_rows=20, output="rich")
 @timeit("attrib")
-# @profile
-def test(n: int = 1):
+def test(n: int = 1) -> None:
     """Run the attrib example multiple times"""
     for _ in range(n):
         example()

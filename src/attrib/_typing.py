@@ -140,5 +140,13 @@ class Empty:
     def __hash__(self) -> int:
         return id(self)
 
+    def __copy__(self) -> Self:
+        return self
+
+    def __deepcopy__(
+        self, memo: typing.Optional[typing.Dict[int, typing.Any]] = None
+    ) -> Self:
+        return self
+
 
 EMPTY = Empty()

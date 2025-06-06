@@ -297,6 +297,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         repr: bool = True,
         eq: bool = True,
         init: bool = True,
+        compare: bool = False,
     ) -> None:
         """
         Initialize the field.
@@ -330,6 +331,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         :param repr: If True, the field will be included in the repr of the class it is defined in. Defaults to True.
         :param eq: If True, the field will be compared for equality when comparing instances of the class it is defined in. Defaults to True.
         :param init: If True, the field will be included as an instantiation argument for the class it is defined in. Defaults to True.
+        :param compare: If True, the field will be compared when comparing instances of the class it is defined in. Defaults to False.
         """
         if isinstance(field_type, str):
             self.field_type = typing.ForwardRef(field_type)
@@ -372,6 +374,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         self.repr = repr
         self.eq = eq
         self.init = init
+        self.compare = compare
 
     @property
     def typestr(self) -> str:
@@ -540,7 +543,8 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
     def __set__(self, instance: typing.Any, value: typing.Any):
         """Set and validate the field value on an instance."""
         self.set_value(instance, value, lazy=self.lazy)
-        instance.__fields_set__.add(self.name)  # type: ignore[attr-defined]
+        field_set: typing.Set = instance.__fields_set__  # type: ignore[attr-defined]
+        field_set.add(self.name)
 
     def get_value(self, instance: typing.Any) -> Value:
         """
@@ -555,11 +559,12 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
                 f"'{type(self).__name__}' on '{type(instance).__name__}' has no name. Ensure it is bound to a class.",
             )
 
-        if hasattr(instance, "__dict__"):
-            return instance.__dict__[field_name]
-        # For slotted classes
-        slotted_name = instance.__slotted_names__[field_name]
-        return object.__getattribute__(instance, slotted_name)
+        # Check if it is a slotted class first, just in case "__dict__" was added to __slots__.
+        # If not, we may mistake it for a normal class and try to access the field's value from __dict__
+        # which will raise an AttributeError.
+        if (slotted_names := getattr(instance, "__slotted_names__", None)) is not None:
+            return object.__getattribute__(instance, slotted_names[field_name])
+        return instance.__dict__[field_name]
 
     def set_value(
         self,
@@ -602,12 +607,14 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
             self.validate(deserialized, instance)
             field_value = Value(deserialized, is_valid=True)
 
-        # Store directly in __dict__ to avoid recursion
-        if hasattr(instance, "__dict__"):
+        # Check if it is a slotted class first, just in case "__dict__" was added to __slots__.
+        # If not, we may mistake it for a normal class and then set the field's value in __dict__,
+        # beating the purpose of using slots.
+        if (slotted_names := getattr(instance, "__slotted_names__", None)) is not None:
+            object.__setattr__(instance, slotted_names[field_name], field_value)
+        else:
+            # Store directly in __dict__ to avoid recursion
             instance.__dict__[field_name] = field_value
-        else:  # For slotted classes
-            slotted_name = instance.__slotted_names__[field_name]
-            object.__setattr__(instance, slotted_name, field_value)
         return field_value
 
     def delete_value(self, instance: typing.Any) -> None:
@@ -790,6 +797,8 @@ class FieldKwargs(typing.TypedDict, total=False):
     """If True, the field will be compared for equality when comparing instances of the class it is defined in."""
     init: bool
     """If True, the field will be included as an instantiation argument for the class it is defined in."""
+    compare: bool
+    """If True, the field will be compared when comparing instances of the class it is defined in."""
 
 
 class Any(Field[typing.Any]):
@@ -801,9 +810,9 @@ class Any(Field[typing.Any]):
 
 
 def boolean_deserializer(value: typing.Any, field: "Boolean") -> bool:
-    if value in field.TRUTHYVALUES:
+    if value in field.TRUTHY_VALUES:
         return True
-    if value in field.FALSYVALUES:
+    if value in field.FALSY_VALUES:
         return False
     return bool(value)
 
@@ -816,16 +825,14 @@ def boolean_json_serializer(value: bool, field: "Boolean", context: Context) -> 
 class Boolean(Field[bool]):
     """Field for handling boolean values."""
 
-    TRUTHYVALUES: typing.ClassVar[typing.Set[typing.Any]] = {
+    TRUTHY_VALUES: typing.ClassVar[typing.Set[typing.Any]] = {
         True,
         1,
         "1",
         iexact("true"),
         iexact("yes"),
     }
-    FALSYVALUES: typing.ClassVar[
-        typing.Set[typing.Any]
-    ] = {  # Use sets for faster lookups
+    FALSY_VALUES: typing.ClassVar[typing.Set[typing.Any]] = {
         False,
         0,
         "0",
