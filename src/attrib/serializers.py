@@ -5,7 +5,7 @@ from collections.abc import Sequence
 import functools
 import typing
 from annotated_types import Ge, MinLen
-from typing_extensions import Annotated
+from typing_extensions import Annotated, TypeAlias
 
 from attrib._typing import (
     EMPTY,
@@ -55,7 +55,7 @@ class Option(typing.NamedTuple):
 
 
 DEFAULT_OPTION = Option()
-OptionsMap: typing.TypeAlias = typing.MutableMapping[typing.Type[Dataclass], Option]
+OptionsMap: TypeAlias = typing.MutableMapping[typing.Type[Dataclass], Option]
 
 
 def resolve_option(
@@ -75,11 +75,11 @@ def resolve_option(
     return DEFAULT_OPTION
 
 
-SerializationTarget: typing.TypeAlias = Dataclass
-CurrentSerializationDepth: typing.TypeAlias = int
-TargetParentName: typing.TypeAlias = str
+SerializationTarget: TypeAlias = Dataclass
+CurrentSerializationDepth: TypeAlias = int
+TargetParentName: TypeAlias = str
 SerializationOutput = typing.TypeVar("SerializationOutput")
-SerializationStack: typing.TypeAlias = typing.Deque[
+SerializationStack: TypeAlias = typing.Deque[
     typing.Tuple[
         SerializationTarget,
         typing.Optional[TargetParentName],

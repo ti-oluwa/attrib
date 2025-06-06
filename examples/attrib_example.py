@@ -3,7 +3,11 @@ import random
 import typing
 import functools
 from datetime import datetime
-import zoneinfo
+
+try:
+    import zoneinfo
+except ImportError:
+    from backports import zoneinfo  # type: ignore[import]
 
 import attrib
 from attrib.descriptors.phonenumbers import PhoneNumber
@@ -24,7 +28,7 @@ class Term(enum.Enum):
     THIRD = "Third"
 
 
-class AcademicYear(attrib.Dataclass, slots=True, repr=True):
+class AcademicYear(attrib.Dataclass, repr=True):
     """Academic year data class"""
 
     id = attrib.Field(int, required=True)
@@ -35,7 +39,7 @@ class AcademicYear(attrib.Dataclass, slots=True, repr=True):
     created_at = attrib.DateTime(default=datetime.now, tz="Africa/Lagos")
 
 
-class Course(attrib.Dataclass, slots=True, sort=True):
+class Course(attrib.Dataclass, sort=True):
     """Course data class"""
 
     id = attrib.Integer(required=True, allow_null=True)
@@ -54,15 +58,14 @@ class PersonalInfo(attrib.Dataclass):
     phone = PhoneNumber(allow_null=True, default=None)
 
     __config__ = attrib.Config(
-        slots=True,
         frozen=True,
         hash=True,
         pickleable=True,
     )
 
 
-# @attrib.partial
-class Student(PersonalInfo, slots=("__dict__",)): # Add "__dict__" to slots to support `functools.cached_property`
+@attrib.partial
+class Student(PersonalInfo):
     """Student data class"""
 
     id = attrib.Integer(required=True)

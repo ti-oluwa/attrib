@@ -1,7 +1,7 @@
 import typing
-from typing_extensions import Self
+from typing_extensions import Self, ParamSpec, TypeAlias
 
-P = typing.ParamSpec("P")
+P = ParamSpec("P")
 R = typing.TypeVar("R")
 T = typing.TypeVar("T")
 V = typing.TypeVar("V")
@@ -14,25 +14,25 @@ class KwArg(typing.Protocol[Tco]):
     def __class_getitem__(cls, item: typing.Any) -> typing.Any: ...
 
 
-RawData: typing.TypeAlias = typing.Union[
+RawData: TypeAlias = typing.Union[
     typing.Mapping[str, typing.Any],
     typing.Mapping[bytes, bytes],
     typing.Sequence[typing.Tuple[str, typing.Any]],
     typing.Sequence[typing.Tuple[bytes, bytes]],
 ]
 IterType = typing.TypeVar("IterType", bound=typing.Iterable[typing.Any])
-DataDict: typing.TypeAlias = typing.Dict[str, typing.Any]
-NamedDataTuple: typing.TypeAlias = typing.Tuple[typing.Tuple[str, typing.Any], ...]
+DataDict: TypeAlias = typing.Dict[str, typing.Any]
+NamedDataTuple: TypeAlias = typing.Tuple[typing.Tuple[str, typing.Any], ...]
 
-JSONValue: typing.TypeAlias = typing.Union[
+JSONValue: TypeAlias = typing.Union[
     int, float, str, bool, None, "JSONDict", "JSONList"
 ]
-JSONDict: typing.TypeAlias = typing.Dict[str, "JSONValue"]
-JSONList: typing.TypeAlias = typing.List["JSONValue"]
-JSONNamedDataTuple: typing.TypeAlias = typing.Tuple[typing.Tuple[str, "JSONValue"], ...]
+JSONDict: TypeAlias = typing.Dict[str, "JSONValue"]
+JSONList: TypeAlias = typing.List["JSONValue"]
+JSONNamedDataTuple: TypeAlias = typing.Tuple[typing.Tuple[str, "JSONValue"], ...]
 
-Context: typing.TypeAlias = typing.Dict[str, typing.Any]
-
+Context: TypeAlias = typing.Dict[str, typing.Any]
+NoneType = type(None)
 
 class SupportsRichComparison(typing.Protocol):
     def __lt__(self, other: typing.Any, /) -> bool: ...
@@ -43,8 +43,8 @@ class SupportsRichComparison(typing.Protocol):
     def __ne__(self, other: typing.Any, /) -> bool: ...
 
 
-Serializer: typing.TypeAlias = typing.Callable[..., R]
-Deserializer: typing.TypeAlias = typing.Callable[..., R]
+Serializer: TypeAlias = typing.Callable[..., R]
+Deserializer: TypeAlias = typing.Callable[..., R]
 
 
 @typing.runtime_checkable

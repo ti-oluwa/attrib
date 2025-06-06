@@ -6,16 +6,16 @@ import os
 import pathlib
 from collections import deque
 from annotated_types import MinLen
-from typing_extensions import Annotated, Self
+from typing_extensions import Annotated, Self, TypeAlias
 
 from attrib._typing import SupportsRichComparison, Validator, TypeAdapter
 from attrib._utils import is_iterable, is_mapping
 from attrib.exceptions import ValidationError
 
 
-Bound: typing.TypeAlias = SupportsRichComparison
-Comparable: typing.TypeAlias = SupportsRichComparison
-Countable: typing.TypeAlias = typing.Sized
+Bound: TypeAlias = SupportsRichComparison
+Comparable: TypeAlias = SupportsRichComparison
+Countable: TypeAlias = typing.Sized
 
 
 @typing.final

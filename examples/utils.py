@@ -1,10 +1,5 @@
 import typing
-
-try:
-    from typing import ParamSpec, Self  # type: ignore[import]
-except ImportError:
-    from typing_extensions import ParamSpec, Self
-
+from typing_extensions import ParamSpec, Self, TypeAlias
 import time
 from contextlib import ContextDecorator
 import cProfile
@@ -139,11 +134,11 @@ def timeit(  # type: ignore
     return timer
 
 
-StatsData: typing.TypeAlias = typing.Dict[
+StatsData: TypeAlias = typing.Dict[
     typing.Tuple[str, int, str],
     typing.Tuple[int, int, float, float, typing.List[typing.Tuple[str, int]]],
 ]
-StatOutput: typing.TypeAlias = typing.Union[
+StatOutput: TypeAlias = typing.Union[
     typing.Callable[
         [
             typing.Optional[str],

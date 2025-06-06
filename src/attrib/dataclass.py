@@ -6,7 +6,7 @@ import typing
 import copy as pycopy
 from functools import partial
 from types import MappingProxyType
-from typing_extensions import Unpack, Self
+from typing_extensions import Unpack, Self, TypeAlias
 from contextlib import contextmanager
 import warnings
 
@@ -328,7 +328,7 @@ def _build_slotted_namespace(
 
     namespace["__slots__"] = tuple(slots)
     if parent_slotted_attributes:
-        slotted_attributes_names |= parent_slotted_attributes
+        slotted_attributes_names.update(parent_slotted_attributes)
 
     namespace["__slotted_names__"] = slotted_attributes_names
     namespace.pop("__dict__", None)
@@ -336,8 +336,8 @@ def _build_slotted_namespace(
     return namespace
 
 
-StrType: typing.TypeAlias = str
-FieldName: typing.TypeAlias = str
+StrType: TypeAlias = str
+FieldName: TypeAlias = str
 
 
 class ConfigSchema(typing.TypedDict, total=False):
@@ -481,14 +481,36 @@ def build_config(
     return Config(**config)
 
 
-FieldMap: typing.TypeAlias = typing.Mapping[str, Field[typing.Any]]
+FieldMap: TypeAlias = typing.Mapping[str, Field[typing.Any]]
 """A mapping of field names to their corresponding Field instances."""
-FieldDict: typing.TypeAlias = typing.Dict[str, Field[typing.Any]]
+FieldDict: TypeAlias = typing.Dict[str, Field[typing.Any]]
 """A mapping of field names to their corresponding Field instances."""
-NameMap: typing.TypeAlias = typing.Mapping[str, str]
+NameMap: TypeAlias = typing.Mapping[str, str]
 """A mapping of names"""
-NameDict: typing.TypeAlias = typing.Dict[str, str]
+NameDict: TypeAlias = typing.Dict[str, str]
 """A mapping of names"""
+
+
+def build_auxilliary_fields(
+    fields: FieldDict,
+) -> typing.Dict[str, typing.Tuple[Field[typing.Any]]]:
+    auxilliary_fields = {}
+    auxilliary_fields["__init_fields__"] = tuple(
+        field for field in fields.values() if field.init
+    )
+    auxilliary_fields["__repr_fields__"] = tuple(
+        field for field in fields.values() if field.repr
+    )
+    auxilliary_fields["__hash_fields__"] = tuple(
+        field for field in fields.values() if field.hash
+    )
+    auxilliary_fields["__eq_fields__"] = tuple(
+        field for field in fields.values() if field.eq
+    )
+    auxilliary_fields["__ordering_fields__"] = tuple(
+        field for field in fields.values() if field.compare
+    )
+    return auxilliary_fields
 
 
 class DataclassMeta(type):
@@ -533,8 +555,10 @@ class DataclassMeta(type):
                 if not hasattr(cls_, "__fields__"):
                     continue
 
-                if config.slots and hasattr(cls_, "__slotted_names__"):
-                    parent_slotted_attributes.update(cls_.__slotted_names__)
+                if config.slots and (
+                    slotted_names := getattr(cls_, "__slotted_names__", None)
+                ):
+                    parent_slotted_attributes.update(slotted_names)
 
                 cls_ = typing.cast(typing.Type["Dataclass"], cls_)
                 # Borrow fields from the base class
@@ -551,19 +575,9 @@ class DataclassMeta(type):
                 base_to_effective_name_map[key] = effective_name
                 effective_to_base_name_map[effective_name] = key
 
-        attrs["__init_fields__"] = tuple(
-            field for field in fields.values() if field.init
-        )
-        attrs["__repr_fields__"] = tuple(
-            field for field in fields.values() if field.repr
-        )
-        attrs["__hash_fields__"] = tuple(
-            field for field in fields.values() if field.hash
-        )
-        attrs["__eq_fields__"] = tuple(field for field in fields.values() if field.eq)
-        attrs["__ordering_fields__"] = tuple(
-            field for field in fields.values() if field.compare
-        )
+        auxilliary_fields = build_auxilliary_fields(fields)
+        attrs.update(auxilliary_fields)
+
         if config.order and config.eq:
             eq_fields_set = set(attrs["__eq_fields__"])
             ordering_fields_set = set(attrs["__ordering_fields__"])
@@ -1031,6 +1045,7 @@ def load_valid(
     :return: This same instance with the raw data loaded and validated.
     """
     by_name = _by_name.get()
+    fields_set = instance.__fields_set__
     for field in fields:
         name: str = field.name  # type: ignore[assignment]
         if by_name:
@@ -1047,6 +1062,7 @@ def load_valid(
         field.set_value(
             instance, value, lazy=True, is_lazy_valid=True
         )  # Bypass validation
+        fields_set.add(name)
     return instance
 
 
@@ -1171,7 +1187,7 @@ def copy(
     **Tip: If `update` data provided is confirmed to be valid. Efficiently update with:**
 
     ```python
-    
+
     with attrib.deserialization_context(is_valid=True):
         new_instance = attrib.copy(instance, update=update)
     ```
@@ -1182,8 +1198,8 @@ def copy(
     field_values, attributes = getstate()
     if deep:
         field_values = pycopy.deepcopy(field_values, memo=_memo)
-        attributes = pycopy.deepcopy(attributes, memo=_memo) # TODO: Might remove later
-    
+        attributes = pycopy.deepcopy(attributes, memo=_memo)  # TODO: Might remove later
+
     new_instance = type(instance).__new__(type(instance))
     if (setstate := getattr(new_instance, "__setstate__", None)) is None:
         setstate = partial(_setstate, new_instance)

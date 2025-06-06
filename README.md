@@ -16,6 +16,7 @@ It provides an API similar to `attrs`, but with a focus on performance and simpl
 - Growing set of custom types, fields and validators
 - Fully typed APIs for better IDE support
 - Type adapter API for adapted types
+- Supports Python 3.8+
 
 > **Note**: This library is still in early development and may only be used for testing and experimentation.
 
@@ -39,8 +40,6 @@ Install version of choice:
 uv install python <version>
 ```
 
-> Ensure the version installed is compatible with the version specified in `.python-version` (3.10.*), or delete `.python-version` and install a version >=3.10. Although, there is potential support for Python 3.8+.
-
 For the purpose of testing, install the dev requirements:
 
 ```bash
@@ -51,7 +50,7 @@ Proper documentation and tests will be included soon, but you can check the [exa
 
 ```bash
 
-uv run examples/main.py 1000 -OO -B
+uv run --python 3.10 examples/main.py 1000 -OO -B
 ```
 
 to run benchmarks of `attrib` against `attrs + cattrs` and `pydantic`.

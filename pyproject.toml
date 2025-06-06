@@ -6,10 +6,11 @@ readme = "README.md"
 authors = [
     { name = "tioluwa", email = "tioluwa.dev@gmail.com" }
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.8"
 dependencies = [
     "annotated-types>=0.7.0",
     "typing-extensions>=4.13.2",
+    "backports.zoneinfo; python_version < '3.9'"
 ]
 
 [build-system]

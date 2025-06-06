@@ -26,7 +26,7 @@ class Term(enum.Enum):
     THIRD = "Third"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class AcademicYear:
     """Academic year data class"""
 
@@ -43,7 +43,7 @@ class AcademicYear:
             raise ValueError("Name must be at most 100 characters")
 
 
-@dataclass(slots=True)
+@dataclass()
 class Course:
     """Course data class"""
 
@@ -66,7 +66,7 @@ class Course:
         self.code = self.code.strip().upper()
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True)
 class PersonalInfo:
     """Personal information data class"""
 
@@ -93,7 +93,7 @@ class PersonalInfo:
 class Student(PersonalInfo):
     """Student data class"""
 
-    id: int
+    id: typing.Optional[int] = None
     year: typing.Optional[AcademicYear] = None
     courses: typing.List[Course] = field(
         default_factory=list, metadata={"alias": "enrolled_in"}
@@ -157,6 +157,7 @@ converter = configure_converters()
 
 DataclassT = typing.TypeVar("DataclassT")
 
+
 def load_data(
     data_list: typing.List[typing.Dict[str, typing.Any]],
     cls: typing.Type[DataclassT],
@@ -179,15 +180,12 @@ def example():
 
     for student in students:
         converter.unstructure(student)
-        copy.copy(student)
 
     for course in courses:
         converter.unstructure(course)
-        copy.copy(course)
 
     for year in years:
         converter.unstructure(year)
-        copy.copy(year)
 
 
 @timeit("dataclasses + cattrs")

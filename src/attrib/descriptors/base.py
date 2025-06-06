@@ -3,14 +3,13 @@
 import enum
 import functools
 import inspect
-from types import NoneType
 import uuid
 import decimal
 import typing
 import base64
 import io
 import pathlib
-from typing_extensions import Unpack, Self, Annotated
+from typing_extensions import Unpack, Self, Annotated, TypeAlias, TypeGuard
 import annotated_types as annot
 from collections import defaultdict
 import collections.abc
@@ -89,17 +88,17 @@ class AnyType:
         return True
 
 
-NonTupleFieldType: typing.TypeAlias = typing.Union[
+NonTupleFieldType: TypeAlias = typing.Union[
     str,
     typing.Type[T],
     typing.Type[AnyType],
     typing.ForwardRef,
 ]
-FieldType: typing.TypeAlias = typing.Union[
+FieldType: TypeAlias = typing.Union[
     NonTupleFieldType[T],
     typing.Tuple[typing.Union[typing.ForwardRef, typing.Type[T]], ...],
 ]
-NonForwardRefFieldType: typing.TypeAlias = typing.Union[
+NonForwardRefFieldType: TypeAlias = typing.Union[
     typing.Type[T],
     typing.Type[AnyType],
     typing.Tuple[typing.Type[T], ...],
@@ -107,16 +106,14 @@ NonForwardRefFieldType: typing.TypeAlias = typing.Union[
 
 DefaultFactory = typing.Callable[[], typing.Union[T, typing.Any]]
 """Type alias for default value factories."""
-FieldSerializer: typing.TypeAlias = typing.Callable[
-    [T, "FieldTco", Context], typing.Any
-]
+FieldSerializer: TypeAlias = typing.Callable[[T, "FieldTco", Context], typing.Any]
 """
 Type alias for serializers.
 
 Takes three arguments - the value, the field instance, and serialization context, and returns the serialized value.
 Should raise a SerializationError if serialization fails.
 """
-FieldDeserializer: typing.TypeAlias = typing.Callable[[typing.Any, "FieldTco"], T]
+FieldDeserializer: TypeAlias = typing.Callable[[typing.Any, "FieldTco"], T]
 """
 Type alias for deserializers.
 
@@ -277,7 +274,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
     def __init__(
         self,
         field_type: FieldType[T],
-        default: typing.Union[T, DefaultFactory[T], NoneType] = EMPTY,
+        default: typing.Union[T, DefaultFactory[T], None] = EMPTY,
         lazy: bool = False,
         alias: typing.Optional[str] = None,
         serialization_alias: typing.Optional[str] = None,
@@ -429,7 +426,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         """
         return self.alias or self.name
 
-    def get_default(self) -> typing.Union[T, NoneType]:
+    def get_default(self) -> typing.Union[T, None]:
         """Return the default value for the field."""
         default_value = self.default
         if default_value is EMPTY:
@@ -562,7 +559,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         # Check if it is a slotted class first, just in case "__dict__" was added to __slots__.
         # If not, we may mistake it for a normal class and try to access the field's value from __dict__
         # which will raise an AttributeError.
-        if (slotted_names := getattr(instance, "__slotted_names__", None)) is not None:
+        if slotted_names := getattr(instance, "__slotted_names__", None):
             return object.__getattribute__(instance, slotted_names[field_name])
         return instance.__dict__[field_name]
 
@@ -610,7 +607,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         # Check if it is a slotted class first, just in case "__dict__" was added to __slots__.
         # If not, we may mistake it for a normal class and then set the field's value in __dict__,
         # beating the purpose of using slots.
-        if (slotted_names := getattr(instance, "__slotted_names__", None)) is not None:
+        if slotted_names := getattr(instance, "__slotted_names__", None):
             object.__setattr__(instance, slotted_names[field_name], field_value)
         else:
             # Store directly in __dict__ to avoid recursion
@@ -629,13 +626,12 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
                 f"'{type(self).__name__}' on '{type(instance).__name__}' has no name. Ensure it is bound to a class.",
             )
 
-        if hasattr(instance, "__dict__"):
+        if slotted_names := getattr(instance, "__slotted_names__", None):
+            object.__delattr__(instance, slotted_names[field_name])
+        else:
             del instance.__dict__[field_name]
-        else:  # For slotted classes
-            slotted_name = instance.__slotted_names__[field_name]
-            object.__delattr__(instance, slotted_name)
 
-    def check_type(self, value: typing.Any) -> typing.TypeGuard[T]:
+    def check_type(self, value: typing.Any) -> TypeGuard[T]:
         """Check if the value is of the expected type."""
         if self.field_type is AnyType:
             return True
@@ -774,7 +770,7 @@ class FieldKwargs(typing.TypedDict, total=False):
     """A mapping of serialization formats to their respective serializer functions."""
     deserializer: typing.Optional[FieldDeserializer]
     """A deserializer function to convert the field's value to the expected type."""
-    default: typing.Union[typing.Any, DefaultFactory, NoneType]
+    default: typing.Union[typing.Any, DefaultFactory, None]
     """A default value for the field to be used if no value is set."""
     always_coerce: bool
     """If True, the field will always attempt to coerce the value by applying the deserializer."""
@@ -1280,7 +1276,7 @@ class Iterable(typing.Generic[IterType, V], Field[IterType]):
         *,
         size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
         **kwargs: Unpack[FieldKwargs],
-    ) -> NoneType:
+    ) -> None:
         """
         Initialize the field.
 
@@ -1319,7 +1315,7 @@ class Iterable(typing.Generic[IterType, V], Field[IterType]):
 
     def bind(
         self, parent: typing.Type[typing.Any], name: typing.Optional[str] = None
-    ) -> NoneType:
+    ) -> None:
         super().bind(parent, name)
         self.child.bind(parent)
 
@@ -1331,7 +1327,7 @@ class Iterable(typing.Generic[IterType, V], Field[IterType]):
             )
         self.child.post_init_validate()
 
-    def check_type(self, value: typing.Any) -> typing.TypeGuard[IterType]:
+    def check_type(self, value: typing.Any) -> TypeGuard[IterType]:
         if not super().check_type(value):
             return False
 
@@ -1351,7 +1347,7 @@ class List(Iterable[typing.List[V], V]):
         *,
         size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
         **kwargs: Unpack[FieldKwargs],
-    ) -> NoneType:
+    ) -> None:
         super().__init__(
             field_type=list,
             child=child,
@@ -1369,7 +1365,7 @@ class Set(Iterable[typing.Set[V], V]):
         *,
         size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
         **kwargs: Unpack[FieldKwargs],
-    ) -> NoneType:
+    ) -> None:
         super().__init__(
             field_type=set,
             child=child,
@@ -1387,7 +1383,7 @@ class Tuple(Iterable[typing.Tuple[V], V]):
         *,
         size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
         **kwargs: Unpack[FieldKwargs],
-    ) -> NoneType:
+    ) -> None:
         super().__init__(
             field_type=tuple,
             child=child,
@@ -1597,9 +1593,7 @@ class Bytes(Field[bytes]):
     }
     default_deserializer = bytes_deserializer
 
-    def __init__(
-        self, encoding: str = "utf-8", **kwargs: Unpack[FieldKwargs]
-    ) -> NoneType:
+    def __init__(self, encoding: str = "utf-8", **kwargs: Unpack[FieldKwargs]) -> None:
         """
         Initialize the field.
 

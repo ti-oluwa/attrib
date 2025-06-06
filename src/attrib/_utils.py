@@ -8,14 +8,18 @@ import ipaddress
 import types
 import re
 import enum
-import zoneinfo
 import sys
 import datetime
 import collections.abc
 import importlib.util
 import uuid
 from collections import defaultdict, deque
+from typing_extensions import TypeAlias, TypeGuard
 
+try:
+    import zoneinfo
+except ImportError:
+    from backports import zoneinfo  # type: ignore[import]
 try:
     import orjson as json  # type: ignore[import]
 except ImportError:
@@ -53,7 +57,7 @@ class caseinsensitive(typing.NamedTuple):
         return hash(self.s.upper())
 
 
-iexact: typing.TypeAlias = caseinsensitive
+iexact: TypeAlias = caseinsensitive
 
 
 def is_iterable_type(
@@ -61,7 +65,7 @@ def is_iterable_type(
     /,
     *,
     exclude: typing.Optional[typing.Tuple[typing.Type[typing.Any], ...]] = None,
-) -> typing.TypeGuard[typing.Type[typing.Iterable[typing.Any]]]:
+) -> TypeGuard[typing.Type[typing.Iterable[typing.Any]]]:
     """
     Check if a given type is an iterable type. A subclass of `collections.abc.Iterable`.
 
@@ -85,12 +89,12 @@ def is_iterable(
     obj: typing.Any,
     *,
     exclude: typing.Optional[typing.Tuple[typing.Type[typing.Any], ...]] = None,
-) -> typing.TypeGuard[typing.Iterable]:
+) -> TypeGuard[typing.Iterable]:
     """Check if an object is an iterable."""
     return is_iterable_type(type(obj), exclude=exclude)
 
 
-def is_mapping(obj: typing.Any) -> typing.TypeGuard[typing.Mapping]:
+def is_mapping(obj: typing.Any) -> TypeGuard[typing.Mapping]:
     """Check if an object is a mapping (like dict)."""
     return isinstance(obj, collections.abc.Mapping)
 
@@ -118,7 +122,7 @@ def is_generic_type(o: typing.Any, /) -> bool:
 
 def is_mapping_type(
     tp: typing.Type[typing.Any], /
-) -> typing.TypeGuard[typing.Type[typing.Mapping]]:
+) -> TypeGuard[typing.Type[typing.Mapping]]:
     """
     Check if a given type is a mapping type. A subclass of `collections.abc.Mapping`.
 
@@ -158,15 +162,13 @@ def is_slotted_cls(cls: typing.Type[typing.Any], /) -> bool:
     return "__slots__" in cls.__dict__
 
 
-def _tuple_adder(
-    tuple_: typing.Tuple[typing.Any, ...], value: typing.Any
-) -> types.NoneType:
+def _tuple_adder(tuple_: typing.Tuple[typing.Any, ...], value: typing.Any) -> None:
     tuple_ = (*tuple_, value)
 
 
 def _frozenset_adder(
     frozenset_: typing.FrozenSet[typing.Any], value: typing.Any
-) -> types.NoneType:
+) -> None:
     frozenset_ = frozenset(list(frozenset_) + [value])
 
 
@@ -391,10 +393,9 @@ def now(
     """
     if tz is None:
         return datetime.datetime.now(datetime.timezone.utc)
-
     if isinstance(tz, str):
         tz = zoneinfo.ZoneInfo(tz)
-
+    
     return datetime.datetime.now(tz).astimezone(tz)
 
 

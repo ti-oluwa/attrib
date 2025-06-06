@@ -2,7 +2,10 @@ import copy
 import typing
 import enum
 from datetime import date, datetime
-import zoneinfo
+try:
+    import zoneinfo
+except ImportError:
+    from backports import zoneinfo  # type: ignore[import]
 import attrs
 from cattrs import Converter
 from cattrs.gen import make_dict_unstructure_fn, override
@@ -26,7 +29,7 @@ class Term(enum.Enum):
     THIRD = "Third"
 
 
-@attrs.define(slots=True)
+@attrs.define()
 class AcademicYear:
     """Academic year data class"""
 
@@ -46,7 +49,7 @@ class AcademicYear:
     )
 
 
-@attrs.define(slots=True)
+@attrs.define()
 class Course:
     """Course data class"""
 
@@ -59,7 +62,7 @@ class Course:
     )
 
 
-@attrs.define(slots=True, kw_only=True)
+@attrs.define(kw_only=True)
 class PersonalInfo:
     """Personal information data class"""
 
@@ -69,7 +72,7 @@ class PersonalInfo:
     phone: typing.Optional[str] = attrs.field(default=None)
 
 
-@attrs.define(slots=True, kw_only=True)
+@attrs.define(kw_only=True)
 class Student(PersonalInfo):
     """Student data class"""
 
@@ -145,15 +148,12 @@ def example():
 
     for student in students:
         converter.unstructure(student)
-        copy.copy(student)  # Ensure the object is copied correctly
 
     for course in courses:
         converter.unstructure(course)
-        copy.copy(course)
 
     for year in years:
         converter.unstructure(year)
-        copy.copy(year)
 
 
 @timeit("attrs + cattrs")

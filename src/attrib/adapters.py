@@ -9,10 +9,9 @@ from collections.abc import (
     Sequence,
     Set,
 )
-from types import NoneType
 from collections import defaultdict
 
-from attrib._typing import JSONValue, Validator, T, Serializer, Deserializer
+from attrib._typing import JSONValue, Validator, T, Serializer, Deserializer, NoneType
 from attrib._utils import (
     is_generic_type,
     is_named_tuple,
@@ -421,7 +420,7 @@ def build_typeddict_deserializer(
     if not is_typed_dict(target):
         raise TypeError(f"Cannot build deserializer for non-TypedDict type {target!r}")
 
-    annotations = typing.get_type_hints(target, include_extras=True)
+    annotations = typing.get_type_hints(target)
     deserializers_map: typing.Dict[str, Deserializer[typing.Any]] = {}
     for key, value in annotations.items():
         if is_generic_type(value):
@@ -493,7 +492,7 @@ def build_typeddict_validator(
     :param target: The target TypedDict type to validate against.
     :return: A function that attempts to coerce the value to the target type
     """
-    annotations = typing.get_type_hints(target, include_extras=True)
+    annotations = typing.get_type_hints(target)
     required_keys = getattr(target, "__required_keys__", set())
     validators_map: typing.Dict[str, Validator[typing.Any]] = {}
     for key, value in annotations.items():
@@ -565,7 +564,7 @@ def build_named_tuple_deserializer(
     :param target: The target NamedTuple type to adapt
     :return: A function that attempts to coerce the value to the target type
     """
-    annotations = typing.get_type_hints(target, include_extras=True)
+    annotations = typing.get_type_hints(target)
     deserializers_map: typing.Dict[str, Deserializer[typing.Any]] = {}
     for key, value in annotations.items():
         if is_generic_type(value):
@@ -629,7 +628,7 @@ def build_named_tuple_validator(
     :param target: The target NamedTuple type to validate against.
     :return: A function that attempts to validate the value against the target type
     """
-    annotations = typing.get_type_hints(target, include_extras=True)
+    annotations = typing.get_type_hints(target)
     validators_map: typing.Dict[str, Validator[typing.Any]] = {}
     for key, value in annotations.items():
         if is_generic_type(value):
@@ -696,7 +695,7 @@ def build_named_tuple_serializer(
     if not is_named_tuple(target):
         raise TypeError(f"Cannot build serializer for non-NamedTuple type {target!r}")
 
-    annotations = typing.get_type_hints(target, include_extras=True)
+    annotations = typing.get_type_hints(target)
     serializer_map: typing.Dict[str, Serializer[typing.Any]] = {}
     for key, value in annotations.items():
         if is_generic_type(value):
