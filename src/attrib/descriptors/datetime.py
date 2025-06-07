@@ -3,7 +3,7 @@ import datetime
 from typing_extensions import Unpack
 
 try:
-    import zoneinfo
+    import zoneinfo # type: ignore[import]
 except ImportError:
     from backports import zoneinfo  # type: ignore[import]
 

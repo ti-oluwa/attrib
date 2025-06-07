@@ -2,6 +2,7 @@ import enum
 import random
 import typing
 from datetime import datetime
+from dateutil.parser import parse
 import pydantic
 from pydantic import Field, field_validator, ConfigDict
 
@@ -40,8 +41,6 @@ class AcademicYear(pydantic.BaseModel):
         if isinstance(v, datetime):
             return v
         if isinstance(v, str):
-            from dateutil.parser import parse
-
             try:
                 return parse(v).date()
             except Exception:
@@ -128,8 +127,6 @@ class Student(PersonalInfo):
         if isinstance(v, datetime):
             return v
         if isinstance(v, str):
-            from dateutil.parser import parse
-
             try:
                 return parse(v).date()
             except Exception:

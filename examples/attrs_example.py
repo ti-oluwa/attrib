@@ -2,8 +2,9 @@ import copy
 import typing
 import enum
 from datetime import date, datetime
+
 try:
-    import zoneinfo
+    import zoneinfo  # type: ignore[import]
 except ImportError:
     from backports import zoneinfo  # type: ignore[import]
 import attrs

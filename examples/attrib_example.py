@@ -3,14 +3,16 @@ import random
 import typing
 import functools
 from datetime import datetime
+import quantities as pq
 
 try:
-    import zoneinfo
+    import zoneinfo # type: ignore[import]
 except ImportError:
     from backports import zoneinfo  # type: ignore[import]
 
 import attrib
 from attrib.descriptors.phonenumbers import PhoneNumber
+from attrib.descriptors.quantities import Quantity
 from utils import timeit, profileit, log
 from mock_data import course_data, student_data, year_data
 

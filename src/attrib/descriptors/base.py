@@ -289,6 +289,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         always_coerce: bool = False,
         check_coerced: bool = False,
         skip_validator: bool = False,
+        validate_default: bool = False,
         fail_fast: bool = False,
         hash: bool = True,
         repr: bool = True,
@@ -323,6 +324,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
             Set to True if a custom deserializer is used and the return type cannot be guaranteed to match the field type.
 
         :param skip_validator: If True, the field will skip validator run after deserialization. Defaults to False.
+        :param validate_default: If True, the field will validate the default value if provided. Defaults to False.
         :param fail_fast: If True, the field will raise an error immediately a validation fails. Defaults to False.
         :param hash: If True, the field will be included in the hash of the class it is defined in. Defaults to True.
         :param repr: If True, the field will be included in the repr of the class it is defined in. Defaults to True.
@@ -365,6 +367,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         self.always_coerce = always_coerce
         self.check_coerced = check_coerced
         self.skip_validator = skip_validator
+        self.validate_default = validate_default
         self.fail_fast = fail_fast
         self.serialization_alias = serialization_alias
         self.hash = hash
@@ -451,12 +454,13 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
 
         :param instance: The instance to which the field belongs.
         """
-        # Default values are assumed valid, so we do not validate them.
+        # Default values are assumed valid, so we do not validate them. Except if validate_default is True.
+        valid = not self.validate_default
         self.set_value(
             instance,
             self.get_default(),
-            lazy=True,
-            is_lazy_valid=True,
+            lazy=valid,
+            is_lazy_valid=valid,
         )
 
     def bind(
@@ -671,6 +675,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
             raise DeserializationError.from_exception(
                 exc,
                 message="Failed to deserialize value.",
+                parent_name=type(instance).__name__ if instance else None,
                 input_type=type(value),
                 expected_type=self.typestr,
                 location=[self.name],
@@ -783,6 +788,8 @@ class FieldKwargs(typing.TypedDict, total=False):
     """
     skip_validator: bool
     """If True, the field will skip validator run after deserialization."""
+    validate_default: bool
+    """If True, the field will validate the default value if provided."""
     fail_fast: bool
     """If True, the field will raise an error immediately a validation fails."""
     hash: bool

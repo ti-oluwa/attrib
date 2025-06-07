@@ -2,9 +2,17 @@ import typing
 from typing_extensions import Self
 from contextlib import contextmanager
 
+from attrib._typing import Context
+
 
 class AttribException(Exception):
     """Base exception for all attrib-related errors."""
+
+    pass
+
+
+class ConfigurationError(AttribException):
+    """Raised for configuration-related errors."""
 
     pass
 
@@ -43,12 +51,19 @@ class ErrorDetail(typing.NamedTuple):
     """Error detail for field errors."""
 
     location: typing.List[typing.Any]
+    """Location of the error source in the data structure, in sequence."""
     message: str
+    """Error message."""
     expected_type: typing.Optional[type] = None
+    """Expected type for the field or context."""
     input_type: typing.Optional[typing.Any] = None
+    """Input type that caused the error."""
     code: typing.Optional[str] = None
-    context: typing.Optional[typing.Dict[str, typing.Any]] = None
+    """Error code for the error detail."""
+    context: typing.Optional[Context] = None
+    """Context dictionary for additional information."""
     origin: typing.Optional[Exception] = None
+    """Original exception that caused the error, if any."""
 
     def as_string(self) -> str:
         """Return a string representation of the error detail."""
@@ -203,7 +218,14 @@ class DetailedError(AttribException):
         :param context: Optional context dictionary for additional information
         :return: A new `DetailedError` instance with the provided details
         """
-        msg = f"{message or ''}\n  {exception.args[0] if exception.args else str(exception)}".strip()
+        exception_msg = exception.args[0] if exception.args else None
+        if not isinstance(exception_msg, str):
+            try:
+                exception_msg = str(exception_msg)
+            except Exception:
+                exception_msg = f"<unprintable {type(exception_msg).__name__}>"
+        
+        msg = f"{message or ''}\n  {exception_msg}".strip()
         new = cls(
             parent_name=parent_name,
             message=msg,
@@ -482,9 +504,3 @@ ERROR_CODE_MAPPING = {
     DeserializationError: "coercion_failed",
     InvalidTypeError: "invalid_type",
 }
-
-
-class ConfigurationError(AttribException):
-    """Raised for configuration-related errors."""
-
-    pass
