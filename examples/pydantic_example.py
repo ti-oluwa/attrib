@@ -148,7 +148,7 @@ def load_data(
     :param cls: Pydantic model class to load data into
     :return: List of the model instances
     """
-    return [cls.model_validate(data, by_name=True) for data in data_list]
+    return [cls.model_validate(data) for data in data_list]
 
 
 def example() -> None:

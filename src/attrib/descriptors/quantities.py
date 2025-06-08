@@ -112,8 +112,8 @@ class Quantity(Field[pq.Quantity]):
         super().__init__(field_type=pq.Quantity, **kwargs)
         self.unit = unit
 
-    def post_init_validate(self) -> None:
-        super().post_init_validate()
+    def post_init(self) -> None:
+        super().post_init()
         if self.unit is not None:
             try:
                 pq.quantity.validate_dimensionality(self.unit)

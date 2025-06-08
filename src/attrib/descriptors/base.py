@@ -295,7 +295,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         repr: bool = True,
         eq: bool = True,
         init: bool = True,
-        compare: bool = False,
+        order: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
     ) -> None:
         """
         Initialize the field.
@@ -330,7 +330,9 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         :param repr: If True, the field will be included in the repr of the class it is defined in. Defaults to True.
         :param eq: If True, the field will be compared for equality when comparing instances of the class it is defined in. Defaults to True.
         :param init: If True, the field will be included as an instantiation argument for the class it is defined in. Defaults to True.
-        :param compare: If True, the field will be compared when comparing instances of the class it is defined in. Defaults to False.
+        :param order: If set, the field will be included in the ordering of instances of the class it is defined in.
+            The value must be a non-negative integer, where lower values indicate higher precedence in ordering.
+            That is, a field with order=0 will be ordered/compared before a field with order=1.
         """
         if isinstance(field_type, str):
             self.field_type = typing.ForwardRef(field_type)
@@ -374,7 +376,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         self.repr = repr
         self.eq = eq
         self.init = init
-        self.compare = compare
+        self.order = order
 
     @property
     def typestr(self) -> str:
@@ -388,7 +390,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
             return f"strict[{value}]"
         return value
 
-    def post_init_validate(self) -> None:
+    def post_init(self) -> None:
         """
         Validate the field after initialization.
 
@@ -487,6 +489,12 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         :param parent: The parent class to which the field is bound.
         :param name: The name of the field.
         """
+        if self.name is not None:
+            raise ConfigurationError(
+                f"Field '{self.name}' is already bound to a class. "
+                "Ensure that the field is not bound multiple times.",
+            )
+
         self.name = name
         parent_module = inspect.getmodule(parent)
         globalns = parent_module.__dict__ if parent_module else globals()
@@ -813,8 +821,12 @@ class FieldKwargs(typing.TypedDict, total=False):
     """If True, the field will be compared for equality when comparing instances of the class it is defined in."""
     init: bool
     """If True, the field will be included as an instantiation argument for the class it is defined in."""
-    compare: bool
-    """If True, the field will be compared when comparing instances of the class it is defined in."""
+    order: typing.Optional[Annotated[int, annot.Ge(0)]]
+    """
+    If set, the field will be included in the ordering of instances of the class it is defined in.
+    The value must be a non-negative integer, where lower values indicate higher precedence in ordering.
+    That is, a field with order=0 will be ordered/compared before a field with order=1.
+    """
 
 
 class Any(Field[typing.Any]):
@@ -956,8 +968,8 @@ class Integer(Field[int]):
         )
         self.base = base
 
-    def post_init_validate(self) -> None:
-        super().post_init_validate()
+    def post_init(self) -> None:
+        super().post_init()
         if not (2 <= self.base <= 36):
             raise FieldError(
                 f"Base {self.base} is not supported. Must be between 2 and 36.",
@@ -1029,8 +1041,8 @@ class String(Field[str]):
         self.to_lowercase = to_lowercase
         self.to_uppercase = to_uppercase
 
-    def post_init_validate(self) -> None:
-        super().post_init_validate()
+    def post_init(self) -> None:
+        super().post_init()
         if self.to_lowercase and self.to_uppercase:
             raise FieldError(
                 "`to_lowercase` and `to_uppercase` cannot both be set to True.",
@@ -1101,21 +1113,21 @@ def iterable_python_serializer(
             if field.fail_fast:
                 raise SerializationError.from_exception(
                     exc,
-                    input_type=type(item),
+                    input_type=type(item).__name__,
                     expected_type=child_typestr,
                     location=[index],
                 ) from exc
             elif error is None:
                 error = SerializationError.from_exception(
                     exc,
-                    input_type=type(item),
+                    input_type=type(item).__name__,
                     expected_type=child_typestr,
                     location=[index],
                 )
             else:
                 error.add(
                     exc,
-                    input_type=type(item),
+                    input_type=type(item).__name__,
                     expected_type=child_typestr,
                     location=[index],
                 )
@@ -1130,7 +1142,9 @@ def iterable_python_serializer(
 
 
 def iterable_json_serializer(
-    value: IterT, field: "Iterable[IterT, V]", context: Context
+    value: typing.Iterable[V],
+    field: "Iterable[typing.Iterable[V], V]",
+    context: Context,
 ) -> typing.List[typing.Any]:
     """
     Serialize an iterable to JSON compatible format.
@@ -1151,21 +1165,21 @@ def iterable_json_serializer(
             if field.fail_fast:
                 raise SerializationError.from_exception(
                     exc,
-                    input_type=type(item),
+                    input_type=type(item).__name__,
                     expected_type=child_typestr,
                     location=[index],
                 ) from exc
             elif error is None:
                 error = SerializationError.from_exception(
                     exc,
-                    input_type=type(item),
+                    input_type=type(item).__name__,
                     expected_type=child_typestr,
                     location=[index],
                 )
             else:
                 error.add(
                     exc,
-                    input_type=type(item),
+                    input_type=type(item).__name__,
                     expected_type=child_typestr,
                     location=[index],
                 )
@@ -1180,8 +1194,8 @@ def iterable_json_serializer(
 
 
 def iterable_deserializer(
-    value: typing.Iterable[typing.Any], field: "Iterable[IterT, V]"
-) -> IterT:
+    value: typing.Iterable[typing.Any], field: "Iterable[typing.Iterable[V], V]"
+) -> typing.Iterable[V]:
     """
     Deserialize an iterable value to the specified field type.
 
@@ -1190,7 +1204,6 @@ def iterable_deserializer(
     :return: The deserialized value.
     """
     field_type = field.field_type
-    field_type = typing.cast(typing.Type[IterT], field_type)
     deserialized = field_type.__new__(field_type)  # type: ignore
     child_deserializer = field.child.deserialize
     child_typestr = field.child.typestr
@@ -1204,21 +1217,21 @@ def iterable_deserializer(
             if field.fail_fast:
                 raise DeserializationError.from_exception(
                     exc,
-                    input_type=type(item),
+                    input_type=type(item).__name__,
                     expected_type=child_typestr,
                     location=[index],
                 ) from exc
             elif error is None:
                 error = DeserializationError.from_exception(
                     exc,
-                    input_type=type(item),
+                    input_type=type(item).__name__,
                     expected_type=child_typestr,
                     location=[index],
                 )
             else:
                 error.add(
                     exc,
-                    input_type=type(item),
+                    input_type=type(item).__name__,
                     expected_type=child_typestr,
                     location=[index],
                 )
@@ -1233,8 +1246,8 @@ def iterable_deserializer(
 
 
 def validate_iterable(
-    value: IterT,
-    field: typing.Optional["Iterable[IterT, V]"] = None,
+    value: typing.Iterable[V],
+    field: typing.Optional["Iterable[typing.Iterable[V], V]"] = None,
     instance: typing.Optional[typing.Any] = None,
     *args: typing.Any,
     **kwargs: typing.Any,
@@ -1259,21 +1272,21 @@ def validate_iterable(
             if field.fail_fast:
                 raise ValidationError.from_exception(
                     exc,
-                    input_type=type(item),
+                    input_type=type(item).__name__,
                     expected_type=child_typestr,
                     location=[field.name, index],
                 ) from exc
             elif error is None:
                 error = ValidationError.from_exception(
                     exc,
-                    input_type=type(item),
+                    input_type=type(item).__name__,
                     expected_type=child_typestr,
                     location=[field.name, index],
                 )
             else:
                 error.add(
                     exc,
-                    input_type=type(item),
+                    input_type=type(item).__name__,
                     expected_type=child_typestr,
                     location=[field.name, index],
                 )
@@ -1341,13 +1354,13 @@ class Iterable(typing.Generic[IterT, V], Field[IterT]):
         super().bind(parent, name)
         self.child.bind(parent)
 
-    def post_init_validate(self):
-        super().post_init_validate()
+    def post_init(self) -> None:
+        super().post_init()
         if not isinstance(self.child, Field):
             raise TypeError(
                 f"'child' must be a field instance , not {type(self.child).__name__}."
             )
-        self.child.post_init_validate()
+        self.child.post_init()
 
     def check_type(self, value: typing.Any) -> TypeGuard[IterT]:
         if not super().check_type(value):

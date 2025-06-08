@@ -82,8 +82,8 @@ class Nested(Field[_Dataclass]):
         """
         super().__init__(dataclass_, **kwargs)
 
-    def post_init_validate(self) -> None:
-        super().post_init_validate()
+    def post_init(self) -> None:
+        super().post_init()
         field_type = typing.cast(NonTupleFieldType[_Dataclass], self.field_type)
         if isinstance(field_type, (typing.ForwardRef, str)):
             return

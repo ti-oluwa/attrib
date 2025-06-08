@@ -77,12 +77,12 @@ def resolve_option(
 
 SerializationTarget: TypeAlias = Dataclass
 CurrentSerializationDepth: TypeAlias = int
-TargetParentName: TypeAlias = str
+TargetContextName: TypeAlias = str
 SerializationOutput = typing.TypeVar("SerializationOutput")
 SerializationStack: TypeAlias = typing.Deque[
     typing.Tuple[
         SerializationTarget,
-        typing.Optional[TargetParentName],
+        typing.Optional[TargetContextName],
         CurrentSerializationDepth,
         SerializationOutput,
     ]
@@ -121,7 +121,7 @@ def _serialize_instance_asdict(
     error = None
 
     while stack:
-        target_instance, parent_name, current_depth, serialized_output = stack.pop()
+        target_instance, context_name, current_depth, serialized_output = stack.pop()
         instance_type = type(target_instance)
 
         if instance_type in local_options:
@@ -179,21 +179,21 @@ def _serialize_instance_asdict(
                         exc,
                         parent_name=instance_type.__name__,
                         expected_type=field.typestr,
-                        location=[parent_name],
+                        location=[context_name],
                     ) from exc
                 if error is None:
                     error = SerializationError.from_exception(
                         exc,
                         parent_name=instance_type.__name__,
                         expected_type=field.typestr,
-                        location=[parent_name],
+                        location=[context_name],
                     )
                 else:
                     error.add(
                         exc,
                         parent_name=instance_type.__name__,
                         expected_type=field.typestr,
-                        location=[parent_name],
+                        location=[context_name],
                     )
 
     if error:
@@ -233,7 +233,7 @@ def _serialize_instance_asnamedtuple(
     error = None
 
     while stack:
-        target_instance, parent_name, current_depth, serialized_output = stack.pop()
+        target_instance, context_name, current_depth, serialized_output = stack.pop()
         instance_type = type(target_instance)
 
         if instance_type in local_options:
@@ -301,21 +301,21 @@ def _serialize_instance_asnamedtuple(
                         exc,
                         parent_name=instance_type.__name__,
                         expected_type=field.typestr,
-                        location=[parent_name],
+                        location=[context_name],
                     ) from exc
                 if error is None:
                     error = SerializationError.from_exception(
                         exc,
                         parent_name=instance_type.__name__,
                         expected_type=field.typestr,
-                        location=[parent_name],
+                        location=[context_name],
                     )
                 else:
                     error.add(
                         exc,
                         parent_name=instance_type.__name__,
                         expected_type=field.typestr,
-                        location=[parent_name],
+                        location=[context_name],
                     )
 
     if error:

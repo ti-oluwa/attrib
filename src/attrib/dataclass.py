@@ -1,13 +1,11 @@
 """Data description classes"""
 
 from collections.abc import Iterable, Mapping, Sequence
-from contextvars import ContextVar, Token
 import typing
 import copy as pycopy
 from functools import partial
 from types import MappingProxyType
 from typing_extensions import Unpack, Self, TypeAlias
-from contextlib import contextmanager
 import warnings
 
 from attrib.descriptors.base import Field, Value
@@ -18,34 +16,23 @@ from attrib.exceptions import (
     ValidationError,
 )
 from attrib._typing import DataDict, RawData, KwArg
+from attrib.contextmanagers import (
+    deserialization_context,
+    _fail_fast,
+    _by_name,
+    _is_valid,
+    _ignore_extras,
+)
 
 
 __all__ = [
     "Dataclass",
     "Config",
     "deserialize",
-    "deserialization_context",
     "copy",
     "get_field",
     "get_fields",
 ]
-
-
-def get_fields(cls: typing.Type) -> typing.Dict[str, Field]:
-    """
-    Inspect and retrieve all data fields from a class.
-
-    :param cls: The class to inspect.
-    :return: A dictionary of field names and their corresponding Field instances.
-    """
-    if issubclass(cls, Dataclass) or hasattr(cls, "__fields__"):
-        return dict(cls.__fields__)
-
-    fields = {}
-    for key, value in cls.__dict__.items():
-        if isinstance(value, Field):
-            fields[key] = value
-    return fields
 
 
 def _sort_by_name(item: typing.Tuple[str, Field]) -> str:
@@ -147,11 +134,11 @@ def _setstate(
     return instance
 
 
-def _getnewargs(
+def _getnewargs_ex(
     instance: "Dataclass",
 ) -> typing.Tuple[typing.Tuple[typing.Any, ...], typing.Dict[str, typing.Any]]:
     """Get the __new__ arguments for the dataclass instance."""
-    return (), instance.__getstate__()[0]  # type: ignore[return-value]
+    return (), {}
 
 
 def _hash_any(value: typing.Any) -> int:
@@ -507,8 +494,16 @@ def build_auxilliary_fields(
     auxilliary_fields["__eq_fields__"] = tuple(
         field for field in fields.values() if field.eq
     )
-    auxilliary_fields["__ordering_fields__"] = tuple(
-        field for field in fields.values() if field.compare
+    ordering_fields = tuple(
+        field for field in fields.values() if field.order is not None
+    )
+    auxilliary_fields["__ordering_fields__"] = sorted(
+        ordering_fields,
+        key=lambda f: f.order
+        if f.order is not None
+        else float(
+            "inf"
+        ),  # Just to please the type checker since `f.order` can be None
     )
     return auxilliary_fields
 
@@ -552,7 +547,7 @@ class DataclassMeta(type):
                     continue
 
                 inspected.add(cls_)
-                if not hasattr(cls_, "__fields__"):
+                if not (cls_fields := getattr(cls_, "__fields__", None)):
                     continue
 
                 if config.slots and (
@@ -560,15 +555,14 @@ class DataclassMeta(type):
                 ):
                     parent_slotted_attributes.update(slotted_names)
 
-                cls_ = typing.cast(typing.Type["Dataclass"], cls_)
                 # Borrow fields from the base class
-                fields.update(cls_.__fields__)
+                fields.update(cls_fields)
                 base_to_effective_name_map.update(cls_.base_to_effective_name_map)
                 effective_to_base_name_map.update(cls_.effective_to_base_name_map)
 
         for key, value in attrs.items():
             if isinstance(value, Field):
-                value.post_init_validate()
+                value.post_init()
                 own_fields[key] = value
                 fields[key] = value
                 effective_name = value.alias or key
@@ -650,7 +644,7 @@ class DataclassMeta(type):
             if "__setstate__" not in attrs:
                 attrs["__setstate__"] = _setstate
             if "__getnewargs__" not in attrs:
-                attrs["__getnewargs__"] = _getnewargs
+                attrs["__getnewargs_ex__"] = _getnewargs_ex
         if config.order:
             if fields and not attrs["__ordering_fields__"]:
                 raise ConfigurationError(
@@ -898,62 +892,6 @@ class Dataclass(metaclass=DataclassMeta):
 
 DataclassTco = typing.TypeVar("DataclassTco", bound=Dataclass, covariant=True)
 
-_fail_fast: ContextVar[bool] = ContextVar("fail_fast", default=False)
-"""
-`fail_fast` context variable to control whether to stop on the first error encountered during loading
-data onto dataclass instances.
-"""
-_ignore_extras: ContextVar[bool] = ContextVar("ignore_extras", default=False)
-"""
-`ignore_extras` context variable to control whether to ignore extra fields not defined in the dataclass
-"""
-_by_name: ContextVar[bool] = ContextVar("by_name", default=False)
-"""
-`by_name` context variable to control whether to use actual field names as keys instead of their effective names (name or alias)
- when loading data onto dataclass instances.
-"""
-_is_valid: ContextVar[bool] = ContextVar("is_valid", default=False)
-"""`is_valid` context variable to control whether the data being loaded is already validated."""
-
-
-@contextmanager
-def deserialization_context(
-    fail_fast: typing.Optional[bool] = None,
-    ignore_extras: typing.Optional[bool] = None,
-    by_name: typing.Optional[bool] = None,
-    is_valid: typing.Optional[bool] = None,
-) -> typing.Generator[None, None, None]:
-    """
-    Deserialization context manager.
-
-    All deserialization occurring within this context will use the defined settings.
-
-    :param fail_fast: If True, stop on the first error encountered during loading.
-    :param ignore_extras: If True, ignore extra fields not defined in the dataclass.
-    :param by_name: If True, use actual field names as keys instead of their effective names (name or alias).
-        when loading data onto dataclass instances.
-    :param is_valid: If True, the data being loaded is already validated and will not be validated again.
-
-    Leaving any of this parameters as None will leave the current context variable value unchanged.
-    """
-    context_settings: typing.Dict[ContextVar[bool], typing.Optional[bool]] = {
-        _fail_fast: fail_fast,
-        _ignore_extras: ignore_extras,
-        _by_name: by_name,
-        _is_valid: is_valid,
-    }
-    reset_tokens: typing.Dict[ContextVar[bool], Token[bool]] = {}
-    for context_var, value in context_settings.items():
-        if value is not None:
-            reset_tokens[context_var] = context_var.set(value)
-
-    try:
-        yield
-    finally:
-        for context_var, token in reset_tokens.items():
-            context_var.reset(token)
-
-
 _missing = object()
 """Sentinel representing a missing value in a data dict"""
 
@@ -1003,10 +941,11 @@ def load_raw(
                     continue
             else:
                 effective_name = name_map[name]
-                if (
-                    value := data.get(effective_name, _missing)
-                ) is _missing and effective_name != name:
-                    if (value := data.get(name, _missing)) is _missing:
+                if (value := data.get(effective_name, _missing)) is _missing:
+                    if (
+                        effective_name == name
+                        or (value := data.get(name, _missing)) is _missing
+                    ):
                         field.set_default(instance)
                         continue
 
@@ -1058,10 +997,11 @@ def load_valid(
                 continue
         else:
             effective_name = name_map[name]
-            if (
-                value := data.get(effective_name, _missing)
-            ) is _missing and effective_name != name:
-                if (value := data.get(name, _missing)) is _missing:
+            if (value := data.get(effective_name, _missing)) is _missing:
+                if (
+                    effective_name == name
+                    or (value := data.get(name, _missing)) is _missing
+                ):
                     field.set_default(instance)
                     continue
 
@@ -1184,7 +1124,11 @@ def copy(
         field_values = pycopy.deepcopy(field_values, memo=_memo)
         attributes = pycopy.deepcopy(attributes, memo=_memo)  # TODO: Might remove later
 
-    new_instance = type(instance).__new__(type(instance))
+    if getnewargs := getattr(instance, "__getnewargs_ex__", None):
+        args, kwargs = getnewargs()
+    else:
+        args, kwargs = (), {}
+    new_instance = type(instance).__new__(type(instance), *args, **kwargs)
     if (setstate := getattr(new_instance, "__setstate__", None)) is None:
         setstate = partial(_setstate, new_instance)
 
@@ -1232,3 +1176,20 @@ def get_field(
         field_name = cls.effective_to_base_name_map[field_name]
         field = cls.__fields__.get(field_name, None)
     return field
+
+
+def get_fields(cls: typing.Type[Dataclass]) -> typing.Dict[str, Field[typing.Any]]:
+    """
+    Inspect and retrieve all data fields from a class.
+
+    :param cls: The class to inspect.
+    :return: A dictionary of field names and their corresponding Field instances.
+    """
+    if issubclass(cls, Dataclass) or hasattr(cls, "__fields__"):
+        return dict(cls.__fields__)
+
+    fields = {}
+    for key, value in cls.__dict__.items():
+        if isinstance(value, Field):
+            fields[key] = value
+    return fields

@@ -1,13 +1,7 @@
 import enum
 import random
 import typing
-import functools
 from datetime import datetime
-
-try:
-    import zoneinfo  # type: ignore[import]
-except ImportError:
-    from backports import zoneinfo  # type: ignore[import]
 
 import attrib
 from attrib.descriptors.phonenumbers import PhoneNumber
@@ -64,8 +58,8 @@ class PersonalInfo(attrib.Dataclass):
     )
 
 
-@attrib.partial
-class Student(PersonalInfo):
+@attrib.ordered(include=["id", "name", "level", "gpa"])
+class Student(PersonalInfo, order=True):
     """Student data class"""
 
     id = attrib.Integer(required=True)
@@ -84,18 +78,12 @@ class Student(PersonalInfo):
     joined_at = attrib.DateTime(allow_null=True, tz="Africa/Lagos")
     created_at = attrib.DateTime(default=datetime.now)
 
-    @functools.cached_property
-    def full_name(self) -> str:
-        """Return the full name of the student"""
-        return f"{self.name} (ID: {self.id})"
-
 
 DataclassTco = typing.TypeVar(
     "DataclassTco",
     bound=attrib.Dataclass,
     covariant=True,
 )
-
 
 def load_data(
     data_list: typing.List[typing.Dict[str, typing.Any]],
@@ -115,7 +103,6 @@ def example() -> None:
     """Run example usage of the data classes"""
     with attrib.deserialization_context(
         fail_fast=True,
-        by_name=True,
         ignore_extras=True,
     ):
         students = load_data(student_data, Student)
