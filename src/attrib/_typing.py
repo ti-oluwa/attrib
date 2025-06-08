@@ -20,7 +20,8 @@ RawData: TypeAlias = typing.Union[
     typing.Sequence[typing.Tuple[str, typing.Any]],
     typing.Sequence[typing.Tuple[bytes, bytes]],
 ]
-IterType = typing.TypeVar("IterType", bound=typing.Iterable[typing.Any])
+IterT = typing.TypeVar("IterT", bound=typing.Iterable[typing.Any])
+IterTco = typing.TypeVar("IterTco", bound=typing.Iterable[typing.Any], covariant=True)
 DataDict: TypeAlias = typing.Dict[str, typing.Any]
 NamedDataTuple: TypeAlias = typing.Tuple[typing.Tuple[str, typing.Any], ...]
 

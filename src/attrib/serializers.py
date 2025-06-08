@@ -323,7 +323,6 @@ def _serialize_instance_asnamedtuple(
     return tuple(serialized_items)
 
 
-@functools.lru_cache(maxsize=128)
 def Options(*options: Option) -> OptionsMap:
     """
     Process a variable number of serialization `Option` instances into a mapping.
@@ -342,19 +341,25 @@ def Options(*options: Option) -> OptionsMap:
                 "Cannot specify both 'include' and 'exclude' in the same Option."
             )
 
-        target_fields = set(option.target.base_to_effective_name_map.keys())
-        if option.include and option.target is not Dataclass:
-            unknown_fields = option.include - target_fields
+        if (not option.include and not option.exclude) or option.target is Dataclass:
+            options_map[option.target] = option
+            continue
+
+        target_name = option.target.__name__
+        target_fields = option.target.base_to_effective_name_map.keys()
+        if option.include:
+            unknown_fields = option.include - set(target_fields)
             if unknown_fields:
                 raise ValueError(
-                    f"Some included fields are not present in {option.target.__name__} - {', '.join(unknown_fields)}"
+                    f"Some included fields are not present in {target_name} - {', '.join(unknown_fields)}"
                 )
-        elif option.exclude and option.target is not Dataclass:
-            unknown_fields = option.exclude - target_fields
+        elif option.exclude:
+            unknown_fields = option.exclude - set(target_fields)
             if unknown_fields:
                 raise ValueError(
-                    f"Some excluded fields are not present in {option.target.__name__} - {', '.join(unknown_fields)}"
+                    f"Some excluded fields are not present in {target_name} - {', '.join(unknown_fields)}"
                 )
+
         options_map[option.target] = option
 
     return options_map

@@ -3,16 +3,14 @@ import random
 import typing
 import functools
 from datetime import datetime
-import quantities as pq
 
 try:
-    import zoneinfo # type: ignore[import]
+    import zoneinfo  # type: ignore[import]
 except ImportError:
     from backports import zoneinfo  # type: ignore[import]
 
 import attrib
 from attrib.descriptors.phonenumbers import PhoneNumber
-from attrib.descriptors.quantities import Quantity
 from utils import timeit, profileit, log
 from mock_data import course_data, student_data, year_data
 
@@ -85,7 +83,7 @@ class Student(PersonalInfo):
     )
     joined_at = attrib.DateTime(allow_null=True, tz="Africa/Lagos")
     created_at = attrib.DateTime(
-        default=attrib.Factory(attrib.now, zoneinfo.ZoneInfo("Asia/Kolkata")),
+        default=attrib.Factory(attrib.now, tz=zoneinfo.ZoneInfo("Asia/Kolkata")),
         tz="Asia/Kolkata",
     )
 
@@ -128,38 +126,13 @@ def example() -> None:
         years = load_data(year_data, AcademicYear)
 
     for student in students:
-        attrib.serialize(
-            student,
-            fmt="python",
-            # options=attrib.Options(
-            #     attrib.Option(
-            #         Student,
-            #         include={
-            #             "courses",
-            #             "name",
-            #             "age",
-            #             "gpa",
-            #             "level",
-            #         },
-            #         depth=1,
-            #     ),
-            #     attrib.Option(
-            #         Course,
-            #         include={"code", "name", "year"},
-            #         depth=0,
-            #         strict=True,
-            #     ),
-            #     attrib.Option(exclude={"created_at", "id"}, depth=1),
-            # ),
-            astuple=False,
-            by_alias=True,
-        )
+        attrib.serialize(student, fmt="python", by_alias=True)
 
     for course in courses:
-        attrib.serialize(course, fmt="python", astuple=False)
+        attrib.serialize(course, fmt="python")
 
     for year in years:
-        attrib.serialize(year, fmt="python", astuple=False)
+        attrib.serialize(year, fmt="python")
 
 
 # @profileit("attrib", max_rows=20, output="rich")

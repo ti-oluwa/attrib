@@ -41,7 +41,7 @@ from attrib._typing import (
     JSONValue,
     SupportsRichComparison,
     Validator,
-    IterType,
+    IterT,
     EMPTY,
     Context,
 )
@@ -324,7 +324,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
             Set to True if a custom deserializer is used and the return type cannot be guaranteed to match the field type.
 
         :param skip_validator: If True, the field will skip validator run after deserialization. Defaults to False.
-        :param validate_default: If True, the field will validate the default value if provided. Defaults to False.
+        :param validate_default: If True, the field will check that the default value is valid before setting it. Defaults to False.
         :param fail_fast: If True, the field will raise an error immediately a validation fails. Defaults to False.
         :param hash: If True, the field will be included in the hash of the class it is defined in. Defaults to True.
         :param repr: If True, the field will be included in the repr of the class it is defined in. Defaults to True.
@@ -367,7 +367,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         self.always_coerce = always_coerce
         self.check_coerced = check_coerced
         self.skip_validator = skip_validator
-        self.validate_default = validate_default
+        self._check_default = validate_default
         self.fail_fast = fail_fast
         self.serialization_alias = serialization_alias
         self.hash = hash
@@ -429,15 +429,15 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         """
         return self.alias or self.name
 
-    def get_default(self) -> typing.Union[T, None]:
+    def get_default(self) -> typing.Union[T, typing.Any, None]:
         """Return the default value for the field."""
         default_value = self.default
-        if default_value is EMPTY:
-            return EMPTY  # type: ignore[return-value]
+        if default_value is EMPTY or default_value is None:
+            return default_value
 
         if callable(default_value):
             try:
-                return default_value()  # type: ignore[call-arg]
+                return default_value()
             except Exception as exc:
                 raise FieldError(
                     "An error occurred while calling the default factory.",
@@ -445,23 +445,36 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
                 ) from exc
         return default_value
 
-    def set_default(
-        self,
-        instance: typing.Any,
-    ) -> None:
+    def set_default(self, instance: typing.Any) -> None:
         """
         Set the default value for the field on an instance.
 
         :param instance: The instance to which the field belongs.
         """
-        # Default values are assumed valid, so we do not validate them. Except if validate_default is True.
-        valid = not self.validate_default
+        # If `_check_default` is False, it means that the default value is (assumed) valid
+        # and does not need to be validated. Hence, we can set the value to not be validated now (lazy=True),
+        # and also set (is_lazy_valid=True), to confirm that the value is valid and should also not be validated later (on access).
+        # However, these conditions only apply if the field is not configured to always coerce input (field.always_coerce == True).
+
+        # If `_check_default` is True, it means that the default value needs to be validated.
+        # In this case, we set the value to be validated now (lazy=False). However, if the field validates lazily (field.lazy == True).
+        # Then we also need to ensure that the default value set respects that and is validated later.
+        default_is_valid = not self._check_default and not self.always_coerce
+        lazy_default = default_is_valid or self.lazy
         self.set_value(
             instance,
             self.get_default(),
-            lazy=valid,
-            is_lazy_valid=valid,
+            lazy=lazy_default,
+            is_lazy_valid=default_is_valid,
         )
+        # If we reach here, the value has been set and is valid.
+        # Hence, we set `_check_default` to False, as there is no need to check it again.
+        # In the case that the we have a default factory, we are making the assumption that the
+        # factory will always return a valid value.
+        self._check_default = False
+
+        # Note that 'valid' here means that the value does not need to be coerced to the field type, and
+        # does not need to be run through the validator.
 
     def bind(
         self, parent: typing.Type[typing.Any], name: typing.Optional[str] = None
@@ -531,7 +544,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         self,
         instance: typing.Optional[typing.Any],
         owner: typing.Optional[typing.Type[typing.Any]],
-    ) -> typing.Optional[typing.Union[T, Self]]:
+    ) -> typing.Optional[typing.Union[T, typing.Any, Self]]:
         """Retrieve the field value from an instance or return the default if unset."""
         if instance is None:
             return self
@@ -789,7 +802,7 @@ class FieldKwargs(typing.TypedDict, total=False):
     skip_validator: bool
     """If True, the field will skip validator run after deserialization."""
     validate_default: bool
-    """If True, the field will validate the default value if provided."""
+    """If True, the field will check that the default value is valid before setting it."""
     fail_fast: bool
     """If True, the field will raise an error immediately a validation fails."""
     hash: bool
@@ -1062,8 +1075,10 @@ class UUID(Field[uuid.UUID]):
 
 
 def iterable_python_serializer(
-    value: IterType, field: "Iterable[IterType, V]", context: Context
-) -> IterType:
+    value: typing.Iterable[V],
+    field: "Iterable[typing.Iterable[V], V]",
+    context: Context,
+) -> typing.Iterable[typing.Any]:
     """
     Serialize an iterable to a list of serialized values.
 
@@ -1107,7 +1122,7 @@ def iterable_python_serializer(
         else:
             if error is not None:
                 raise error
-            adder(serialized, serialized_item)
+            serialized = adder(serialized, serialized_item)
 
     if error is not None:
         raise error
@@ -1115,7 +1130,7 @@ def iterable_python_serializer(
 
 
 def iterable_json_serializer(
-    value: IterType, field: "Iterable[IterType, V]", context: Context
+    value: IterT, field: "Iterable[IterT, V]", context: Context
 ) -> typing.List[typing.Any]:
     """
     Serialize an iterable to JSON compatible format.
@@ -1165,8 +1180,8 @@ def iterable_json_serializer(
 
 
 def iterable_deserializer(
-    value: typing.Any, field: "Iterable[IterType, V]"
-) -> IterType:
+    value: typing.Iterable[typing.Any], field: "Iterable[IterT, V]"
+) -> IterT:
     """
     Deserialize an iterable value to the specified field type.
 
@@ -1175,7 +1190,7 @@ def iterable_deserializer(
     :return: The deserialized value.
     """
     field_type = field.field_type
-    field_type = typing.cast(typing.Type[IterType], field_type)
+    field_type = typing.cast(typing.Type[IterT], field_type)
     deserialized = field_type.__new__(field_type)  # type: ignore
     child_deserializer = field.child.deserialize
     child_typestr = field.child.typestr
@@ -1210,7 +1225,7 @@ def iterable_deserializer(
         else:
             if error is not None:
                 raise error
-            adder(deserialized, deserialized_item)
+            deserialized = adder(deserialized, deserialized_item)
 
     if error is not None:
         raise error
@@ -1218,8 +1233,8 @@ def iterable_deserializer(
 
 
 def validate_iterable(
-    value: IterType,
-    field: typing.Optional["Iterable[IterType, V]"] = None,
+    value: IterT,
+    field: typing.Optional["Iterable[IterT, V]"] = None,
     instance: typing.Optional[typing.Any] = None,
     *args: typing.Any,
     **kwargs: typing.Any,
@@ -1266,7 +1281,7 @@ def validate_iterable(
         raise error
 
 
-class Iterable(typing.Generic[IterType, V], Field[IterType]):
+class Iterable(typing.Generic[IterT, V], Field[IterT]):
     """Base class for iterable fields."""
 
     default_serializers = {
@@ -1278,7 +1293,7 @@ class Iterable(typing.Generic[IterType, V], Field[IterType]):
 
     def __init__(
         self,
-        field_type: typing.Type[IterType],
+        field_type: typing.Type[IterT],
         child: typing.Optional[Field[V]] = None,
         *,
         size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
@@ -1334,7 +1349,7 @@ class Iterable(typing.Generic[IterType, V], Field[IterType]):
             )
         self.child.post_init_validate()
 
-    def check_type(self, value: typing.Any) -> TypeGuard[IterType]:
+    def check_type(self, value: typing.Any) -> TypeGuard[IterT]:
         if not super().check_type(value):
             return False
 

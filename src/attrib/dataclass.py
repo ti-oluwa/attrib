@@ -89,7 +89,7 @@ def _setitem(instance: "Dataclass", key: str, value: typing.Any) -> None:
 def _frozen_setattr(instance: "Dataclass", key: str, value: Value) -> None:
     """Set an attribute on a frozen dataclass instance."""
     if (
-        getattr(instance, "_initializing", False) is False
+        not getattr(instance, "_initializing", False)
         and key not in instance.__state_attributes__
     ):
         raise FrozenInstanceError(
@@ -100,7 +100,7 @@ def _frozen_setattr(instance: "Dataclass", key: str, value: Value) -> None:
 
 def _frozen_delattr(instance: "Dataclass", key: str) -> None:
     """Delete an attribute from a frozen dataclass instance."""
-    if key in instance.base_to_effective_name_map:
+    if key in type(instance).base_to_effective_name_map:
         raise FrozenInstanceError(
             f"Immutable instance. Cannot delete '{type(instance).__name__}.{key}'."
         ) from None
@@ -993,6 +993,7 @@ def load_raw(
     error = None
     fail_fast = _fail_fast.get()
     by_name = _by_name.get()
+    name_map = type(instance).base_to_effective_name_map
     for field in fields:
         name: str = field.name  # type: ignore[assignment]
         try:
@@ -1001,8 +1002,10 @@ def load_raw(
                     field.set_default(instance)
                     continue
             else:
-                effective_name = instance.base_to_effective_name_map[name]
-                if (value := data.get(effective_name, _missing)) is _missing:
+                effective_name = name_map[name]
+                if (
+                    value := data.get(effective_name, _missing)
+                ) is _missing and effective_name != name:
                     if (value := data.get(name, _missing)) is _missing:
                         field.set_default(instance)
                         continue
@@ -1046,6 +1049,7 @@ def load_valid(
     """
     by_name = _by_name.get()
     fields_set = instance.__fields_set__
+    name_map = type(instance).base_to_effective_name_map
     for field in fields:
         name: str = field.name  # type: ignore[assignment]
         if by_name:
@@ -1053,15 +1057,17 @@ def load_valid(
                 field.set_default(instance)
                 continue
         else:
-            effective_name = instance.base_to_effective_name_map[name]
-            if (value := data.get(effective_name, _missing)) is _missing:
+            effective_name = name_map[name]
+            if (
+                value := data.get(effective_name, _missing)
+            ) is _missing and effective_name != name:
                 if (value := data.get(name, _missing)) is _missing:
                     field.set_default(instance)
                     continue
 
         field.set_value(
-            instance, value, lazy=True, is_lazy_valid=True
-        )  # Bypass validation
+            instance, value, lazy=not field.always_coerce, is_lazy_valid=True
+        )  # Bypass coercion and validation
         fields_set.add(name)
     return instance
 
@@ -1079,13 +1085,14 @@ def _from_attributes(
     """
     values = {}
     by_name = _by_name.get()
+    name_map = dataclass_.base_to_effective_name_map
     for field in dataclass_.__init_fields__:
         name: str = field.name  # type: ignore[assignment]
         if by_name:
             if (value := getattr(obj, name, _missing)) is not _missing:
                 values[name] = value
         else:
-            effective_name = dataclass_.base_to_effective_name_map[name]
+            effective_name = name_map[name]
             if (value := getattr(obj, effective_name, _missing)) is not _missing:
                 values[name] = value
             elif (value := getattr(obj, name, _missing)) is not _missing:
@@ -1098,11 +1105,6 @@ def _from_attributes(
 def deserialize(
     dataclass_: typing.Type[DataclassTco],
     obj: RawData,
-    *,
-    fail_fast: typing.Optional[bool] = ...,
-    ignore_extras: typing.Optional[bool] = ...,
-    by_name: typing.Optional[bool] = ...,
-    is_valid: typing.Optional[bool] = ...,
 ) -> DataclassTco: ...
 
 
@@ -1112,10 +1114,6 @@ def deserialize(
     obj: typing.Any,
     *,
     from_attributes: bool = False,
-    fail_fast: typing.Optional[bool] = ...,
-    ignore_extras: typing.Optional[bool] = ...,
-    by_name: typing.Optional[bool] = ...,
-    is_valid: typing.Optional[bool] = ...,
 ) -> DataclassTco: ...
 
 
@@ -1124,10 +1122,6 @@ def deserialize(
     obj: typing.Union[RawData, typing.Any],
     *,
     from_attributes: bool = False,
-    fail_fast: typing.Optional[bool] = None,
-    ignore_extras: typing.Optional[bool] = None,
-    by_name: typing.Optional[bool] = None,
-    is_valid: typing.Optional[bool] = None,
 ) -> DataclassTco:
     """
     Deserialize an object to a dataclass instance.
@@ -1135,10 +1129,6 @@ def deserialize(
     :param obj: The object to deserialize.
     :param dataclass_: The dataclass type to convert to.
     :param from_attributes: If True, load fields using the object's attributes.
-    :param fail_fast: If True, stop on the first error encountered during deserialization.
-    :param ignore_extras: If True, ignore extra fields not defined in the dataclass.
-    :param by_name: If True, match fields by their names instead of aliases, even if aliases are defined.
-    :param is_valid: If True, the data being loaded is already validated and will not be validated again.
     :raises DeserializationError: If there are errors during deserialization.
     :return: The dataclass instance.
     """
@@ -1151,15 +1141,9 @@ def deserialize(
             code="invalid_value",
         )
 
-    with deserialization_context(
-        fail_fast=fail_fast,
-        ignore_extras=ignore_extras,
-        by_name=by_name,
-        is_valid=is_valid,
-    ):
-        if from_attributes:
-            return _from_attributes(dataclass_, obj)
-        return dataclass_(obj)
+    if from_attributes:
+        return _from_attributes(dataclass_, obj)
+    return dataclass_(obj)
 
 
 def copy(

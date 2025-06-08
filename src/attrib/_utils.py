@@ -28,7 +28,14 @@ except ImportError:
     except ImportError:
         import json  # Fallback to the standard library json module
 
-from attrib._typing import IterType, JSONDict, JSONList, Serializer, EMPTY, JSONValue
+from attrib._typing import (
+    IterTco,
+    JSONDict,
+    JSONList,
+    Serializer,
+    EMPTY,
+    JSONValue,
+)
 from attrib.exceptions import SerializationError, DetailedError
 
 
@@ -162,36 +169,66 @@ def is_slotted_cls(cls: typing.Type[typing.Any], /) -> bool:
     return "__slots__" in cls.__dict__
 
 
-def _tuple_adder(tuple_: typing.Tuple[typing.Any, ...], value: typing.Any) -> None:
-    tuple_ = (*tuple_, value)
+def _list_adder(
+    list_: typing.List[typing.Any], value: typing.Any
+) -> typing.List[typing.Any]:
+    """
+    Add a value to a list and return the updated list.
+    """
+    list_.append(value)
+    return list_
+
+
+def _set_adder(
+    set_: typing.Set[typing.Any], value: typing.Any
+) -> typing.Set[typing.Any]:
+    """
+    Add a value to a set and return the updated set.
+    """
+    set_.add(value)
+    return set_
+
+
+def _tuple_adder(
+    tuple_: typing.Tuple[typing.Any, ...], value: typing.Any
+) -> typing.Tuple[typing.Any, ...]:
+    return (*tuple_, value)
 
 
 def _frozenset_adder(
     frozenset_: typing.FrozenSet[typing.Any], value: typing.Any
-) -> None:
-    frozenset_ = frozenset(list(frozenset_) + [value])
+) -> typing.FrozenSet[typing.Any]:
+    return frozenset(list(frozenset_) + [value])
 
 
-def get_itertype_adder(field_type: typing.Type[IterType]) -> typing.Callable:
+def get_itertype_adder(
+    field_type: typing.Type[IterTco],
+) -> typing.Callable[[IterTco, typing.Any], IterTco]:
     """
     Get the appropriate adder function for the specified iterable type.
     This function returns the method used to add elements to the iterable type.
 
     Example:
     ```python
+
     adder = get_itertype_adder(list)
-    adder([], 1)  # Adds 1 to the list
+    print(adder([], 1))
+    # Output: [1]
     ```
     """
+    adder = None
     if issubclass(field_type, (list, deque)):
-        return field_type.append
-    if issubclass(field_type, set):
-        return set.add
-    if issubclass(field_type, tuple):
-        return _tuple_adder
-    if issubclass(field_type, frozenset):
-        return _frozenset_adder
-    raise TypeError(f"Unsupported iterable type: {field_type}")
+        adder = _list_adder
+    elif issubclass(field_type, set):
+        adder = _set_adder
+    elif issubclass(field_type, tuple):
+        adder = _tuple_adder
+    elif issubclass(field_type, frozenset):
+        adder = _frozenset_adder
+
+    if adder is None:
+        raise TypeError(f"Unsupported iterable type: {field_type}")
+    return typing.cast(typing.Callable[[IterTco, typing.Any], IterTco], adder)
 
 
 HAS_DATEUTIL = has_package("dateutil")
@@ -384,7 +421,7 @@ def iso_parse(
 
 
 def now(
-    tz: typing.Optional[typing.Union[str, zoneinfo.ZoneInfo]] = None,
+    tz: typing.Optional[typing.Union[str, datetime.tzinfo]] = None,
 ) -> datetime.datetime:
     """
     Get the current time in the specified timezone.
@@ -395,7 +432,7 @@ def now(
         return datetime.datetime.now(datetime.timezone.utc)
     if isinstance(tz, str):
         tz = zoneinfo.ZoneInfo(tz)
-    
+
     return datetime.datetime.now(tz).astimezone(tz)
 
 

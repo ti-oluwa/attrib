@@ -148,10 +148,10 @@ def load_data(
     :param cls: Pydantic model class to load data into
     :return: List of the model instances
     """
-    return [cls.model_validate(data) for data in data_list]
+    return [cls.model_validate(data, by_name=True) for data in data_list]
 
 
-def example():
+def example() -> None:
     """Run example usage of the data classes"""
     years = load_data(year_data, AcademicYear)
     courses = load_data(course_data, Course)
