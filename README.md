@@ -1,24 +1,27 @@
 # attrib
 
-`attrib` is a performant and lightweight data description library for Python. It provides an intuitive API for describing and validating data structures using Python's descriptor protocol. `attrib` is designed to be familiar and flexible, allowing you to create complex data structures with minimal boilerplate code.
+`attrib` is a performant data description and validation system for Python. It provides an intuitive API for describing and validating data structures using Python's descriptor protocol. `attrib` is designed to be deterministic, familiar, and flexible, allowing you to create complex data structures with no hidden runtime magic.
 
-It provides an API similar to `attrs`, but with a focus on performance and simplicity. In most cases, `attrib` can be 5 - 30% faster than `attrs` + `cattrs`, `dataclasses` + `cattrs`, or even `pydantic` when serializing and deserializing data in heavy workflows.
+In most cases, especially heavy workflows, `attrib` can be 5 - 30% faster than `attrs` + `cattrs`, `dataclasses` + `cattrs`, or `pydantic` when serializing and deserializing data.
 
-`attrib` dataclasses can be used for describing, validating, and serializing data in APIs, configuration definitions, and data processing pipelines.
+`attrib` dataclasses can be used in latency sensitive APIs, configuration definitions, and data pipelines.
 
-## Features
+## What does `attrib` offer?
 
-- Simple, intuitive and extensible API
-- Supports complex data structures
-- Fast and lightweight
-- Built-in validation and serialization
-- Selective serialization - specify which fields to include or exclude, depth, etc.
-- Growing set of custom types, fields and validators
-- Fully typed APIs for better IDE support
-- Type adapter API for adapted types
+- Declarative, intuitive and easily extensible API
+- Fast and lightweight. Low OOP overhead and no hidden runtime magic.
+- Recursive deserialization of complex or nested data structures.
+- Composable, functional, and flexible validation.
+- Enforces validation of field values on set.
+- Context-aware deserialization and validation.
+- Declarative serialization control with the `Options` API
+- Growing set of custom fields, validators, and utilities.
+- Adequately typed APIs for better IDE support.
+- Detailed error handling with error history and context preservation.
+- Type adapter API for adapted types (WIP)
 - Supports Python 3.8+
 
-> **Note**: This library is still in early development and may only be used for testing and experimentation.
+> This library is still in early development and may only be used for testing and experimentation.
 
 ## Quick Setup with `uv`
 
@@ -38,12 +41,6 @@ Install version of choice:
 
 ```bash
 uv install python <version>
-```
-
-For the purpose of testing, install the dev requirements:
-
-```bash
-uv install --requirements dev-requirements.txt
 ```
 
 Proper documentation and tests will be included soon, but you can check the [examples](/attrib/examples/) directory for usage patterns, or run:

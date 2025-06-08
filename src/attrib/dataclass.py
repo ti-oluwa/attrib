@@ -648,7 +648,7 @@ class DataclassMeta(type):
         if config.order:
             if fields and not attrs["__ordering_fields__"]:
                 raise ConfigurationError(
-                    "Cannot use ordering methods without fields with `compare=True`."
+                    "Cannot use ordering methods without fields with `order` set."
                 )
 
             if "__lt__" not in attrs:

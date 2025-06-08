@@ -8,14 +8,16 @@ from itertools import count
 
 from attrib._typing import EMPTY, T
 from attrib.dataclass import DataclassTco
+from attrib.descriptors.base import Field
 from attrib.exceptions import ConfigurationError
 
 __all__ = [
+    "modify_cls",
     "partial",
-    "modify_fields",
     "strict",
     "lazy",
     "ordered",
+    "hashable",
 ]
 
 
@@ -23,14 +25,16 @@ def _make_new_dataclass(
     dataclass_: typing.Type[DataclassTco],
     prefix: str,
     attributes: typing.Optional[typing.Dict[str, typing.Any]] = None,
+    **meta_kwargs: typing.Any,
 ) -> typing.Type[DataclassTco]:
     """
     Create a new dataclass with a modified name and module.
 
-    :param dataclass_: The original dataclass to modify.
+    :param dataclass_: The original dataclass to modify_cls.
     :param prefix: Prefix to use for the new dataclass name.
     :param attributes: Additional attributes to add to the new dataclass.
         This can include custom methods or properties.
+    :param meta_kwargs: Additional keyword arguments to pass to the dataclass constructor/metaclass.
     :return: A new dataclass type with the specified prefix.
     """
     return typing.cast(
@@ -43,6 +47,7 @@ def _make_new_dataclass(
                 "__qualname__": f"{prefix}{dataclass_.__qualname__}",
                 **(attributes or {}),
             },
+            **meta_kwargs,
         ),
     )
 
@@ -53,6 +58,10 @@ AttributeValue: TypeAlias = typing.Union[T, typing.Iterator[T]]
 class GenericFieldAttributes(typing.TypedDict, total=False):
     """
     Generic attributes that can be modified for fields in a dataclass.
+
+    Each attribute corresponds to a field attribute in a dataclass.
+    The values can be either a single value or an iterator that yields values.
+    This allows for dynamic modification of field attributes when creating a new dataclass.
     """
 
     strict: AttributeValue[bool]
@@ -74,46 +83,54 @@ _allowed_modifications = set(GenericFieldAttributes.__annotations__.keys())
 
 
 @typing.overload
-def modify_fields(
+def modify_cls(
     *,
     prefix: typing.Optional[str] = ...,
     include: typing.Optional[typing.Iterable[str]] = ...,
     exclude: typing.Optional[typing.Iterable[str]] = ...,
+    selector: typing.Optional[typing.Callable[[str, Field[typing.Any]], bool]] = ...,
+    meta_kwargs: typing.Optional[typing.Dict[str, typing.Any]] = ...,
     **modifications: Unpack[GenericFieldAttributes],
 ) -> typing.Callable[[typing.Type[DataclassTco]], typing.Type[DataclassTco]]: ...
 
 
 @typing.overload
-def modify_fields(
+def modify_cls(
     dataclass_: typing.Type[DataclassTco],
     /,
     *,
     prefix: typing.Optional[str] = ...,
     include: typing.Optional[typing.Iterable[str]] = ...,
     exclude: typing.Optional[typing.Iterable[str]] = ...,
+    selector: typing.Optional[typing.Callable[[str, Field[typing.Any]], bool]] = ...,
+    meta_kwargs: typing.Optional[typing.Dict[str, typing.Any]] = ...,
     **modifications: Unpack[GenericFieldAttributes],
 ) -> typing.Type[DataclassTco]: ...
 
 
 @typing.overload
-def modify_fields(
+def modify_cls(
     dataclass_: None = ...,
     /,
     *,
     prefix: typing.Optional[str] = ...,
     include: typing.Optional[typing.Iterable[str]] = ...,
     exclude: typing.Optional[typing.Iterable[str]] = ...,
+    selector: typing.Optional[typing.Callable[[str, Field[typing.Any]], bool]] = ...,
+    meta_kwargs: typing.Optional[typing.Dict[str, typing.Any]] = ...,
     **modifications: Unpack[GenericFieldAttributes],
 ) -> typing.Callable[[typing.Type[DataclassTco]], typing.Type[DataclassTco]]: ...
 
 
-def modify_fields(
+def modify_cls(
     dataclass_: typing.Optional[typing.Type[DataclassTco]] = None,
     /,
     *,
     prefix: typing.Optional[str] = None,
     include: typing.Optional[typing.Iterable[str]] = None,
     exclude: typing.Optional[typing.Iterable[str]] = None,
+    selector: typing.Optional[typing.Callable[[str, Field[typing.Any]], bool]] = None,
+    meta_kwargs: typing.Optional[typing.Dict[str, typing.Any]] = None,
     **modifications: Unpack[GenericFieldAttributes],
 ) -> typing.Union[
     typing.Type[DataclassTco],
@@ -122,20 +139,32 @@ def modify_fields(
     """
     Dataclass decorator.
 
-    Creates a dataclass with specific fields modified according to the provided attributes.
+    Returns a new dataclass with specific fields and attributes modified.
 
-    This is especially useful if you need a with specify field behavior, but do not want to
-    redefine an entirely new dataclass for that purpose.
+    This is especially useful if you need a dataclass with specific field behavior,
+    but do not want to redefine an entirely new dataclass for that purpose.
 
-    :param dataclass_: The dataclass which fields should be modified.
-    :param prefix: Prefix to use for the new dataclass name. Default is None.
-        Not providing a prefix may mean that the new dataclass
+    :param dataclass_: Target dataclass to be modified.
+    :param prefix: Prefix to prepend to the new dataclass' name. Default is None.
+        Not providing a prefix may mean that the new/modified dataclass
         will overwrite the original dataclass in the module namespace.
 
     :param include: Iterable of fields to include for modification.
     :param exclude: Iterable of fields to exclude from modification.
-    :param modifications: (Generic) Field attributes to modify.
+
+    Note: `include` and `exclude` are mutually exclusive.
+
+    :param selector: A callable that takes a field name and a Field instance,
+        and returns True if the field should be included for modification.
+        This allows for more complex selection logic based on field attributes,
+        after the `include` and `exclude` filters have been applied.
+
+    :param meta_kwargs: Additional keyword arguments to pass to the dataclass
+        constructor/metaclass for creating a new dataclass type.
+
+    :param modifications: Generic field attributes to modify.
         This can include 'strict', 'lazy', etc.
+
     :return: A new dataclass type with the specified modifications applied.
     """
     if not modifications:
@@ -160,12 +189,19 @@ def modify_fields(
         cls_fields = dataclass_.__fields__
         field_names = cls_fields.keys()
         if include:
-            field_names = [name for name in field_names if name in include]
+            include_set = set(include)
+            field_names = [name for name in field_names if name in include_set]
         elif exclude:
-            field_names = [name for name in field_names if name not in exclude]
+            exclude_set = set(exclude)
+            field_names = [name for name in field_names if name not in exclude_set]
+
+        if selector:
+            field_names = [
+                name for name in field_names if selector(name, cls_fields[name])
+            ]
         if not field_names:
             raise ConfigurationError(
-                "No fields to modify. Either 'include' or 'exclude' must specify valid fields."
+                "No fields to modify_cls. Either 'include' or 'exclude' must specify valid fields."
             )
 
         modified_fields = {}
@@ -186,7 +222,10 @@ def modify_fields(
             modified_fields[field_name] = field
 
         return _make_new_dataclass(
-            dataclass_, prefix=prefix or "", attributes=modified_fields
+            dataclass_,
+            prefix=prefix or "",
+            attributes=modified_fields,
+            **(meta_kwargs or {}),
         )
 
     if dataclass_ is not None:
@@ -194,19 +233,54 @@ def modify_fields(
     return decorator
 
 
-strict = functools.partial(modify_fields, strict=True)
-lazy = functools.partial(modify_fields, lazy=True)
-ordered = functools.partial(modify_fields, order=count(0, step=1))
+##########################
+# Convenience Decorators #
+##########################
+
+strict = functools.partial(modify_cls, strict=True)
 """
 Dataclass decorator.
 
-Creates a dataclass with all or specific fields ordered.
+Returns a dataclass with all or specific fields strict.
 """
-partial = functools.partial(modify_fields, required=False, allow_null=True)
+
+lazy = functools.partial(modify_cls, lazy=True)
 """
 Dataclass decorator.
 
-Creates a dataclass with all or specific fields made optional.
+Returns a dataclass with all or specific fields lazy.
+"""
+
+hashable = functools.partial(
+    modify_cls,
+    hash=True,
+    meta_kwargs={
+        "frozen": True,
+        "hash": True,
+    },
+)
+"""
+Dataclass decorator.
+
+Returns a new dataclass with all or specific fields hashable.
+
+This is useful for creating immutable dataclasses that can be used as dictionary keys or in sets.
+"""
+
+ordered = functools.partial(
+    modify_cls, order=count(0, step=1), meta_kwargs={"order": True}
+)
+"""
+Dataclass decorator.
+
+Returns a new dataclass with all or specific fields ordered.
+"""
+
+partial = functools.partial(modify_cls, required=False, allow_null=True)
+"""
+Dataclass decorator.
+
+Returns a new dataclass with all or specific fields made optional.
 
 ```
 

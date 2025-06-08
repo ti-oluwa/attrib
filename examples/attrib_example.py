@@ -59,7 +59,7 @@ class PersonalInfo(attrib.Dataclass):
 
 
 @attrib.ordered(include=["id", "name", "level", "gpa"])
-class Student(PersonalInfo, order=True):
+class Student(PersonalInfo):
     """Student data class"""
 
     id = attrib.Integer(required=True)

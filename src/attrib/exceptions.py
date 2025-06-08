@@ -1,4 +1,5 @@
 import typing
+import sys
 from typing_extensions import Self
 from contextlib import contextmanager
 
@@ -47,6 +48,18 @@ class FieldError(AttribException):
         return f"Error in {self.name!r}: \n\t {self.message}"
 
 
+if sys.version_info >= (3, 9):
+    removeprefix = str.removeprefix
+else:
+    # Fallback for Python versions < 3.9
+    # This is a simple implementation of removeprefix for compatibility
+    # with older Python versions.
+    def removeprefix(s: str, prefix: str) -> str:
+        if s.startswith(prefix):
+            return s[len(prefix) :]
+        return s
+
+
 class ErrorDetail(typing.NamedTuple):
     """Error detail for field errors."""
 
@@ -68,12 +81,15 @@ class ErrorDetail(typing.NamedTuple):
     def as_string(self) -> str:
         """Return a string representation of the error detail."""
         text = [
-            "".join(
-                [
-                    f"[{loc}]" if isinstance(loc, int) else f".{loc}"
-                    for loc in self.location
-                ]
-            ).removeprefix("."),
+            removeprefix(
+                "".join(
+                    [
+                        f"[{loc}]" if isinstance(loc, int) else f".{loc}"
+                        for loc in self.location
+                    ]
+                ),
+                ".",
+            ),
             f"\n  {self.message} ",
         ]
 
@@ -219,12 +235,11 @@ class DetailedError(AttribException):
         :return: A new `DetailedError` instance with the provided details
         """
         exception_msg = exception.args[0] if exception.args else None
-        if not isinstance(exception_msg, str):
-            try:
-                exception_msg = str(exception_msg)
-            except Exception:
-                exception_msg = f"<unprintable {type(exception_msg).__name__}>"
-        
+        try:
+            exception_msg = str(exception_msg)
+        except Exception:
+            exception_msg = f"<unprintable {type(exception_msg).__name__}>"
+
         msg = f"{message or ''}\n  {exception_msg}".strip()
         new = cls(
             parent_name=parent_name,

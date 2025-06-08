@@ -2,7 +2,6 @@
 
 from collections import deque
 from collections.abc import Sequence
-import functools
 import typing
 from annotated_types import Ge, MinLen
 from typing_extensions import Annotated, TypeAlias
@@ -506,14 +505,14 @@ def serialize(
     import attrib
     from attrib.descriptors.phonenumbers import PhoneNumber
 
-    class Person(attrib.Dataclass):
+    class Candidate(attrib.Dataclass):
         name = attrib.String()
         age = attrib.Integer()
         email = attrib.String()
         phone = PhoneNumber(serialization_alias="phone_number")
         address = attrib.String()
 
-    john = Person(
+    john = Candidate(
         name="John Doe",
         age="30",
         email="john.doe@example.com",
