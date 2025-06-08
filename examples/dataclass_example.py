@@ -9,7 +9,7 @@ from cattrs import Converter
 from cattrs.gen import make_dict_unstructure_fn, override
 from dateutil.parser import parse
 
-from utils import timeit, log
+from utils import timeit
 from mock_data import course_data, student_data, year_data
 
 

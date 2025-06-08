@@ -45,9 +45,7 @@ class AcademicYear:
     end_date: typing.Optional[date] = attrs.field(
         default=None,
     )
-    created_at: datetime = attrs.field(
-        factory=lambda: datetime.now(zoneinfo.ZoneInfo("Africa/Lagos"))
-    )
+    created_at: datetime = attrs.field(factory=datetime.now)
 
 
 @attrs.define()
@@ -58,9 +56,7 @@ class Course:
     name: str = attrs.field(validator=attrs.validators.max_len(100))
     code: str = attrs.field(validator=attrs.validators.max_len(20))
     year: AcademicYear = attrs.field()
-    created_at: datetime = attrs.field(
-        factory=lambda: datetime.now(zoneinfo.ZoneInfo("Africa/Lagos"))
-    )
+    created_at: datetime = attrs.field(factory=datetime.now)
 
 
 @attrs.define(kw_only=True)
@@ -92,9 +88,7 @@ class Student(PersonalInfo):
     joined_at: typing.Optional[datetime] = attrs.field(
         default=None,
     )
-    created_at: datetime = attrs.field(
-        factory=lambda: datetime.now(zoneinfo.ZoneInfo("Africa/Lagos"))
-    )
+    created_at: datetime = attrs.field(factory=datetime.now)
 
 
 def configure_converters() -> Converter:

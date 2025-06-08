@@ -6,7 +6,7 @@ from dateutil.parser import parse
 import pydantic
 from pydantic import Field, field_validator, ConfigDict
 
-from utils import timeit, profileit, log
+from utils import timeit
 from mock_data import course_data, student_data, year_data
 
 
@@ -31,7 +31,7 @@ class AcademicYear(pydantic.BaseModel):
     term: Term = Term.FIRST
     start_date: datetime
     end_date: datetime
-    created_at: datetime = Field(default_factory=lambda: datetime.now())
+    created_at: datetime = Field(default_factory=datetime.now)
 
     model_config = ConfigDict(extra="ignore", strict=False)
 

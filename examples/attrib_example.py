@@ -11,7 +11,7 @@ except ImportError:
 
 import attrib
 from attrib.descriptors.phonenumbers import PhoneNumber
-from utils import timeit, profileit, log
+from utils import timeit
 from mock_data import course_data, student_data, year_data
 
 
@@ -36,7 +36,7 @@ class AcademicYear(attrib.Dataclass, repr=True):
     term = attrib.Choice(Term, default=Term.FIRST)
     start_date = attrib.Date(input_formats=["%d-%m-%Y", "%d/%m/%Y"])
     end_date = attrib.Date(input_formats=["%d-%m-%Y", "%d/%m/%Y"])
-    created_at = attrib.DateTime(default=datetime.now, tz="Africa/Lagos")
+    created_at = attrib.DateTime(default=datetime.now)
 
 
 class Course(attrib.Dataclass, sort=True):
@@ -82,10 +82,7 @@ class Student(PersonalInfo):
         allow_null=True, default=attrib.Factory(random.uniform, a=1, b=5)
     )
     joined_at = attrib.DateTime(allow_null=True, tz="Africa/Lagos")
-    created_at = attrib.DateTime(
-        default=attrib.Factory(attrib.now, tz=zoneinfo.ZoneInfo("Asia/Kolkata")),
-        tz="Asia/Kolkata",
-    )
+    created_at = attrib.DateTime(default=datetime.now)
 
     @functools.cached_property
     def full_name(self) -> str:
@@ -135,7 +132,6 @@ def example() -> None:
         attrib.serialize(year, fmt="python")
 
 
-# @profileit("attrib", max_rows=20, output="rich")
 @timeit("attrib")
 def test(n: int = 1) -> None:
     """Run the attrib example multiple times"""
