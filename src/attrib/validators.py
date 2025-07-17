@@ -4,11 +4,10 @@ import operator
 import re
 import os
 import pathlib
-from collections import deque
 from annotated_types import MinLen
 from typing_extensions import Annotated, Self, TypeAlias
 
-from attrib._typing import SupportsRichComparison, Validator, TypeAdapter
+from attrib.types import SupportsRichComparison, Validator, TypeAdapter
 from attrib._utils import is_iterable, is_mapping
 from attrib.exceptions import ValidationError
 
@@ -258,7 +257,7 @@ class FieldValidator(typing.NamedTuple):
 
 def load(*validators: Validator) -> typing.Tuple[FieldValidator, ...]:
     """Load the validators as `FieldValidator`s."""
-    loaded = deque()
+    loaded = []
     for validator in validators:
         if isinstance(validator, FieldValidator):
             loaded.append(validator)
@@ -292,7 +291,7 @@ def pipe(
             return validator
         return FieldValidator(validator)
 
-    aggregate = deque()
+    aggregate: typing.List[Validator[typing.Any]] = []
     for validator in validators:
         if isinstance(validator, FieldValidator):
             validator = validator.func
@@ -316,7 +315,7 @@ def or_(*validators: Validator, message: typing.Optional[str] = None) -> FieldVa
     if len(validators) < 2:
         raise ValueError("At least two validators must be provided.")
 
-    aggregate = deque()
+    aggregate: typing.List[Validator[typing.Any]] = []
     for validator in validators:
         if isinstance(validator, FieldValidator):
             validator = validator.func
@@ -1276,7 +1275,7 @@ def mapping(
         # Use iterative approach to avoid recursion limit issues
         # when dealing with deeply nested mappings. May be more
         # efficient than recursion in some cases.
-        stack = deque([value])
+        stack = list([value])
         while stack:
             current_value = stack.pop()
             for key, val in current_value.items():
@@ -1304,7 +1303,7 @@ def mapping(
                         )
 
                 if is_mapping(val):
-                    stack.appendleft(val)
+                    stack.append(val)
 
     return deep_validate_mapping if deep else validate_mapping
 
@@ -1398,7 +1397,7 @@ def iterable(
         # Use iterative approach to avoid recursion limit issues
         # when dealing with deeply nested iterables. May be more
         # efficient than recursion in some cases.
-        stack = deque([value, []])
+        stack = list([value, []])
         while stack:
             current_value, parent_indices = stack.pop()
             for index, item in enumerate(current_value):
@@ -1412,6 +1411,6 @@ def iterable(
                         input_type=type(item),
                     )
                 if is_iterable(item):
-                    stack.appendleft((item, [*parent_indices, index]))
+                    stack.append((item, [*parent_indices, index]))
 
     return deep_validate_iterable if deep else validate_iterable

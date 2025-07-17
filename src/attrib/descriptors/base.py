@@ -1,7 +1,6 @@
 """Attribute descriptors"""
 
 import enum
-import functools
 import inspect
 import uuid
 import decimal
@@ -11,7 +10,6 @@ import io
 import pathlib
 from typing_extensions import Unpack, Self, Annotated, TypeAlias, TypeGuard
 import annotated_types as annot
-from collections import defaultdict
 import collections.abc
 
 from attrib import validators as field_validators
@@ -25,27 +23,27 @@ from attrib.exceptions import (
 )
 from attrib._utils import (
     iexact,
+    is_iterable,
     is_valid_type,
     is_iterable_type,
-    is_generic_type,
     make_jsonable,
-    get_itertype_adder,
     resolve_type,
-    SerializerRegistry,
+    SerializerMap,
 )
-from attrib._typing import (
+from attrib.types import (
     P,
     R,
     T,
     V,
     JSONValue,
+    RealNumberT,
     SupportsRichComparison,
     Validator,
     IterT,
     EMPTY,
+    Empty,
     Context,
 )
-
 
 __all__ = [
     "AnyType",
@@ -56,14 +54,17 @@ __all__ = [
     "Any",
     "Boolean",
     "String",
+    "RealNumber",
     "Float",
     "Integer",
+    "Decimal",
     "Dict",
     "Iterable",
     "List",
     "Set",
+    "FrozenSet",
     "Tuple",
-    "Decimal",
+    "Deque",
     "Email",
     "Choice",
     "JSON",
@@ -85,6 +86,9 @@ class AnyType:
         raise TypeError("AnyType cannot be instantiated.")
 
     def __instancecheck__(self, instance: typing.Any) -> bool:
+        return True
+
+    def __subclasscheck__(self, subclass: typing.Type[typing.Any]) -> bool:
         return True
 
 
@@ -123,13 +127,13 @@ Should raise a DeserializationError if deserialization fails.
 """
 
 
-def to_json_serializer(
+def json_serializer(
     value: typing.Any, field: "Field[typing.Any]", context: Context
-) -> typing.Any:
+) -> JSONValue:
     return make_jsonable(value)
 
 
-def to_string_serializer(
+def string_serializer(
     value: typing.Any, field: "Field[typing.Any]", context: Context
 ) -> str:
     """Serialize a value to a string."""
@@ -147,7 +151,7 @@ def unsupported_serializer(
         code="unsupported_serialization_format",
         location=[field.name],
         context={
-            "serialization_formats": list(field.serializer.map.keys()),
+            "serialization_formats": list(field.serializers),
         },
     )
 
@@ -172,14 +176,14 @@ def unsupported_deserializer(value: typing.Any, field: "Field[typing.Any]") -> N
     )
 
 
-def to_python_serializer(value: T, field: "Field[typing.Any]", context: Context) -> T:
+def no_op_serializer(value: T, field: "Field[typing.Any]", context: Context) -> T:
     """Serialize a value to Python object."""
     return value
 
 
-DEFAULT_FIELD_SERIALIZERS: typing.Dict[str, FieldSerializer] = {
-    "json": to_json_serializer,
-    "python": to_python_serializer,
+DEFAULT_SERIALIZERS: typing.Dict[str, FieldSerializer] = {
+    "json": json_serializer,
+    "python": no_op_serializer,
 }
 
 
@@ -198,7 +202,7 @@ def default_deserializer(
     if isinstance(field_type, collections.abc.Iterable):
         for arg in field_type:  # type: ignore
             try:
-                deserialized = arg(value)  # type: ignore[call-arg]
+                deserialized = arg(value)  # type: ignore[call-arg,operator]
                 return deserialized
             except (TypeError, ValueError):
                 continue
@@ -208,8 +212,7 @@ def default_deserializer(
             expected_type=field.typestr,
             location=[field.name],
         )
-    deserialized = field_type(value)  # type: ignore[call-arg]
-    deserialized = typing.cast(T, deserialized)
+    deserialized = field_type(value)  # type: ignore[call-arg,operator]
     return deserialized
 
 
@@ -224,9 +227,6 @@ class Value(typing.NamedTuple):
 
     def __bool__(self) -> bool:
         return bool(self.wrapped and self.is_valid)
-
-    def __hash__(self) -> int:
-        return hash((self.wrapped, self.is_valid))
 
 
 def Factory(
@@ -253,11 +253,12 @@ def Factory(
 
 class FieldMeta(type):
     def __init__(cls, name, bases, attrs) -> None:
-        default_serializers = getattr(cls, "default_serializers", {})
-        cls.default_serializers = {
-            **DEFAULT_FIELD_SERIALIZERS,
-            **default_serializers,
-        }
+        defined_default_serializers = getattr(cls, "default_serializers", None)
+        if defined_default_serializers is not None:
+            cls.default_serializers = {
+                **DEFAULT_SERIALIZERS,
+                **defined_default_serializers,
+            }
 
 
 class Field(typing.Generic[T], metaclass=FieldMeta):
@@ -268,13 +269,16 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
     """
 
     default_serializers: typing.ClassVar[typing.Mapping[str, FieldSerializer]] = {}
+    """Default serializers for the field, if any."""
     default_deserializer: typing.ClassVar[FieldDeserializer] = default_deserializer
+    """Default deserializer for the field, if any."""
     default_validator: typing.Optional[Validator[T]] = None
+    """Default validator for the field, if any."""
 
     def __init__(
         self,
         field_type: FieldType[T],
-        default: typing.Union[T, DefaultFactory[T], None] = EMPTY,
+        default: typing.Union[T, DefaultFactory[T], Empty, None] = EMPTY,
         lazy: bool = False,
         alias: typing.Optional[str] = None,
         serialization_alias: typing.Optional[str] = None,
@@ -334,18 +338,13 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
             The value must be a non-negative integer, where lower values indicate higher precedence in ordering.
             That is, a field with order=0 will be ordered/compared before a field with order=1.
         """
-        if isinstance(field_type, str):
-            self.field_type = typing.ForwardRef(field_type)
-        elif is_generic_type(field_type):
-            self.field_type = typing.cast(
-                NonForwardRefFieldType[T],
-                typing.get_origin(field_type),
-            )
-        else:
+        if not isinstance(field_type, str):
             self.field_type = field_type
+        else:
+            self.field_type = typing.ForwardRef(field_type)
 
         self.lazy = lazy
-        self.name = None
+        self.name: typing.Optional[str] = None
         self.alias = alias
         self.allow_null = allow_null
         self.required = required
@@ -358,11 +357,8 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
             **self.default_serializers,
             **(serializers or {}),
         }
-        self.serializer = SerializerRegistry(
-            defaultdict(
-                _unsupported_serializer_factory,
-                serializers_map,
-            )
+        self.serializers = SerializerMap(
+            serializers_map, default_factory=_unsupported_serializer_factory
         )
         self.deserializer = deserializer or type(self).default_deserializer
         self.default = default
@@ -372,11 +368,25 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         self._check_default = validate_default
         self.fail_fast = fail_fast
         self.serialization_alias = serialization_alias
+        self.effective_name = alias
+        """The name of the field as it will be used in serialization/deserialization. Do not modify this directly."""
         self.hash = hash
         self.repr = repr
         self.eq = eq
         self.init = init
         self.order = order
+        self._meta: typing.Dict[str, typing.Any] = {}
+        """Meta information for the field, can be used to store additional data."""
+        self._slotted_name: typing.Optional[str] = None
+        """The name with which the field will be stored in the instance's __slots__."""
+        # We precompute the identity formats here, so that we can use it later in `asdict` so
+        # We do not need to call `Field.serialize` for formats that do not change the value.
+        # This should reduce overhead in function calls, for serialization formats that do not change the value.
+        # Especially for function used in hot paths like `Field.serialize`.
+        self._identity_formats = {
+            fmt for fmt, f in self.serializers.items() if f is no_op_serializer
+        }
+        """Set of serialization formats that will not change the value during serialization."""
 
     @property
     def typestr(self) -> str:
@@ -400,7 +410,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
 
         Avoid modifying the field's state in this method.
         """
-        if not is_valid_type(self.field_type):
+        if not is_valid_type(self.field_type):  # type: ignore
             raise FieldError(
                 f"{self.field_type!r} is not a valid field type.", name=self.name
             )
@@ -418,18 +428,11 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
                 name=self.name,
             )
 
-    def __get_type_hints__(self):
-        """Return type information for type checkers."""
-        return {self.name: resolve_type(self.field_type)}
-
-    @functools.cached_property
-    def effective_name(self) -> typing.Optional[str]:
-        """
-        Return the effective name of the field.
-
-        This is either the alias (if provided) or the name of the field.
-        """
-        return self.alias or self.name
+    def __get_type_hint__(self):
+        """Return type information for the field."""
+        if not is_iterable(self.field_type):
+            return self.field_type
+        return typing.Union[self.field_type]
 
     def get_default(self) -> typing.Union[T, typing.Any, None]:
         """Return the default value for the field."""
@@ -463,7 +466,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         # Then we also need to ensure that the default value set respects that and is validated later.
         default_is_valid = not self._check_default and not self.always_coerce
         lazy_default = default_is_valid or self.lazy
-        self.set_value(
+        self._set_value(
             instance,
             self.get_default(),
             lazy=lazy_default,
@@ -496,6 +499,11 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
             )
 
         self.name = name
+        self.effective_name = self.alias or name
+        slotted_names = getattr(parent, "__slotted_names__", None)
+        if slotted_names and name:
+            self._slotted_name = slotted_names[name]
+
         parent_module = inspect.getmodule(parent)
         globalns = parent_module.__dict__ if parent_module else globals()
         self.build(
@@ -531,15 +539,11 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         """Assign the field name when the descriptor is initialized on the class."""
         self.bind(owner, name)
 
-    def __delete__(self, instance: typing.Any):
-        self.delete_value(instance)
-
-    @typing.overload
-    def __get__(
-        self,
-        instance: typing.Any,
-        owner: typing.Optional[typing.Type[typing.Any]],
-    ) -> typing.Union[T, typing.Any]: ...
+    def __delete__(self, instance: typing.Any) -> None:
+        if self._slotted_name:
+            object.__delattr__(instance, self._slotted_name)
+        else:
+            del instance.__dict__[self.name]
 
     @typing.overload
     def __get__(
@@ -548,47 +552,41 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         owner: typing.Type[typing.Any],
     ) -> Self: ...
 
+    @typing.overload
+    def __get__(
+        self,
+        instance: typing.Any,
+        owner: typing.Optional[typing.Type[typing.Any]],
+    ) -> typing.Union[T, typing.Any]: ...
+
     def __get__(
         self,
         instance: typing.Optional[typing.Any],
         owner: typing.Optional[typing.Type[typing.Any]],
     ) -> typing.Optional[typing.Union[T, typing.Any, Self]]:
         """Retrieve the field value from an instance or return the default if unset."""
-        if instance is None:
+        if not instance:
             return self
-
-        field_value = self.get_value(instance)
-        if not field_value.is_valid:
-            return self.set_value(instance, field_value.wrapped, lazy=False).wrapped
-        return field_value.wrapped
-
-    def __set__(self, instance: typing.Any, value: typing.Any):
-        """Set and validate the field value on an instance."""
-        self.set_value(instance, value, lazy=self.lazy)
-        field_set: typing.Set = instance.__fields_set__  # type: ignore[attr-defined]
-        field_set.add(self.name)
-
-    def get_value(self, instance: typing.Any) -> Value:
-        """
-        Get the field value from an instance.
-
-        :param instance: The instance to which the field belongs.
-        :return: The field value gotten from the instance.
-        """
-        field_name = self.name
-        if not field_name:
-            raise ConfigurationError(
-                f"'{type(self).__name__}' on '{type(instance).__name__}' has no name. Ensure it is bound to a class.",
-            )
 
         # Check if it is a slotted class first, just in case "__dict__" was added to __slots__.
         # If not, we may mistake it for a normal class and try to access the field's value from __dict__
         # which will raise an AttributeError.
-        if slotted_names := getattr(instance, "__slotted_names__", None):
-            return object.__getattribute__(instance, slotted_names[field_name])
-        return instance.__dict__[field_name]
+        if self._slotted_name:
+            field_value = object.__getattribute__(instance, self._slotted_name)
+        else:
+            field_value = instance.__dict__[self.name]
 
-    def set_value(
+        if field_value.is_valid:
+            return field_value.wrapped
+        return self._set_value(instance, value=field_value.wrapped, lazy=False).wrapped
+
+    def __set__(self, instance: typing.Any, value: typing.Any):
+        """Set and validate the field value on an instance."""
+        self._set_value(instance, value, lazy=self.lazy)
+        field_set: typing.Set = instance.__fields_set__  # type: ignore[attr-defined]
+        field_set.add(self.name)
+
+    def _set_value(
         self,
         instance: typing.Any,
         value: typing.Any,
@@ -604,12 +602,6 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         :param is_lazy_valid: The validity of the value when lazy is True
         :return: The set field value.
         """
-        field_name = self.name
-        if not field_name:
-            raise ConfigurationError(
-                f"'{type(self).__name__}' on '{type(instance).__name__}' has no name. Ensure it is bound to a class.",
-            )
-
         if self.required and value is EMPTY:
             raise ValidationError(
                 "Value is required but not provided.",
@@ -632,38 +624,17 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         # Check if it is a slotted class first, just in case "__dict__" was added to __slots__.
         # If not, we may mistake it for a normal class and then set the field's value in __dict__,
         # beating the purpose of using slots.
-        if slotted_names := getattr(instance, "__slotted_names__", None):
-            object.__setattr__(instance, slotted_names[field_name], field_value)
+        if self._slotted_name:
+            object.__setattr__(instance, self._slotted_name, field_value)
         else:
             # Store directly in __dict__ to avoid recursion
-            instance.__dict__[field_name] = field_value
+            instance.__dict__[self.name] = field_value
         return field_value
-
-    def delete_value(self, instance: typing.Any) -> None:
-        """
-        Delete the field's value from an instance.
-
-        :param instance: The instance to which the field belongs.
-        """
-        field_name = self.name
-        if not field_name:
-            raise ConfigurationError(
-                f"'{type(self).__name__}' on '{type(instance).__name__}' has no name. Ensure it is bound to a class.",
-            )
-
-        if slotted_names := getattr(instance, "__slotted_names__", None):
-            object.__delattr__(instance, slotted_names[field_name])
-        else:
-            del instance.__dict__[field_name]
 
     def check_type(self, value: typing.Any) -> TypeGuard[T]:
         """Check if the value is of the expected type."""
-        if self.field_type is AnyType:
+        if self.field_type is AnyType or (self.allow_null and value is None):
             return True
-        if value is None and self.allow_null:
-            return True
-
-        # field_type = typing.cast(NonForwardRefFieldType[T], self.field_type) # Adds additional overhead since the method is called often
         return isinstance(value, self.field_type)  # type: ignore[arg-type]
 
     def deserialize(
@@ -755,10 +726,14 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         :param fmt: The serialization format.
         :param context: Additional context for serialization.
         """
-        if value is None:
-            return None
+        # If the serializer for the format is the default no-Op Python serializer,
+        # we return the value as is. The default serializer just returns the value as is,
+        # calling it is extra overhead especially in hot paths.
+        if (fmt_serializer := self.serializers[fmt]) is no_op_serializer:
+            return value
+
         try:
-            serialiazed = self.serializer(fmt, value, self, context)
+            return fmt_serializer(value, self, context)
         except (ValueError, TypeError, SerializationError) as exc:
             raise SerializationError.from_exception(
                 exc,
@@ -766,7 +741,6 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
                 expected_type=self.typestr,
                 location=[self.name],
             ) from exc
-        return serialiazed
 
 
 FieldTco = typing.TypeVar("FieldTco", bound=Field, covariant=True)
@@ -845,11 +819,6 @@ def boolean_deserializer(value: typing.Any, field: "Boolean") -> bool:
     return bool(value)
 
 
-def boolean_json_serializer(value: bool, field: "Boolean", context: Context) -> bool:
-    """Serialize a boolean value to JSON."""
-    return value
-
-
 class Boolean(Field[bool]):
     """Field for handling boolean values."""
 
@@ -872,7 +841,7 @@ class Boolean(Field[bool]):
     }
     default_deserializer = boolean_deserializer
     default_serializers = {
-        "json": boolean_json_serializer,
+        "json": no_op_serializer,
     }
 
     def __init__(self, **kwargs: Unpack[FieldKwargs]) -> None:
@@ -898,14 +867,19 @@ def build_min_max_value_validators(
     return validators
 
 
-class Float(Field[float]):
-    """Field for handling float values."""
+class RealNumber(Field[RealNumberT]):
+    """Field for handling real number values."""
+
+    default_serializers = {
+        "json": no_op_serializer,
+    }
 
     def __init__(
         self,
+        field_type: FieldType[RealNumberT],
         *,
-        min_value: typing.Optional[float] = None,
-        max_value: typing.Optional[float] = None,
+        min_value: typing.Optional[RealNumberT] = None,
+        max_value: typing.Optional[RealNumberT] = None,
         **kwargs: Unpack[FieldKwargs],
     ) -> None:
         validators = list(
@@ -918,12 +892,23 @@ class Float(Field[float]):
             )
         )
         if validators:
-            kwargs["validator"] = field_validators.pipe(
-                *validators,
-            )
+            kwargs["validator"] = field_validators.pipe(*validators)
+        super().__init__(field_type, **kwargs)
+
+
+# For some reason, the type checker flags `float` as not being a valid subtype of `RealNumberT`.
+class Float(RealNumber[float]):  # type: ignore[misc]
+    """Field for handling float values."""
+
+    def __init__(
+        self,
+        *,
+        min_value: typing.Optional[float] = None,
+        max_value: typing.Optional[float] = None,
+        **kwargs: Unpack[FieldKwargs],
+    ) -> None:
         super().__init__(
-            field_type=float,
-            **kwargs,
+            field_type=float, min_value=min_value, max_value=max_value, **kwargs
         )
 
 
@@ -938,7 +923,7 @@ def integer_deserializer(value: typing.Any, field: "Integer") -> int:
     return int(value, base=field.base)
 
 
-class Integer(Field[int]):
+class Integer(RealNumber[int]):  # type: ignore[misc]
     """Field for handling integer values."""
 
     default_deserializer = integer_deserializer
@@ -951,20 +936,8 @@ class Integer(Field[int]):
         base: Annotated[int, annot.Interval(ge=2, le=36)] = 10,
         **kwargs: Unpack[FieldKwargs],
     ) -> None:
-        validators = list(
-            filter(
-                None,
-                [
-                    kwargs.get("validator", None),
-                    *build_min_max_value_validators(min_value, max_value),
-                ],
-            )
-        )
-        if validators:
-            kwargs["validator"] = field_validators.pipe(*validators)
         super().__init__(
-            field_type=int,
-            **kwargs,
+            field_type=int, min_value=min_value, max_value=max_value, **kwargs
         )
         self.base = base
 
@@ -975,6 +948,55 @@ class Integer(Field[int]):
                 f"Base {self.base} is not supported. Must be between 2 and 36.",
                 name=self.name,
             )
+
+
+def get_quantizer(dp: int) -> decimal.Decimal:
+    """Get the quantizer for the specified number of decimal places."""
+    if dp < 0:
+        raise ValueError("Decimal places (dp) must be a non-negative integer.")
+    return decimal.Decimal(f"0.{'0' * (dp - 1)}1") if dp > 0 else decimal.Decimal("1")
+
+
+class Decimal(RealNumber[decimal.Decimal]):  # type: ignore[misc]
+    """Field for handling decimal values."""
+
+    default_serializers = {
+        "json": string_serializer,
+    }
+
+    def __init__(
+        self,
+        dp: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
+        min_value: typing.Optional[decimal.Decimal] = None,
+        max_value: typing.Optional[decimal.Decimal] = None,
+        **kwargs: Unpack[FieldKwargs],
+    ):
+        """
+        Initialize the field.
+
+        :param dp: The number of decimal places to round the field's value to.
+        :param kwargs: Additional keyword arguments for the field.
+        """
+        super().__init__(
+            field_type=decimal.Decimal,
+            min_value=min_value,
+            max_value=max_value,
+            **kwargs,
+        )
+        if dp is not None and dp < 0:
+            raise ValueError("Decimal places (dp) must be a non-negative integer.")
+        self.dp = int(dp) if dp is not None else None
+        self._quantizer = get_quantizer(self.dp) if self.dp is not None else None
+
+    def deserialize(
+        self,
+        value: typing.Union[T, typing.Any],
+        instance: typing.Optional[typing.Any] = None,
+    ) -> typing.Optional[decimal.Decimal]:
+        deserialized = super().deserialize(value, instance)
+        if deserialized and self.dp is not None:
+            return deserialized.quantize(self._quantizer)  # type: ignore[return-value]
+        return deserialized
 
 
 def build_min_max_length_validators(
@@ -1004,7 +1026,7 @@ class String(Field[str]):
     """Default maximum length of values."""
 
     default_serializers = {
-        "json": to_string_serializer,
+        "json": string_serializer,
     }
 
     def __init__(
@@ -1079,7 +1101,7 @@ class UUID(Field[uuid.UUID]):
     """Field for handling UUID values."""
 
     default_serializers = {
-        "json": to_string_serializer,
+        "json": string_serializer,
     }
 
     def __init__(self, **kwargs: Unpack[FieldKwargs]):
@@ -1099,46 +1121,52 @@ def iterable_python_serializer(
     :param context: Additional context for serialization.
     :return: The serialized iterable.
     """
-    field_type = field.field_type
-    serialized = field_type.__new__(field_type)  # type: ignore
-    adder = field.adder
-    child_serializer = field.child.serialize
-    child_typestr = field.child.typestr
+    serialized = []
+    child_field = field.child
+    child_serializer = child_field.serialize
+    fail_fast = field.fail_fast
 
     error = None
     for index, item in enumerate(value):
+        if "python" in child_field._identity_formats:
+            serialized.append(item)
+            continue
+
         try:
-            serialized_item = child_serializer(item, fmt="python", context=context)
+            serialized_item = child_serializer(item, "python", context)
         except SerializationError as exc:
-            if field.fail_fast:
+            child_typestr = child_field.typestr
+            input_type = type(item)
+            if fail_fast:
                 raise SerializationError.from_exception(
                     exc,
-                    input_type=type(item).__name__,
+                    input_type=input_type,
                     expected_type=child_typestr,
                     location=[index],
                 ) from exc
-            elif error is None:
+            if error is None:
                 error = SerializationError.from_exception(
                     exc,
-                    input_type=type(item).__name__,
+                    input_type=input_type,
                     expected_type=child_typestr,
                     location=[index],
                 )
-            else:
-                error.add(
-                    exc,
-                    input_type=type(item).__name__,
-                    expected_type=child_typestr,
-                    location=[index],
-                )
-        else:
-            if error is not None:
-                raise error
-            serialized = adder(serialized, serialized_item)
+                continue
+            error.add(
+                exc,
+                input_type=input_type,
+                expected_type=child_typestr,
+                location=[index],
+            )
+            continue
 
-    if error is not None:
+        if error:
+            raise error
+        serialized.append(serialized_item)
+
+    if error:
         raise error
-    return serialized
+    return serialized if field.field_type is list else field.field_type(serialized)  # type: ignore[return-value]
 
 
 def iterable_json_serializer(
@@ -1155,40 +1183,49 @@ def iterable_json_serializer(
     :return: The serialized iterable.
     """
     serialized = []
-    child_serializer = field.child.serialize
-    child_typestr = field.child.typestr
+    child_field = field.child
+    child_serializer = child_field.serialize
+    fail_fast = field.fail_fast
+
     error = None
     for index, item in enumerate(value):
+        if "json" in child_field._identity_formats:
+            serialized.append(item)
+            continue
+
         try:
-            serialized_item = child_serializer(item, fmt="json", context=context)
+            serialized_item = child_serializer(item, "json", context)
         except SerializationError as exc:
-            if field.fail_fast:
+            child_typestr = child_field.typestr
+            input_type = type(item)
+            if fail_fast:
                 raise SerializationError.from_exception(
                     exc,
-                    input_type=type(item).__name__,
+                    input_type=input_type,
                     expected_type=child_typestr,
                     location=[index],
                 ) from exc
-            elif error is None:
+            if error is None:
                 error = SerializationError.from_exception(
                     exc,
-                    input_type=type(item).__name__,
+                    input_type=input_type,
                     expected_type=child_typestr,
                     location=[index],
                 )
-            else:
-                error.add(
-                    exc,
-                    input_type=type(item).__name__,
-                    expected_type=child_typestr,
-                    location=[index],
-                )
-        else:
-            if error is not None:
-                raise error
-            serialized.append(serialized_item)
+                continue
+            error.add(
+                exc,
+                input_type=input_type,
+                expected_type=child_typestr,
+                location=[index],
+            )
+            continue
 
-    if error is not None:
+        if error:
+            raise error
+        serialized.append(serialized_item)
+
+    if error:
         raise error
     return serialized
 
@@ -1203,46 +1240,50 @@ def iterable_deserializer(
     :param field: The field instance to which the value belongs.
     :return: The deserialized value.
     """
-    field_type = field.field_type
-    deserialized = field_type.__new__(field_type)  # type: ignore
-    child_deserializer = field.child.deserialize
-    child_typestr = field.child.typestr
-    adder = field.adder
+    deserialized = []
+    child_field = field.child
+    child_deserializer = child_field.deserialize
+    fail_fast = field.fail_fast
 
     error = None
     for index, item in enumerate(value):
         try:
             deserialized_item = child_deserializer(item)
         except DeserializationError as exc:
-            if field.fail_fast:
+            child_typestr = child_field.typestr
+            input_type = type(item)
+            if fail_fast:
                 raise DeserializationError.from_exception(
                     exc,
-                    input_type=type(item).__name__,
+                    input_type=input_type,
                     expected_type=child_typestr,
                     location=[index],
                 ) from exc
-            elif error is None:
+            if error is None:
                 error = DeserializationError.from_exception(
                     exc,
-                    input_type=type(item).__name__,
+                    input_type=input_type,
                     expected_type=child_typestr,
                     location=[index],
                 )
-            else:
-                error.add(
-                    exc,
-                    input_type=type(item).__name__,
-                    expected_type=child_typestr,
-                    location=[index],
-                )
-        else:
-            if error is not None:
-                raise error
-            deserialized = adder(deserialized, deserialized_item)
+                continue
+            error.add(
+                exc,
+                input_type=input_type,
+                expected_type=child_typestr,
+                location=[index],
+            )
+            continue
 
-    if error is not None:
+        if error:
+            raise error
+        deserialized.append(deserialized_item)
+
+    if error:
         raise error
-    return deserialized
+    return (
+        deserialized if field.field_type is list else field.field_type(deserialized)  # type: ignore[return-value]
+    )
 
 
 def validate_iterable(
@@ -1262,36 +1303,51 @@ def validate_iterable(
     if field is None:
         return
 
-    child_validator = field.child.validate
-    child_typestr = field.child.typestr
+    child_field = field.child
+    child_validator = child_field.validate
     error = None
+    fail_fast = field.fail_fast
+
     for index, item in enumerate(value):
         try:
             child_validator(item, instance)
         except ValidationError as exc:
-            if field.fail_fast:
+            child_typestr = child_field.typestr
+            input_type = type(item)
+            if fail_fast:
                 raise ValidationError.from_exception(
                     exc,
-                    input_type=type(item).__name__,
+                    input_type=input_type,
                     expected_type=child_typestr,
-                    location=[field.name, index],
+                    location=[index],
                 ) from exc
-            elif error is None:
+            if error is None:
                 error = ValidationError.from_exception(
                     exc,
-                    input_type=type(item).__name__,
+                    input_type=input_type,
                     expected_type=child_typestr,
-                    location=[field.name, index],
+                    location=[index],
                 )
-            else:
-                error.add(
-                    exc,
-                    input_type=type(item).__name__,
-                    expected_type=child_typestr,
-                    location=[field.name, index],
-                )
-    if error is not None:
+                continue
+            error.add(
+                exc,
+                input_type=input_type,
+                expected_type=child_typestr,
+                location=[index],
+            )
+
+    if error:
         raise error
+
+
+_GENERIC_ITER_MAP: typing.Dict[typing.Type[typing.Iterable[typing.Any]], typing.Any] = {
+    list: typing.List,
+    set: typing.Set,
+    tuple: typing.Tuple,
+    collections.deque: typing.Deque,
+    frozenset: typing.FrozenSet,
+    collections.abc.MutableSet: typing.MutableSet,
+}
 
 
 class Iterable(typing.Generic[IterT, V], Field[IterT]):
@@ -1339,7 +1395,6 @@ class Iterable(typing.Generic[IterT, V], Field[IterT]):
                 kwargs["validator"] = field_validators.pipe(*validators)
         super().__init__(field_type=field_type, **kwargs)
         self.child = child or Any()
-        self.adder = get_itertype_adder(field_type)
 
     @property
     def typestr(self) -> str:
@@ -1347,6 +1402,10 @@ class Iterable(typing.Generic[IterT, V], Field[IterT]):
         if self.strict:
             return f"strict[{value}]"
         return value
+
+    def __get_type_hint__(self):
+        """Return type information for the field."""
+        return _GENERIC_ITER_MAP[self.field_type][self.child.__get_type_hint__()]  # type: ignore[return-value]
 
     def bind(
         self, parent: typing.Type[typing.Any], name: typing.Optional[str] = None
@@ -1366,9 +1425,10 @@ class Iterable(typing.Generic[IterT, V], Field[IterT]):
         if not super().check_type(value):
             return False
 
-        if value and self.child.field_type is not AnyType:
+        child_field = self.child
+        if value and child_field is not AnyType:
             for item in value:
-                if not self.child.check_type(item):
+                if not child_field.check_type(item):
                     return False
         return True
 
@@ -1383,15 +1443,10 @@ class List(Iterable[typing.List[V], V]):
         size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
         **kwargs: Unpack[FieldKwargs],
     ) -> None:
-        super().__init__(
-            field_type=list,
-            child=child,
-            size=size,
-            **kwargs,
-        )
+        super().__init__(field_type=list, child=child, size=size, **kwargs)
 
 
-class Set(Iterable[typing.Set[V], V]):
+class Set(Iterable[typing.MutableSet[V], V]):
     """Set field."""
 
     def __init__(
@@ -1402,11 +1457,21 @@ class Set(Iterable[typing.Set[V], V]):
         **kwargs: Unpack[FieldKwargs],
     ) -> None:
         super().__init__(
-            field_type=set,
-            child=child,
-            size=size,
-            **kwargs,
+            field_type=collections.abc.MutableSet, child=child, size=size, **kwargs
         )
+
+
+class FrozenSet(Iterable[typing.FrozenSet[V], V]):
+    """Set field."""
+
+    def __init__(
+        self,
+        child: typing.Optional[Field[V]] = None,
+        *,
+        size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
+        **kwargs: Unpack[FieldKwargs],
+    ) -> None:
+        super().__init__(field_type=frozenset, child=child, size=size, **kwargs)
 
 
 class Tuple(Iterable[typing.Tuple[V], V]):
@@ -1419,55 +1484,20 @@ class Tuple(Iterable[typing.Tuple[V], V]):
         size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
         **kwargs: Unpack[FieldKwargs],
     ) -> None:
-        super().__init__(
-            field_type=tuple,
-            child=child,
-            size=size,
-            **kwargs,
-        )
+        super().__init__(field_type=tuple, child=child, size=size, **kwargs)
 
 
-def get_quantizer(dp: int) -> decimal.Decimal:
-    """Get the quantizer for the specified number of decimal places."""
-    if dp < 0:
-        raise ValueError("Decimal places (dp) must be a non-negative integer.")
-    return decimal.Decimal(f"0.{'0' * (dp - 1)}1") if dp > 0 else decimal.Decimal("1")
-
-
-class Decimal(Field[decimal.Decimal]):
-    """Field for handling decimal values."""
-
-    default_serializers = {
-        "json": to_string_serializer,
-    }
+class Deque(Iterable[typing.Deque[V], V]):
+    """Deque field."""
 
     def __init__(
         self,
-        dp: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
+        child: typing.Optional[Field[V]] = None,
+        *,
+        size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
         **kwargs: Unpack[FieldKwargs],
-    ):
-        """
-        Initialize the field.
-
-        :param dp: The number of decimal places to round the field's value to.
-        :param kwargs: Additional keyword arguments for the field.
-        """
-        super().__init__(field_type=decimal.Decimal, **kwargs)
-        if dp is not None and dp < 0:
-            raise ValueError("Decimal places (dp) must be a non-negative integer.")
-        self.dp = int(dp) if dp is not None else None
-        self._quantizer = get_quantizer(self.dp) if self.dp is not None else None
-
-    def deserialize(
-        self,
-        value: typing.Union[T, typing.Any],
-        instance: typing.Optional[typing.Any] = None,
-    ) -> typing.Optional[decimal.Decimal]:
-        deserialized = super().deserialize(value, instance)
-        if deserialized and self.dp is not None:
-            self._quantizer = typing.cast(decimal.Decimal, self._quantizer)
-            return deserialized.quantize(self._quantizer)
-        return deserialized
+    ) -> None:
+        super().__init__(field_type=collections.deque, child=child, size=size, **kwargs)
 
 
 email_validator = field_validators.pattern(
@@ -1552,13 +1582,6 @@ class Choice(Field[T]):
         super().__init__(field_type=field_type, **kwargs)
 
 
-def json_serializer(value: typing.Any, field: "JSON", context: Context) -> JSONValue:
-    """Serialize JSON data to a JSON-compatible format."""
-    # Return value as is, since it has already been made JSON-compatible
-    # by the deserializer.
-    return value
-
-
 def json_deserializer(value: typing.Any, field: Field[typing.Any]) -> JSONValue:
     """Deserialize JSON data to the specified type."""
     return make_jsonable(value)
@@ -1568,7 +1591,7 @@ class JSON(Field[JSONValue]):
     """Field for handling JSON data."""
 
     default_serializers = {
-        "json": json_serializer,
+        "json": no_op_serializer,
     }
     default_deserializer = json_deserializer
 
@@ -1666,7 +1689,7 @@ class Path(Field[pathlib.Path]):
     """
 
     default_serializers = {
-        "json": to_string_serializer,
+        "json": string_serializer,
     }
     default_deserializer = path_deserializer
 

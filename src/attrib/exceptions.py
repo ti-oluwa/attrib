@@ -3,7 +3,7 @@ import sys
 from typing_extensions import Self
 from contextlib import contextmanager
 
-from attrib._typing import Context
+from attrib.types import Context
 
 
 class AttribException(Exception):
@@ -376,8 +376,8 @@ class DetailedError(AttribException):
                 collected.append(cls.from_exception(exc))
 
         if collected or len(errors.error_list) > 1:
-            for exc in collected:
-                errors.merge(exc, location=location)
+            for error in collected:
+                errors.merge(error, location=location)
             raise errors
 
     def error_messages(self) -> typing.Generator[str, None, None]:

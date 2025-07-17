@@ -136,11 +136,12 @@ def load_data(
     return [converter.structure(data, cls) for data in data_list]
 
 
-def example():
-    years = load_data(year_data, AcademicYear)
-    courses = load_data(course_data, Course)
-    students = load_data(student_data, Student)
+years = load_data(year_data, AcademicYear)
+courses = load_data(course_data, Course)
+students = load_data(student_data, Student)
 
+
+def example():
     for student in students:
         converter.unstructure(student)
 

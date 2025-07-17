@@ -2,7 +2,7 @@
 
 `attrib` is a performant data description and validation system for Python. It provides an intuitive API for describing and validating data structures using Python's descriptor protocol. `attrib` is designed to be deterministic, familiar, and flexible, allowing you to create complex data structures with no hidden runtime magic.
 
-In most cases, especially heavy workflows, `attrib` can be 5 - 30% faster than `attrs` + `cattrs`, `dataclasses` + `cattrs`, or `pydantic` when serializing and deserializing data.
+In most cases, especially heavy workflows, `attrib` can be 5 - 30% faster than `attrs` + `cattrs`, `dataclasses` + `cattrs`, or `pydantic` when deserializing + serializing data.
 
 `attrib` dataclasses can be used in latency sensitive APIs, configuration definitions, and data pipelines.
 
@@ -43,11 +43,13 @@ Install version of choice:
 uv install python <version>
 ```
 
-Proper documentation and tests will be included soon, but you can check the [examples](/attrib/examples/) directory for usage patterns, or run:
+Proper documentation and tests will be included soon, but you can check the [examples](/examples) directory for usage patterns, or run:
 
 ```bash
 
-uv run --python 3.10 --with-requirements 'dev-requirements.txt' examples/main.py 1000 -OO -B
+uv sync --extra dev
+
+uv run --python 3.10 examples/main.py 1000 -OO -B
 ```
 
 to run benchmarks of `attrib` against `attrs + cattrs` and `pydantic`.

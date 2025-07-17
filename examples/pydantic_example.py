@@ -151,20 +151,22 @@ def load_data(
     return [cls.model_validate(data) for data in data_list]
 
 
+years = load_data(year_data, AcademicYear)
+courses = load_data(course_data, Course)
+students = load_data(student_data, Student)
+
+
 def example() -> None:
     """Run example usage of the data classes"""
-    years = load_data(year_data, AcademicYear)
-    courses = load_data(course_data, Course)
-    students = load_data(student_data, Student)
 
     for student in students:
-        student.model_dump(mode="python", by_alias=True)
+        student.model_dump(mode="json")
 
     for course in courses:
-        course.model_dump(mode="python")
+        course.model_dump(mode="json")
 
     for year in years:
-        year.model_dump(mode="python")
+        year.model_dump(mode="json")
 
 
 @timeit("pydantic")

@@ -3,7 +3,7 @@ import ipaddress
 from typing_extensions import Unpack
 from urllib.parse import urlparse, ParseResult as Url, ParseResultBytes as UrlBytes
 
-from attrib.descriptors.base import Field, FieldKwargs, to_string_serializer
+from attrib.descriptors.base import Field, FieldKwargs, string_serializer
 from attrib.exceptions import ValidationError
 
 
@@ -28,7 +28,7 @@ class URL(Field[typing.Union[Url, UrlBytes]]):
     """Field for handling URL values."""
 
     default_serializers = {
-        "json": to_string_serializer,
+        "json": string_serializer,
     }
     default_deserializer = url_deserializer
 
@@ -48,7 +48,7 @@ class IPAddress(Field[typing.Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
     """Field for handling IP addresses."""
 
     default_serializers = {
-        "json": to_string_serializer,
+        "json": string_serializer,
     }
     default_deserializer = ip_address_deserializer
 

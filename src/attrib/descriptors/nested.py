@@ -1,90 +1,73 @@
+from types import MappingProxyType
 import typing
 from typing_extensions import Unpack
 
 from attrib.descriptors.base import Field, FieldKwargs, NonTupleFieldType
 from attrib.dataclass import Dataclass
-from attrib.serializers import (
-    _serialize_instance_asdict,
-    _serialize_instance_asnamedtuple,
-)
+from attrib.serializers import asdict
 from attrib._utils import is_iterable
 from attrib.exceptions import FieldError
-from attrib._typing import (
+from attrib.types import (
     JSONDict,
     JSONNamedDataTuple,
     DataDict,
-    NamedDataTuple,
     Context,
 )
 
+__all__ = [
+    "Nested",
+    "dataclass_serializers",
+]
 
-_Dataclass = typing.TypeVar("_Dataclass", bound=Dataclass)
-_Dataclass_co = typing.TypeVar("_Dataclass_co", bound=Dataclass, covariant=True)
+
+DataclassT = typing.TypeVar("DataclassT", bound=Dataclass)
+DataclassTco = typing.TypeVar("DataclassTco", bound=Dataclass, covariant=True)
 
 
 def nested_json_serializer(
-    instance: _Dataclass_co,
-    field: Field[_Dataclass_co],
+    instance: DataclassTco,
+    field: Field[DataclassTco],
     context: Context,
 ) -> typing.Union[JSONDict, JSONNamedDataTuple]:
-    """Serialize a nested dataclass instance to a dictionary."""
-    if context and context.get("__astuple", False):
-        return _serialize_instance_asnamedtuple(
-            fmt="json",
-            instance=instance,
-            context=context,
-        )
-    return _serialize_instance_asdict(
-        fmt="json",
-        instance=instance,
-        context=context,
-    )
+    return asdict(instance, context=context, fmt="json")
 
 
 def nested_python_serializer(
-    instance: _Dataclass_co,
-    field: Field[_Dataclass_co],
+    instance: DataclassTco,
+    field: Field[DataclassTco],
     context: Context,
-) -> typing.Union[DataDict, NamedDataTuple]:
-    """Serialize a nested dataclass instance to a dictionary."""
-    if context and context.get("__astuple", False):
-        return _serialize_instance_asnamedtuple(
-            fmt="python",
-            instance=instance,
-            context=context,
-        )
-    return _serialize_instance_asdict(
-        fmt="python",
-        instance=instance,
-        context=context,
-    )
+) -> DataDict:
+    return asdict(instance, context=context, fmt="python")
 
 
-class Nested(Field[_Dataclass]):
+dataclass_serializers = MappingProxyType(
+    {
+        "json": nested_json_serializer,
+        "python": nested_python_serializer,
+    }
+)
+"""Default serializers dataclass fields' use."""
+
+
+class Nested(Field[DataclassT]):
     """Nested Dataclass field."""
 
-    default_serializers = {
-        "python": nested_python_serializer,
-        "json": nested_json_serializer,
-    }
+    default_serializers = dataclass_serializers
 
     def __init__(
-        self,
-        dataclass_: NonTupleFieldType[_Dataclass],
-        **kwargs: Unpack[FieldKwargs],
+        self, nested: NonTupleFieldType[DataclassT], /, **kwargs: Unpack[FieldKwargs]
     ) -> None:
         """
-        Initialize a nested field.
+        Initialize nested field.
 
-        :param dataclass_: The dataclass type or a callable that returns the dataclass type.
-
+        :param nested: The nested dataclass type.
         :param kwargs: Additional keyword arguments for the field.
         """
-        super().__init__(dataclass_, **kwargs)
+        super().__init__(nested, **kwargs)
 
     def post_init(self) -> None:
         super().post_init()
-        field_type = typing.cast(NonTupleFieldType[_Dataclass], self.field_type)
+        field_type = typing.cast(NonTupleFieldType[DataclassT], self.field_type)
         if isinstance(field_type, (typing.ForwardRef, str)):
             return
 

@@ -1,4 +1,5 @@
 import inspect
+import sys
 import typing
 import functools
 from collections.abc import (
@@ -9,16 +10,19 @@ from collections.abc import (
     Sequence,
     Set,
 )
-from collections import defaultdict
 
-from attrib._typing import JSONValue, Validator, T, Serializer, Deserializer, NoneType
+try:
+    from typing_extensions import is_typeddict
+except ImportError:  # pragma: no cover
+    assert sys.version_info >= (3, 10)
+    from typing import is_typeddict
+
+from attrib.types import JSONValue, Validator, T, Serializer, Deserializer, NoneType
 from attrib._utils import (
     is_generic_type,
-    is_named_tuple,
-    is_typed_dict,
+    is_namedtuple,
     make_jsonable,
-    SerializerRegistry,
-    _unsupported_serializer_factory,
+    SerializerMap,
     coalesce_funcs,
     resolve_type,
 )
@@ -86,7 +90,7 @@ class TypeAdapter(typing.Generic[T]):
         "adapted",
         "name",
         "validator",
-        "serializer",
+        "serializers",
         "deserializer",
         "strict",
         "_is_built",
@@ -122,12 +126,7 @@ class TypeAdapter(typing.Generic[T]):
         self.name = name
         self.validator = validator
         self.deserializer = deserializer
-        self.serializer = SerializerRegistry(
-            defaultdict(
-                _unsupported_serializer_factory,
-                (serializers or {}),
-            )
-        )
+        self.serializers = SerializerMap(serializers or {})
         self.strict = strict
         self._is_built = False
         if not defer_build:
@@ -146,9 +145,9 @@ class TypeAdapter(typing.Generic[T]):
         ***This method is idempotent. Building the adapter multiple times***
         ***will not change its state after the first build.***
 
-        :param depth: Defines how many type-levels deep the necessary mechanisms should be built. 
-            This is especially necessary for nested types or self-referencing types that may cause 
-            infinite recursion of deserializer and validator building. An example is a typed dict 
+        :param depth: Defines how many type-levels deep the necessary mechanisms should be built.
+            This is especially necessary for nested types or self-referencing types that may cause
+            infinite recursion of deserializer and validator building. An example is a typed dict
             that contains a field that is a list of instances of the same typed dict.
 
         :param globalns: Global namespace for resolving type references. It is advisable to always provide this
@@ -179,10 +178,10 @@ class TypeAdapter(typing.Generic[T]):
         )
         if is_generic_type(self.adapted):
             if (
-                len(self.serializer.map) < 2
+                len(self.serializers) < 2
             ):  # Should contain at least "python" and "json" serializers
-                self.serializer = build_generic_type_serializer_registry(
-                    self.adapted, serializers=self.serializer.map, depth=depth
+                self.serializers = build_generic_type_serializer_registry(
+                    self.adapted, serializers=self.serializers, depth=depth
                 )
 
             if self.validator is None:
@@ -197,13 +196,12 @@ class TypeAdapter(typing.Generic[T]):
         if not isinstance(self.adapted, type):
             raise TypeError(f"Adapter target `{self.adapted}` must be a type")
 
-        if len(self.serializer.map) < 2:
-            serializers = self.serializer.map
-            self.serializer = (
-                build_dataclass_serializer_registry(serializers)
+        if len(self.serializers) < 2:
+            self.serializers = (
+                build_dataclass_serializer_registry(self.serializers)
                 if issubclass(self.adapted, Dataclass)
                 else build_non_generic_type_serializer_registry(
-                    self.adapted, serializers=serializers, depth=depth
+                    self.adapted, serializers=self.serializers, depth=depth
                 )
             )
 
@@ -256,14 +254,7 @@ class TypeAdapter(typing.Generic[T]):
         :param kwargs: Additional keyword arguments to pass to the serializer
         :return: The serialized value
         """
-        if self.serializer is None:
-            raise SerializationError(
-                f"Cannot serialize value. A serializer was not initialized for '{self.name or repr(self)}'",
-                input_type=type(value),
-                expected_type=self.adapted,
-                code="serializer_not_initialized",
-            )
-        return self.serializer(fmt, value, *args, **kwargs)
+        return self.serializers[fmt](value, *args, **kwargs)
 
     def deserialize(
         self,
@@ -417,7 +408,7 @@ def build_typeddict_deserializer(
     :param target: The target type to adapt
     :return: A function that attempts to coerce the value to the target type
     """
-    if not is_typed_dict(target):
+    if not is_typeddict(target):
         raise TypeError(f"Cannot build deserializer for non-TypedDict type {target!r}")
 
     annotations = typing.get_type_hints(target)
@@ -553,7 +544,7 @@ def build_typeddict_validator(
 
 
 @functools.lru_cache(maxsize=128)
-def build_named_tuple_deserializer(
+def build_namedtuple_deserializer(
     target: typing.Type[NamedTupleType],
     /,
     depth: typing.Optional[int] = None,
@@ -617,7 +608,7 @@ def build_named_tuple_deserializer(
 
 
 @functools.lru_cache(maxsize=128)
-def build_named_tuple_validator(
+def build_namedtuple_validator(
     target: typing.Type[NamedTupleType],
     /,
     depth: typing.Optional[int] = None,
@@ -679,7 +670,7 @@ def build_named_tuple_validator(
 
 
 @functools.lru_cache(maxsize=128)
-def build_named_tuple_serializer(
+def build_namedtuple_serializer(
     target: typing.Type[NamedTupleType],
     /,
     fmt: typing.Literal["python", "json"] = "python",
@@ -692,7 +683,7 @@ def build_named_tuple_serializer(
     :param fmt: The format to use for serialization, e.g., "json" or "python"
     :return: A function that serializes the value to the target format
     """
-    if not is_named_tuple(target):
+    if not is_namedtuple(target):
         raise TypeError(f"Cannot build serializer for non-NamedTuple type {target!r}")
 
     annotations = typing.get_type_hints(target)
@@ -762,11 +753,11 @@ def build_non_generic_type_deserializer(
     :param strict: Whether to enforce strict type checking and not attempt type coercion.
     :return: A function that attempts to coerce the value to the target type
     """
-    if is_typed_dict(type_):
+    if is_typeddict(type_):
         return build_typeddict_deserializer(type_, depth=depth)
 
-    if is_named_tuple(type_):
-        return build_named_tuple_deserializer(type_, depth=depth)
+    if is_namedtuple(type_):
+        return build_namedtuple_deserializer(type_, depth=depth)
 
     if issubclass(type_, Dataclass):
 
@@ -856,10 +847,10 @@ def build_non_generic_type_validator(
     :param depth: The depth for nested build operations (if applicable)
     :return: A function that attempts to validate the value against the target type
     """
-    if is_typed_dict(target):
+    if is_typeddict(target):
         return build_typeddict_validator(target, depth=depth)
-    if is_named_tuple(target):
-        return build_named_tuple_validator(target, depth=depth)
+    if is_namedtuple(target):
+        return build_namedtuple_validator(target, depth=depth)
     return instance_of(target)
 
 
@@ -877,8 +868,8 @@ def build_non_generic_type_serializer(
     :param depth: The depth for nested serialization (if applicable)
     :return: A function that serializes the value to the target format
     """
-    if is_named_tuple(target):
-        return build_named_tuple_serializer(target, fmt=fmt, depth=depth)
+    if is_namedtuple(target):
+        return build_namedtuple_serializer(target, fmt=fmt, depth=depth)
 
     if fmt == "json":
         return _non_generic_type_json_serializer
@@ -1561,18 +1552,16 @@ def build_non_generic_type_serializer_registry(
         ]
     ] = None,
     depth: typing.Optional[int] = None,
-) -> SerializerRegistry:
+) -> SerializerMap:
     """
     Build a serializer registry for non-generic types.
 
     :param target: The target non-generic type.
     :param serializers: A mapping of serialization formats to their respective serializer functions
     :param depth: Optional depth for serialization
-    :return: A SerializerRegistry with the provided serializers
+    :return: A SerializerMap with the provided serializers
     """
-    serializers_map = {
-        **(serializers or {}),
-    }
+    serializers_map = {**(serializers or {})}
     if "json" not in serializers_map:
         serializers_map["json"] = build_generic_type_serializer(
             target, fmt="json", depth=depth
@@ -1581,26 +1570,19 @@ def build_non_generic_type_serializer_registry(
         serializers_map["python"] = build_generic_type_serializer(
             target, fmt="python", depth=depth
         )
-    return SerializerRegistry(
-        defaultdict(
-            _unsupported_serializer_factory,
-            serializers_map,
-        )
-    )
+    return SerializerMap(serializers_map)
 
 
 def build_dataclass_serializer_registry(
     serializers: typing.Optional[typing.Mapping[str, Serializer[typing.Any]]] = None,
-) -> SerializerRegistry:
+) -> SerializerMap:
     """
     Build a serializer registry for dataclass types.
 
     :param serializers: A mapping of serialization formats to their respective serializer functions
-    :return: A SerializerRegistry with the provided serializers
+    :return: A SerializerMap with the provided serializers
     """
-    serializers_map = {
-        **(serializers or {}),
-    }
+    serializers_map = {**(serializers or {})}
     if "json" not in serializers_map:
         serializers_map["json"] = lambda value, *_, **kwargs: serialize(
             value,
@@ -1613,12 +1595,7 @@ def build_dataclass_serializer_registry(
             fmt="python",
             **kwargs,
         )
-    return SerializerRegistry(
-        defaultdict(
-            _unsupported_serializer_factory,
-            serializers_map,
-        )
-    )
+    return SerializerMap(serializers_map)
 
 
 def build_generic_type_serializer_registry(
@@ -1631,7 +1608,7 @@ def build_generic_type_serializer_registry(
         ]
     ] = None,
     depth: typing.Optional[int] = None,
-) -> SerializerRegistry:
+) -> SerializerMap:
     """
     Build a serializer registry for generic types.
 
@@ -1639,9 +1616,7 @@ def build_generic_type_serializer_registry(
     :param serializers: A mapping of serialization formats to their respective serializer functions
     :param depth: Optional depth for serialization
     """
-    serializers_map = {
-        **(serializers or {}),
-    }
+    serializers_map = {**(serializers or {})}
     if "json" not in serializers_map:
         serializers_map["json"] = build_generic_type_serializer(
             target,
@@ -1654,9 +1629,4 @@ def build_generic_type_serializer_registry(
             fmt="python",
             depth=depth,
         )
-    return SerializerRegistry(
-        defaultdict(
-            _unsupported_serializer_factory,
-            serializers_map,
-        )
-    )
+    return SerializerMap(serializers_map)

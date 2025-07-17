@@ -12,24 +12,24 @@ from utils import timeit, log
 
 attrib_adapter = attrib.TypeAdapter(
     typing.Tuple[
-        typing.List[typing.Optional["Person"]],
+        typing.List[typing.Optional["PersonTuple"]],
         typing.Dict[str, typing.List[typing.Union[int, str]]],
         typing.Optional[str],
     ],
     defer_build=True,
 )
 
-# pydantic_adapter = pydantic.TypeAdapter(
-#     typing.Tuple[
-#         typing.List[typing.Optional["PersonTuple"]],
-#         typing.Dict[str, typing.List[int]],
-#         typing.Optional[str],
-#     ],
-#     config=pydantic.ConfigDict(
-#         defer_build=True,
-#         arbitrary_types_allowed=True,
-#     ),
-# )
+pydantic_adapter = pydantic.TypeAdapter(
+    typing.Tuple[
+        typing.List[typing.Optional["PersonTuple"]],
+        typing.Dict[str, typing.List[typing.Union[int, str]]],
+        typing.Optional[str],
+    ],
+    config=pydantic.ConfigDict(
+        defer_build=True,
+        arbitrary_types_allowed=True,
+    ),
+)
 
 
 class PersonTuple(typing.NamedTuple):
@@ -62,7 +62,7 @@ raw_data = (
             "name": "One",
             "age": "18",
             "friends": [
-                {"name": "Two", "age": "20", "friends": {}},
+                {"name": "Two", "age": "20", "friends": set()},
                 {"name": "Three", "age": "30", "friends": []},
                 {
                     "name": "Four",
@@ -83,25 +83,25 @@ raw_data = (
 
 
 def main():
-    # with timeit("build_pydantic_adapter"):
-    #     pydantic_adapter.rebuild()
+    with timeit("build_pydantic_adapter"):
+        pydantic_adapter.rebuild()
 
     with timeit("build_adapter"):
-        attrib_adapter.build(depth=None, globalns=globals())
+        attrib_adapter.build(depth=10, globalns=globals())
 
-    # with timeit("adapt_and_serialize_pydantic"):
-    #     adapted_pydantic = pydantic_adapter.validate_python(raw_data)
-    #     log(adapted_pydantic)
+    with timeit("adapt_and_serialize_pydantic"):
+        adapted_pydantic = pydantic_adapter.validate_python(raw_data)
+        serialized_pydantic = pydantic_adapter.dump_python(
+            adapted_pydantic, mode="python"
+        )
+        log(adapted_pydantic)
+        log(serialized_pydantic)
 
     with timeit("adapt_and_serialize"):
-        adapted = attrib_adapter.adapt(raw_data, fail_fast=True)
-        attrib_adapter.serialize(
-            adapted,
-            fmt="python",
-            astuple=False,
-            fail_fast=True,
-            options=attrib.Options(attrib.Option(Person, depth=1)),
-        )
+        adapted_attrib = attrib_adapter.adapt(raw_data)
+        serialized_attrib = attrib_adapter.serialize(adapted_attrib, fmt="python")
+        log(adapted_attrib)
+        log(serialized_attrib)
 
 
 if __name__ == "__main__":

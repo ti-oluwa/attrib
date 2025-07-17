@@ -3,13 +3,13 @@ import datetime
 from typing_extensions import Unpack
 
 try:
-    import zoneinfo # type: ignore[import]
+    import zoneinfo  # type: ignore[import]
 except ImportError:
     from backports import zoneinfo  # type: ignore[import]
 
 
-from attrib.descriptors.base import Field, FieldKwargs, to_string_serializer
-from attrib._typing import Context
+from attrib.descriptors.base import Field, FieldKwargs, string_serializer
+from attrib.types import Context
 from attrib._utils import iso_parse, parse_duration, _LRUCache
 from attrib.exceptions import DeserializationError
 
@@ -42,7 +42,7 @@ class Duration(Field[datetime.timedelta]):
     """Field for handling duration values."""
 
     default_serializers = {
-        "json": to_string_serializer,
+        "json": string_serializer,
     }
     default_deserializer = timedelta_deserializer
 
@@ -64,7 +64,7 @@ class TimeZone(Field[datetime.tzinfo]):
     """Field for handling timezone values."""
 
     default_serializers = {
-        "json": to_string_serializer,
+        "json": string_serializer,
     }
     default_deserializer = timezone_deserializer
 
@@ -84,13 +84,14 @@ def datetime_serializer(
     context: Context,
 ) -> str:
     """Serialize a datetime object to a string."""
+    if not field.output_format:
+        return value.isoformat()
     return value.strftime(field.output_format)
 
 
 class DateTimeBase(Field[DatetimeType]):
     """Base class for datetime fields."""
 
-    default_output_format: typing.ClassVar[str] = "%Y-%m-%d %H:%M:%S%z"
     default_serializers = {
         "json": datetime_serializer,
     }
@@ -115,7 +116,7 @@ class DateTimeBase(Field[DatetimeType]):
         """
         super().__init__(field_type=field_type, **kwargs)  # type: ignore
         self.input_formats = input_formats
-        self.output_format = output_format or self.default_output_format
+        self.output_format = output_format
 
 
 _datetime_cache = _LRUCache[str, datetime.datetime](maxsize=128)
@@ -154,7 +155,6 @@ def iso_time_deserializer(
 class Date(DateTimeBase[datetime.date]):
     """Field for handling date values."""
 
-    default_output_format = "%Y-%m-%d"
     default_deserializer = iso_date_deserializer
 
     def __init__(
@@ -175,7 +175,6 @@ class Date(DateTimeBase[datetime.date]):
 class Time(DateTimeBase[datetime.time]):
     """Field for handling time values."""
 
-    default_output_format = "%H:%M:%S.%s"
     default_deserializer = iso_time_deserializer
 
     def __init__(
@@ -220,7 +219,6 @@ class DateTime(DateTimeBase[datetime.datetime]):
     as valid input values and will not be modified by the field.
     """
 
-    default_output_format = "%Y-%m-%d %H:%M:%S%z"
     default_deserializer = datetime_deserializer
 
     def __init__(

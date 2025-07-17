@@ -1,3 +1,4 @@
+import numbers
 import typing
 from typing_extensions import Self, ParamSpec, TypeAlias
 
@@ -25,9 +26,7 @@ IterTco = typing.TypeVar("IterTco", bound=typing.Iterable[typing.Any], covariant
 DataDict: TypeAlias = typing.Dict[str, typing.Any]
 NamedDataTuple: TypeAlias = typing.Tuple[typing.Tuple[str, typing.Any], ...]
 
-JSONValue: TypeAlias = typing.Union[
-    int, float, str, bool, None, "JSONDict", "JSONList"
-]
+JSONValue: TypeAlias = typing.Union[int, float, str, bool, None, "JSONDict", "JSONList"]
 JSONDict: TypeAlias = typing.Dict[str, "JSONValue"]
 JSONList: TypeAlias = typing.List["JSONValue"]
 JSONNamedDataTuple: TypeAlias = typing.Tuple[typing.Tuple[str, "JSONValue"], ...]
@@ -35,11 +34,13 @@ JSONNamedDataTuple: TypeAlias = typing.Tuple[typing.Tuple[str, "JSONValue"], ...
 Context: TypeAlias = typing.Dict[str, typing.Any]
 NoneType = type(None)
 
+RealNumberT = typing.TypeVar("RealNumberT", bound=numbers.Real)
+
 class SupportsRichComparison(typing.Protocol):
     def __lt__(self, other: typing.Any, /) -> bool: ...
     def __le__(self, other: typing.Any, /) -> bool: ...
-    def __gt__(self, other: typing.Any, /) -> bool: ...
-    def __ge__(self, other: typing.Any, /) -> bool: ...
+    # def __gt__(self, other: typing.Any, /) -> bool: ...
+    # def __ge__(self, other: typing.Any, /) -> bool: ...
     def __eq__(self, other: typing.Any, /) -> bool: ...
     def __ne__(self, other: typing.Any, /) -> bool: ...
 

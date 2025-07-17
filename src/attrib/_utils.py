@@ -11,25 +11,24 @@ import enum
 import sys
 import datetime
 import collections.abc
-import importlib.util
+from importlib.util import find_spec
 import uuid
-from collections import defaultdict, deque
-from typing_extensions import TypeAlias, TypeGuard
+from collections import defaultdict
+from typing_extensions import TypeGuard
 
 try:
     import zoneinfo
 except ImportError:
-    from backports import zoneinfo  # type: ignore[import]
+    from backports import zoneinfo  # type: ignore[no-redef, import-not-found]
 try:
     import orjson as json  # type: ignore[import]
 except ImportError:
     try:
-        import ujson as json  # type: ignore[import]
+        import ujson as json  # type: ignore[no-redef, import-untyped]
     except ImportError:
-        import json  # Fallback to the standard library json module
+        import json  # type: ignore[no-redef] # Fallback to the standard library json module
 
-from attrib._typing import (
-    IterTco,
+from attrib.types import (
     JSONDict,
     JSONList,
     Serializer,
@@ -52,23 +51,45 @@ __all__ = [
 ]
 
 
-def has_package(package_name) -> bool:
-    """Check if a package is installed."""
-    return importlib.util.find_spec(package_name) is not None
+if sys.version_info >= (3, 9):
+
+    def is_generic_type(typ: typing.Any) -> bool:
+        """Check whether the type is a generic type."""
+        # Inheriting from protocol will inject `Generic` into the MRO
+        # without `__orig_bases__`.
+        return (
+            typing.get_origin(typ)
+            or isinstance(typ, (typing._GenericAlias, types.GenericAlias))  # type: ignore
+            or (issubclass(typ, typing.Generic) and hasattr(typ, "__orig_bases__"))
+        )
+
+else:
+
+    def is_generic_type(typ: typing.Any) -> bool:
+        """Check whether the type is a generic type."""
+        return (
+            typing.get_origin(typ)
+            or isinstance(typ, typing._GenericAlias)  # type: ignore
+            or (issubclass(typ, typing.Generic) and hasattr(typ, "__orig_bases__"))
+        )
 
 
-class caseinsensitive(typing.NamedTuple):
-    s: str
+def is_namedtuple(cls: typing.Type[typing.Any], /) -> bool:
+    """
+    Check if a class is a named tuple.
 
-    def __hash__(self) -> int:
-        return hash(self.s.upper())
-
-
-iexact: TypeAlias = caseinsensitive
+    This checks if the class is a subclass of `tuple` and has a `_fields` attribute.
+    """
+    return (
+        isinstance(cls, type)
+        and issubclass(cls, tuple)
+        and hasattr(cls, "_fields")
+        and isinstance(cls._fields, tuple)  # type: ignore[has-type,attr-defined]
+    )
 
 
 def is_iterable_type(
-    tp: typing.Type[typing.Any],
+    typ: typing.Type[typing.Any],
     /,
     *,
     exclude: typing.Optional[typing.Tuple[typing.Type[typing.Any], ...]] = None,
@@ -76,10 +97,10 @@ def is_iterable_type(
     """
     Check if a given type is an iterable type. A subclass of `collections.abc.Iterable`.
 
-    :param tp: The type to check.
+    :param typ: The type to check.
     :param exclude: A tuple of types to return False for, even if they are iterable types.
     """
-    is_iter_type = issubclass(tp, collections.abc.Iterable)
+    is_iter_type = issubclass(typ, collections.abc.Iterable)
     if not is_iter_type:
         return False
 
@@ -88,7 +109,7 @@ def is_iterable_type(
             if not is_iterable_type(_tp):
                 raise ValueError(f"{_tp} is not an iterable type.")
 
-        is_iter_type = is_iter_type and not issubclass(tp, tuple(exclude))
+        is_iter_type = is_iter_type and not issubclass(typ, tuple(exclude))
     return is_iter_type
 
 
@@ -106,133 +127,33 @@ def is_mapping(obj: typing.Any) -> TypeGuard[typing.Mapping]:
     return isinstance(obj, collections.abc.Mapping)
 
 
-def is_concrete_type(o: typing.Any, /) -> bool:
+def is_concrete_type(typ: typing.Type[typing.Any], /) -> bool:
     """Check if an object is a concrete type."""
-    if isinstance(o, typing._SpecialForm):
-        return False
-    return isinstance(o, type)
+    return not isinstance(typ, typing._SpecialForm) and isinstance(typ, type)
 
 
-def is_valid_type(o: typing.Any, /) -> bool:
+def is_valid_type(typ: typing.Type[typing.Any], /) -> bool:
     """Check if an object is a valid type that can be used in a field"""
-    if isinstance(o, tuple):
+    if isinstance(typ, tuple):
         return all(
-            (isinstance(obj, typing.ForwardRef) or is_concrete_type(obj) for obj in o)
+            (isinstance(obj, typing.ForwardRef) or is_concrete_type(obj) for obj in typ)
         )
-    return is_concrete_type(o) or isinstance(o, typing.ForwardRef)
+    return is_concrete_type(typ) or isinstance(typ, typing.ForwardRef)
 
 
-def is_generic_type(o: typing.Any, /) -> bool:
-    """Check if an object is a generic type."""
-    return typing.get_origin(o) is not None and not isinstance(o, typing._SpecialForm)
+def has_package(package_name) -> bool:
+    """Check if a package is installed."""
+    return find_spec(package_name) is not None
 
 
-def is_mapping_type(
-    tp: typing.Type[typing.Any], /
-) -> TypeGuard[typing.Type[typing.Mapping]]:
-    """
-    Check if a given type is a mapping type. A subclass of `collections.abc.Mapping`.
+class iexact(typing.NamedTuple):
+    s: str
 
-    :param tp: The type to check.
-    :return: True if the type is a mapping type, False otherwise.
-    """
-    return inspect.isclass(tp) and issubclass(tp, collections.abc.Mapping)
-
-
-def is_typed_dict(cls: type) -> bool:
-    """
-    Make shift check for TypedDict.
-    """
-    return (
-        isinstance(cls, type)
-        and issubclass(cls, dict)
-        and "__required_keys__" in cls.__dict__
-    )
-
-
-def is_named_tuple(cls: typing.Type[typing.Any], /) -> bool:
-    """
-    Check if a class is a named tuple.
-
-    This checks if the class is a subclass of `tuple` and has a `_fields` attribute.
-    """
-    return (
-        isinstance(cls, type)
-        and issubclass(cls, tuple)
-        and hasattr(cls, "_fields")
-        and isinstance(cls._fields, tuple)  # type: ignore[has-type,attr-defined]
-    )
-
-
-def is_slotted_cls(cls: typing.Type[typing.Any], /) -> bool:
-    """Check if a class has __slots__ defined."""
-    return "__slots__" in cls.__dict__
-
-
-def _list_adder(
-    list_: typing.List[typing.Any], value: typing.Any
-) -> typing.List[typing.Any]:
-    """
-    Add a value to a list and return the updated list.
-    """
-    list_.append(value)
-    return list_
-
-
-def _set_adder(
-    set_: typing.Set[typing.Any], value: typing.Any
-) -> typing.Set[typing.Any]:
-    """
-    Add a value to a set and return the updated set.
-    """
-    set_.add(value)
-    return set_
-
-
-def _tuple_adder(
-    tuple_: typing.Tuple[typing.Any, ...], value: typing.Any
-) -> typing.Tuple[typing.Any, ...]:
-    return (*tuple_, value)
-
-
-def _frozenset_adder(
-    frozenset_: typing.FrozenSet[typing.Any], value: typing.Any
-) -> typing.FrozenSet[typing.Any]:
-    return frozenset(list(frozenset_) + [value])
-
-
-def get_itertype_adder(
-    field_type: typing.Type[IterTco],
-) -> typing.Callable[[IterTco, typing.Any], IterTco]:
-    """
-    Get the appropriate adder function for the specified iterable type.
-    This function returns the method used to add elements to the iterable type.
-
-    Example:
-    ```python
-
-    adder = get_itertype_adder(list)
-    print(adder([], 1))
-    # Output: [1]
-    ```
-    """
-    adder = None
-    if issubclass(field_type, (list, deque)):
-        adder = _list_adder
-    elif issubclass(field_type, set):
-        adder = _set_adder
-    elif issubclass(field_type, tuple):
-        adder = _tuple_adder
-    elif issubclass(field_type, frozenset):
-        adder = _frozenset_adder
-
-    if adder is None:
-        raise TypeError(f"Unsupported iterable type: {field_type}")
-    return typing.cast(typing.Callable[[IterTco, typing.Any], IterTco], adder)
+    def __hash__(self) -> int:
+        return hash(self.s.upper())
 
 
 HAS_DATEUTIL = has_package("dateutil")
-PY_GE_3_11 = sys.version_info >= (3, 11)
 
 
 def resolve_forward_refs(
@@ -249,7 +170,7 @@ def resolve_forward_refs(
     :param localns: The local namespace to use for resolution.
     :return: The resolved type.
     """
-    return typing._eval_type(type_, globalns or {}, localns or {})  # type: ignore[no-redef]
+    return typing._eval_type(type_, globalns or {}, localns or {})  # type: ignore[attr-defined]
 
 
 def resolve_type(
@@ -345,10 +266,11 @@ def parse_duration(value: str) -> typing.Optional[datetime.timedelta]:
         if kw.get("microseconds"):
             kw["microseconds"] = kw["microseconds"].ljust(6, "0")
         kw = {k: float(v.replace(",", ".")) for k, v in kw.items() if v is not None}
-        days = datetime.timedelta(kw.pop("days", 0.0) or 0.0)
+        days = datetime.timedelta(kw.pop("days", 0.0) or 0.0)  # type: ignore[arg-type]
         if match.re == iso8601_duration_re:
             days *= sign
-        return days + sign * datetime.timedelta(**kw)
+        return days + sign * datetime.timedelta(**kw)  # type: ignore[arg-type]
+    return None
 
 
 ISO_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S.%f%z"
@@ -374,50 +296,158 @@ def rfc3339_parse(s: str, /) -> datetime.datetime:
         return datetime.datetime.strptime(s, RFC3339_DATE_FORMAT_1)
 
 
-def iso_parse(
-    s: str, /, fmt: typing.Optional[typing.Union[str, typing.Iterable[str]]] = None
-) -> datetime.datetime:
-    """
-    Parse ISO 8601 datetime string as fast as possible.
+if sys.version_info >= (3, 11) and HAS_DATEUTIL:
+    from dateutil import parser  # type: ignore[import]
 
-    Reference: https://stackoverflow.com/a/62769371
-    """
-    global HAS_DATEUTIL, ISO_DATE_FORMAT
+    def iso_parse(
+        s: str, /, fmt: typing.Optional[typing.Union[str, typing.Iterable[str]]] = None
+    ) -> datetime.datetime:
+        """
+        Parse ISO 8601 datetime string as fast as possible.
 
-    if PY_GE_3_11:
+        Reference: https://stackoverflow.com/a/62769371
+        """
+        global ISO_DATE_FORMAT
         try:
             return datetime.datetime.fromisoformat(s)
         except ValueError:
             pass
-    try:
-        return datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except ValueError:
-        pass
 
-    if HAS_DATEUTIL:
         try:
-            from dateutil import parser  # type: ignore
+            return datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except ValueError:
+            pass
 
+        try:
             return parser.isoparse(s)
         except ValueError:
             pass
 
-    fmt = fmt or ISO_DATE_FORMAT
-    if isinstance(fmt, str):
+        fmts = fmt or ISO_DATE_FORMAT
+        if isinstance(fmts, str):
+            try:
+                return datetime.datetime.strptime(s, fmts)
+            except ValueError:
+                pass
+        else:
+            for fmt in fmts:
+                try:
+                    return datetime.datetime.strptime(s, fmt)
+                except ValueError:
+                    continue
+
+        return parser.parse(s)
+
+elif sys.version_info >= (3, 11):
+
+    def iso_parse(
+        s: str, /, fmt: typing.Optional[typing.Union[str, typing.Iterable[str]]] = None
+    ) -> datetime.datetime:
+        """
+        Parse ISO 8601 datetime string as fast as possible.
+
+        Reference: https://stackoverflow.com/a/62769371
+        """
+        global ISO_DATE_FORMAT
+
         try:
-            return datetime.datetime.strptime(s, fmt)
+            return datetime.datetime.fromisoformat(s)
         except ValueError:
             pass
-    else:
-        for f in fmt:
-            try:
-                return datetime.datetime.strptime(s, f)
-            except ValueError:
-                continue
 
-    if HAS_DATEUTIL:
-        return parser.parse(s)  # type: ignore
-    raise ValueError(f"Could not parse datetime string {s}")
+        try:
+            return datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+
+        fmts = fmt or ISO_DATE_FORMAT
+        if isinstance(fmts, str):
+            try:
+                return datetime.datetime.strptime(s, fmts)
+            except ValueError:
+                pass
+        else:
+            for fmt in fmts:
+                try:
+                    return datetime.datetime.strptime(s, fmt)
+                except ValueError:
+                    continue
+
+        raise ValueError(f"Could not parse datetime string {s}")
+
+elif HAS_DATEUTIL:
+    from dateutil import parser  # type: ignore[import]
+
+    def iso_parse(
+        s: str,
+        /,
+        fmt: typing.Optional[typing.Union[str, typing.Iterable[str]]] = None,
+    ) -> datetime.datetime:
+        """
+        Parse ISO 8601 datetime string as fast as possible.
+
+        Reference: https://stackoverflow.com/a/62769371
+        """
+        global ISO_DATE_FORMAT
+
+        try:
+            return datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+
+        try:
+            return parser.isoparse(s)
+        except ValueError:
+            pass
+
+        fmts = fmt or ISO_DATE_FORMAT
+        if isinstance(fmts, str):
+            try:
+                return datetime.datetime.strptime(s, fmts)
+            except ValueError:
+                pass
+        else:
+            for fmt in fmts:
+                try:
+                    return datetime.datetime.strptime(s, fmt)
+                except ValueError:
+                    continue
+
+        return parser.parse(s)
+
+else:
+
+    def iso_parse(
+        s: str,
+        /,
+        fmt: typing.Optional[typing.Union[str, typing.Iterable[str]]] = None,
+    ) -> datetime.datetime:
+        """
+        Parse ISO 8601 datetime string as fast as possible.
+
+        Reference: https://stackoverflow.com/a/62769371
+        """
+        global ISO_DATE_FORMAT
+
+        try:
+            return datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+
+        fmts = fmt or ISO_DATE_FORMAT
+        if isinstance(fmts, str):
+            try:
+                return datetime.datetime.strptime(s, fmts)
+            except ValueError:
+                pass
+        else:
+            for fmt in fmts:
+                try:
+                    return datetime.datetime.strptime(s, fmt)
+                except ValueError:
+                    continue
+
+        raise ValueError(f"Could not parse datetime string {s}")
 
 
 def now(
@@ -491,27 +521,15 @@ def _unsupported_serializer_factory():
 
 
 @typing.final
-class SerializerRegistry(typing.NamedTuple):
-    """
-    Registry class to handle different serialization formats.
-
-    :param map: A dictionary mapping format names to their respective serializer functions.
-    """
-
-    map: typing.DefaultDict[str, Serializer[typing.Any]] = defaultdict(
-        _unsupported_serializer_factory
-    )
-
-    def __call__(self, fmt: str, *args: typing.Any, **kwargs: typing.Any) -> typing.Any:
-        """
-        Serialize data using the specified format.
-
-        :param fmt: The format to serialize to (e.g., 'json', 'xml').
-        :param args: Positional arguments to pass to the format's serializer.
-        :param kwargs: Keyword arguments to pass to the format's serializer.
-        :return: Serialized data in the specified format.
-        """
-        return self.map[fmt](*args, **kwargs)
+class SerializerMap(defaultdict):
+    def __init__(
+        self,
+        map: typing.Mapping[str, Serializer[typing.Any]],
+        default_factory: typing.Optional[
+            typing.Callable[[], Serializer[typing.Any]]
+        ] = _unsupported_serializer_factory,
+    ) -> None:
+        super().__init__(default_factory, dict(map))
 
 
 HASHABLE_TYPES = (
@@ -580,7 +598,7 @@ def make_jsonable(obj: typing.Any) -> JSONValue:
         return obj
     elif isinstance(obj, collections.abc.Mapping):
         return jsonable_mapping(obj)
-    elif is_named_tuple(obj_type):
+    elif is_namedtuple(obj_type):
         return jsonable_mapping(obj._asdict())
     elif isinstance(obj, collections.abc.Iterable):
         return jsonable_iterable(obj)
@@ -589,11 +607,8 @@ def make_jsonable(obj: typing.Any) -> JSONValue:
     if encoder is not None:
         return encoder(obj)
 
-    mro = obj_type.__mro__
-    for i in range(1, len(mro) - 1):  # Skip the first one as we already checked it
-        cls = mro[i]
-        if cls in JSON_ENCODERS:
-            encoder = JSON_ENCODERS[cls]
+    for cls in obj_type.__mro__[1:-1]:  # Skip the first one as we already checked it
+        if encoder := JSON_ENCODERS.get(cls, None):
             # Cache this for future use
             JSON_ENCODERS[obj_type] = encoder
             return encoder(obj)

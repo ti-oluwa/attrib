@@ -224,10 +224,10 @@ def simple_output(
                 func[2][:30],  # Function name
                 cc,
                 nc,
-                f"{tt:.6f}",
-                f"{per_call_tt:.6f}",
-                f"{ct:.6f}",
-                f"{per_call_ct:.6f}",
+                f"{tt:.9f}",
+                f"{per_call_tt:.9f}",
+                f"{ct:.9f}",
+                f"{per_call_ct:.9f}",
                 f"{func[0]}:{func[1]}",
             )
         )

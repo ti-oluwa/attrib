@@ -26,7 +26,7 @@ class Term(enum.Enum):
     THIRD = "Third"
 
 
-@dataclass(frozen=True)
+@dataclass
 class AcademicYear:
     """Academic year data class"""
 
@@ -43,7 +43,7 @@ class AcademicYear:
             raise ValueError("Name must be at most 100 characters")
 
 
-@dataclass()
+@dataclass
 class Course:
     """Course data class"""
 
@@ -66,7 +66,7 @@ class Course:
         self.code = self.code.strip().upper()
 
 
-@dataclass(frozen=True)
+@dataclass
 class PersonalInfo:
     """Personal information data class"""
 
@@ -89,7 +89,7 @@ class PersonalInfo:
             raise ValueError("Invalid email format")
 
 
-@dataclass(frozen=True)
+@dataclass
 class Student(PersonalInfo):
     """Student data class"""
 
@@ -172,11 +172,13 @@ def load_data(
     return [converter.structure(data, cls) for data in data_list]
 
 
+years = load_data(year_data, AcademicYear)
+courses = load_data(course_data, Course)
+students = load_data(student_data, Student)
+
+
 def example():
     """Run example usage of the data classes"""
-    years = load_data(year_data, AcademicYear)
-    courses = load_data(course_data, Course)
-    students = load_data(student_data, Student)
 
     for student in students:
         converter.unstructure(student)

@@ -6,7 +6,7 @@ import copy
 import annotated_types as annot
 from itertools import count
 
-from attrib._typing import EMPTY, T
+from attrib.types import EMPTY, T
 from attrib.dataclass import DataclassTco
 from attrib.descriptors.base import Field
 from attrib.exceptions import ConfigurationError
@@ -42,11 +42,7 @@ def _make_new_dataclass(
         type(
             f"{prefix}{dataclass_.__name__}",
             (dataclass_,),
-            {
-                "__module__": dataclass_.__module__,
-                "__qualname__": f"{prefix}{dataclass_.__qualname__}",
-                **(attributes or {}),
-            },
+            {"__module__": dataclass_.__module__, **(attributes or {})},
             **meta_kwargs,
         ),
     )
@@ -186,7 +182,7 @@ def modify_cls(
                 "Cannot use both 'include' and 'exclude' options at the same time."
             )
 
-        cls_fields = dataclass_.__fields__
+        cls_fields = dataclass_.__dataclass_fields__
         field_names = cls_fields.keys()
         if include:
             include_set = set(include)
@@ -221,12 +217,13 @@ def modify_cls(
             field.name = None  # Reset name to None to avoid conflicts
             modified_fields[field_name] = field
 
-        return _make_new_dataclass(
+        modified_cls = _make_new_dataclass(
             dataclass_,
             prefix=prefix or "",
             attributes=modified_fields,
             **(meta_kwargs or {}),
         )
+        return modified_cls
 
     if dataclass_ is not None:
         return decorator(dataclass_)

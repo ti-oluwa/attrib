@@ -4,8 +4,7 @@ import typing
 from datetime import datetime
 
 import attrib
-from attrib.descriptors.phonenumbers import PhoneNumber
-from utils import timeit
+from utils import timeit, profileit, log
 from mock_data import course_data, student_data, year_data
 
 
@@ -49,16 +48,17 @@ class PersonalInfo(attrib.Dataclass):
     name = attrib.String(max_length=100)
     age = attrib.Integer(min_value=0, max_value=30)
     email = attrib.Email(allow_null=True, default=None)
-    phone = PhoneNumber(allow_null=True, default=None)
+    phone = attrib.String(allow_null=True, default=None)
 
     __config__ = attrib.Config(
-        frozen=True,
-        hash=True,
-        pickleable=True,
+        slots=True
+        # frozen=True,
+        # hash=True,
+        # pickleable=True,
     )
 
 
-@attrib.ordered(include=["id", "name", "level", "gpa"])
+# @attrib.ordered(include=["id", "name", "level", "gpa"])
 class Student(PersonalInfo):
     """Student data class"""
 
@@ -69,7 +69,6 @@ class Student(PersonalInfo):
         validator=attrib.validators.and_(
             attrib.validators.min_length(1), attrib.validators.max_length(15)
         ),
-        fail_fast=True,
         serialization_alias="enrolled_in",
     )
     gpa = attrib.Float(
@@ -79,11 +78,8 @@ class Student(PersonalInfo):
     created_at = attrib.DateTime(default=datetime.now)
 
 
-DataclassTco = typing.TypeVar(
-    "DataclassTco",
-    bound=attrib.Dataclass,
-    covariant=True,
-)
+DataclassTco = typing.TypeVar("DataclassTco", bound=attrib.Dataclass, covariant=True)
+
 
 def load_data(
     data_list: typing.List[typing.Dict[str, typing.Any]],
@@ -99,24 +95,29 @@ def load_data(
     return [attrib.deserialize(cls, data) for data in data_list]
 
 
+with attrib.deserialization_context(
+    fail_fast=True,
+    ignore_extras=True,
+):
+    students = load_data(student_data, Student)
+    courses = load_data(course_data, Course)
+    years = load_data(year_data, AcademicYear)
+
+
 def example() -> None:
     """Run example usage of the data classes"""
-    with attrib.deserialization_context(
-        fail_fast=True,
-        ignore_extras=True,
-    ):
-        students = load_data(student_data, Student)
-        courses = load_data(course_data, Course)
-        years = load_data(year_data, AcademicYear)
-
     for student in students:
-        attrib.serialize(student, fmt="python", by_alias=True)
+        attrib.serialize(
+            student,
+            fmt="json",
+            # options=attrib.Options(attrib.Option(Course, recurse=False)),
+        )
 
     for course in courses:
-        attrib.serialize(course, fmt="python")
+        attrib.serialize(course, fmt="json")
 
     for year in years:
-        attrib.serialize(year, fmt="python")
+        attrib.serialize(year, fmt="json")
 
 
 @timeit("attrib")
@@ -124,3 +125,4 @@ def test(n: int = 1) -> None:
     """Run the attrib example multiple times"""
     for _ in range(n):
         example()
+

@@ -1,13 +1,14 @@
 """Data description classes"""
 
 from collections.abc import Iterable, Mapping, Sequence
+import sys
 import typing
 import copy as pycopy
 from functools import partial
-from types import MappingProxyType
 from typing_extensions import Unpack, Self, TypeAlias
 import warnings
 
+from attrib._utils import is_generic_type
 from attrib.descriptors.base import Field, Value
 from attrib.exceptions import (
     FrozenInstanceError,
@@ -15,13 +16,13 @@ from attrib.exceptions import (
     ConfigurationError,
     ValidationError,
 )
-from attrib._typing import DataDict, RawData, KwArg
+from attrib.types import DataDict, RawData, KwArg
 from attrib.contextmanagers import (
     deserialization_context,
-    _fail_fast,
-    _by_name,
-    _is_valid,
-    _ignore_extras,
+    fail_fast_ctx_var,
+    by_name_ctx_var,
+    is_valid_ctx_var,
+    ignore_extras_ctx_var,
 )
 
 
@@ -46,7 +47,7 @@ def _repr(
     field_strs = []
     instance_type = type(instance)
     for field in instance.__repr_fields__:
-        value = field.__get__(instance, owner=instance_type)
+        value = field.__get__(instance, instance_type)
         field_strs.append(f"{field.name}={value}")
     return f"{instance_type.__name__}({', '.join(field_strs)})"
 
@@ -58,18 +59,18 @@ def _str(
     field_values = {}
     instance_type = type(instance)
     for field in instance.__repr_fields__:
-        value = field.__get__(instance, owner=instance_type)
+        value = field.__get__(instance, instance_type)
         field_values[field.name] = value
     return field_values.__repr__()
 
 
 def _getitem(instance: "Dataclass", key: str) -> typing.Any:
-    field = instance.__fields__[key]
-    return field.__get__(instance, owner=type(instance))
+    field = instance.__dataclass_fields__[key]
+    return field.__get__(instance, type(instance))
 
 
 def _setitem(instance: "Dataclass", key: str, value: typing.Any) -> None:
-    field = instance.__fields__[key]
+    field = instance.__dataclass_fields__[key]
     field.__set__(instance, value)
 
 
@@ -87,7 +88,7 @@ def _frozen_setattr(instance: "Dataclass", key: str, value: Value) -> None:
 
 def _frozen_delattr(instance: "Dataclass", key: str) -> None:
     """Delete an attribute from a frozen dataclass instance."""
-    if key in type(instance).base_to_effective_name_map:
+    if key in type(instance)._name_map:
         raise FrozenInstanceError(
             f"Immutable instance. Cannot delete '{type(instance).__name__}.{key}'."
         ) from None
@@ -125,7 +126,7 @@ def _setstate(
     with deserialization_context(by_name=True):
         instance = load_valid(
             instance,
-            fields=instance.__fields__.values(),
+            fields=instance.__dataclass_fields__.values(),
             data=field_values,
         )
 
@@ -155,7 +156,7 @@ def _hash(instance: "Dataclass") -> int:
         instance_type = type(instance)
         values = []
         for field in instance.__hash_fields__:
-            value = field.__get__(instance, owner=instance_type)
+            value = field.__get__(instance, instance_type)
             if isinstance(value, Iterable) and not isinstance(
                 value, (str, bytes, Mapping)
             ):
@@ -193,8 +194,8 @@ def _eq(instance: "Dataclass", other: typing.Any) -> bool:
 def _iter(instance: "Dataclass") -> typing.Iterator[typing.Tuple[str, typing.Any]]:
     """Iterate over the instance's fields and their values."""
     owner = type(instance)
-    for key, field in instance.__fields__.items():
-        yield key, field.__get__(instance, owner=owner)
+    for key, field in instance.__dataclass_fields__.items():
+        yield key, field.__get__(instance, owner)
 
 
 def _get_ordering_values(
@@ -210,7 +211,7 @@ def _get_ordering_values(
         if (values := instance.__cache__.get(cache_key, None)) is None:
             instance_type = type(instance)
             values = tuple(
-                field.__get__(instance, owner=instance_type)
+                field.__get__(instance, instance_type)
                 for field in instance.__ordering_fields__
             )
             instance.__cache__[cache_key] = values
@@ -218,8 +219,7 @@ def _get_ordering_values(
 
     instance_type = type(instance)
     return tuple(
-        field.__get__(instance, owner=instance_type)
-        for field in instance.__ordering_fields__
+        field.__get__(instance, instance_type) for field in instance.__ordering_fields__
     )
 
 
@@ -382,6 +382,7 @@ class ConfigSchema(typing.TypedDict, total=False):
     If None, use the default behavior of the dataclass."""
 
 
+@typing.final
 class Config(typing.NamedTuple):
     """Configuration for Dataclass types"""
 
@@ -458,8 +459,8 @@ def build_config(
 
     if bases:
         for base in bases:
-            if isinstance(getattr(base, "__config__", None), Config):
-                config.update(base.__config__._asdict())
+            if base_config := getattr(base, "__config__", None):
+                config.update(base_config._asdict())
 
     if class_config:
         config.update(class_config._asdict())
@@ -508,6 +509,26 @@ def build_auxilliary_fields(
     return auxilliary_fields
 
 
+def is_dataclass(cls: typing.Type[typing.Any]) -> bool:
+    return hasattr(cls, "__dataclass_fields__") or issubclass(cls, Dataclass)
+
+
+def type_has_dataclass(typ: typing.Any) -> bool:
+    """
+    Check if a type contains a dataclass.
+
+    :param typ: The type to check.
+    :return: True if the type is a dataclass or contains
+        a dataclass as a field, False otherwise.
+    """
+    if is_generic_type(typ):
+        # Handle generic types like List[Dataclass]
+        return any(
+            type_has_dataclass(arg) for arg in typ.__args__ if isinstance(arg, type)
+        )
+    return is_dataclass(typ)
+
+
 class DataclassMeta(type):
     """Metaclass for Dataclass types"""
 
@@ -535,8 +556,8 @@ class DataclassMeta(type):
         attrs["__config__"] = config
         own_fields: FieldDict = {}
         fields: FieldDict = {}
-        base_to_effective_name_map: NameDict = {}
-        effective_to_base_name_map: NameDict = {}
+        _name_map: NameDict = {}
+        _effective_name_map: NameDict = {}
         parent_slotted_attributes = {}
 
         # Inspect the base classes for fields and borrow them
@@ -547,7 +568,7 @@ class DataclassMeta(type):
                     continue
 
                 inspected.add(cls_)
-                if not (cls_fields := getattr(cls_, "__fields__", None)):
+                if not (cls_fields := getattr(cls_, "__dataclass_fields__", None)):
                     continue
 
                 if config.slots and (
@@ -557,8 +578,8 @@ class DataclassMeta(type):
 
                 # Borrow fields from the base class
                 fields.update(cls_fields)
-                base_to_effective_name_map.update(cls_.base_to_effective_name_map)
-                effective_to_base_name_map.update(cls_.effective_to_base_name_map)
+                _name_map.update(cls_._name_map)
+                _effective_name_map.update(cls_._effective_name_map)
 
         for key, value in attrs.items():
             if isinstance(value, Field):
@@ -566,8 +587,8 @@ class DataclassMeta(type):
                 own_fields[key] = value
                 fields[key] = value
                 effective_name = value.alias or key
-                base_to_effective_name_map[key] = effective_name
-                effective_to_base_name_map[effective_name] = key
+                _name_map[key] = effective_name
+                _effective_name_map[effective_name] = key
 
         auxilliary_fields = build_auxilliary_fields(fields)
         attrs.update(auxilliary_fields)
@@ -675,102 +696,41 @@ class DataclassMeta(type):
                 "Cannot use fields as state attributes. "
                 "State attributes must not overlap with field names."
             )
-        # Make read-only to prevent accidental modification
-        attrs["__fields__"] = MappingProxyType(fields)
-        attrs["base_to_effective_name_map"] = MappingProxyType(
-            base_to_effective_name_map
-        )
-        attrs["effective_to_base_name_map"] = MappingProxyType(
-            effective_to_base_name_map
-        )
+
+        attrs["__dataclass_fields__"] = fields
+        attrs["_name_map"] = _name_map
+        attrs["_effective_name_map"] = _effective_name_map
         new_cls = super().__new__(cls, name, bases, attrs)
         return new_cls
+
+    def __init__(cls, *args: typing.Any, **kwargs: typing.Any) -> None:
+        """
+        Initialize the Dataclass type.
+
+        :param args: Positional arguments passed to the metaclass.
+        :param kwargs: Keyword arguments passed to the metaclass.
+        """
+        super().__init__(*args, **kwargs)
+        # Update the class annotations after all fields defined in the class
+        # have been processed (all forward refs resolved) and bound to the class.
+        fields_annotations = {}
+        for field_name, field in cls.__dataclass_fields__.items():  # type: ignore
+            annotation = field.__get_type_hint__()
+            field._meta["_nested"] = type_has_dataclass(annotation)
+            fields_annotations[field_name] = annotation
+
+        cls_annotations: typing.Dict[str, typing.Any] = getattr(
+            cls, "__annotations__", {}
+        )
+        cls.__annotations__ = {**cls_annotations, **fields_annotations}
+        cls.__fields_annotations__ = fields_annotations
 
 
 class Dataclass(metaclass=DataclassMeta):
     """
     Data description class.
 
-    Define data structures with special descriptors.
-
     Dataclasses are defined by subclassing `Dataclass` and defining fields as class attributes.
-    Dataclasses enforce type coercion, validation, and other behaviors on the fields.
-
-    :param frozen: If True, the dataclass is immutable after creation.
-    :param slots: If True, use __slots__ for instance attribute storage.
-        If a tuple, use as additional slots.
-        If False, use __dict__ for instance attribute storage.
-    :param repr: If True, use dict representation for __repr__ or to use the default.
-    :param str: If True, use dict representation for __str__ or to use the default.
-    :param sort: If True, sort fields by name. If a callable, use as the sort key.
-        If False, do not sort fields.
-    :param hash: If True, add __hash__ method to the class, if it does not exist.
-    :param eq: If True, add __eq__ method to the class, if it does not exist.
-    :param pickleable: If True, adds __getstate__, __setstate__, and __getnewargs__ methods to the class,
-        if they do not exist. If False, do not add these methods.
-    :param getitem: If True, add __getitem__ method to the class.
-    :param setitem: If True, add __setitem__ method to the class.
-
-    Example:
-    ```
-    import attrib
-
-    class Continent(attrib.Dataclass):
-        name = attrib.String()
-        population = attrib.Integer()
-
-
-    class Country(attrib.Dataclass):
-        name = attrib.String()
-        code = attrib.String()
-        population = attrib.Integer()
-        continent = attrib.Nested(Continent)
-
-
-    class City(attrib.Dataclass):
-        name = attrib.String()
-        country = attrib.Nested(Country)
-        population = attrib.Integer()
-        area = attrib.Float()
-        postal_code = attrib.String(allow_null=True, default=None)
-
-
-    africa = Continent(
-        name="Africa",
-        population=1_300_000_000,
-    )
-    kenya = Country(
-        name="Kenya",
-        code="KE",
-        population=50_000_000,
-        continent=africa,
-    )
-    nairobi = City(
-        name="Nairobi",
-        country=kenya,
-        population=4_000_000,
-        area="696.1",
-        postal_code="00100",
-    )
-
-    print(attrib.serialize(nairobi, fmt="json"))
-    # Output:
-    # {
-    #     "name": "Nairobi",
-    #     "country": {
-    #         "name": "Kenya",
-    #         "code": "KE",
-    #         "population": 50000000,
-    #         "continent": {
-    #             "name": "Africa",
-    #             "population": 1300000000,
-    #         }
-    #     },
-    #     "population": 4000000,
-    #     "area": 696.1,
-    #     "postal_code": "00100"
-    # }
-    ```
     """
 
     __slots__: typing.ClassVar[typing.Tuple[str, ...]] = (
@@ -784,23 +744,25 @@ class Dataclass(metaclass=DataclassMeta):
     Attributes to be included in the state of the dataclass when __getstate__ is called,
     usually during pickling
     """
-    __config__: typing.ClassVar[Config] = Config(slots=True)
+    __config__: typing.ClassVar[Config] = Config()
     """Configuration for the dataclass."""
-    __fields__: typing.ClassVar[FieldMap] = {}
+    __dataclass_fields__: typing.ClassVar[FieldMap]
     """Mapping of field names to their corresponding Field instances."""
-    __init_fields__: typing.ClassVar[typing.Tuple[Field[typing.Any], ...]] = ()
+    __init_fields__: typing.ClassVar[typing.Tuple[Field[typing.Any], ...]]
     """Fields to include when instantiating the dataclass."""
-    __repr_fields__: typing.ClassVar[typing.Tuple[Field[typing.Any], ...]] = ()
+    __repr_fields__: typing.ClassVar[typing.Tuple[Field[typing.Any], ...]]
     """Fields to include in the __repr__ method."""
-    __hash_fields__: typing.ClassVar[typing.Tuple[Field[typing.Any], ...]] = ()
+    __hash_fields__: typing.ClassVar[typing.Tuple[Field[typing.Any], ...]]
     """Fields to include in the __hash__ method."""
-    __eq_fields__: typing.ClassVar[typing.Tuple[Field[typing.Any], ...]] = ()
+    __eq_fields__: typing.ClassVar[typing.Tuple[Field[typing.Any], ...]]
     """Fields to include in the __eq__ method."""
-    __ordering_fields__: typing.ClassVar[typing.Tuple[Field[typing.Any], ...]] = ()
+    __ordering_fields__: typing.ClassVar[typing.Tuple[Field[typing.Any], ...]]
     """Fields to include in the ordering methods (__lt__, __le__, __gt__, __ge__)."""
-    base_to_effective_name_map: typing.ClassVar[NameMap] = {}
+    __fields_annotations__: typing.ClassVar[typing.Dict[str, typing.Any]]
+    """Annotations for the fields in the dataclass."""
+    _name_map: typing.ClassVar[NameMap]
     """Mapping of actual field names to effective field names."""
-    effective_to_base_name_map: typing.ClassVar[NameMap] = {}
+    _effective_name_map: typing.ClassVar[NameMap]
     """Mapping of effective field names to actual field names."""
 
     def __new__(cls, *args: typing.Any, **kwargs: typing.Any) -> Self:
@@ -860,7 +822,7 @@ class Dataclass(metaclass=DataclassMeta):
 
     def __init_subclass__(cls, **kwargs: Unpack[ConfigSchema]) -> None:
         """Ensure that subclasses define fields."""
-        if len(cls.__fields__) == 0:
+        if len(cls.__dataclass_fields__) == 0:
             raise ConfigurationError("Dataclasses must define fields")
         return
 
@@ -910,7 +872,7 @@ def load_raw(
     :raises DeserializationError: If there are errors during deserialization.
     :return: This same instance with the raw data loaded.
     """
-    ignore_extras = _ignore_extras.get()
+    ignore_extras = ignore_extras_ctx_var.get()
     if not ignore_extras:
         extra_keys = set(data.keys()) - {field.name for field in fields}
         if extra_keys:
@@ -925,13 +887,13 @@ def load_raw(
                 },
             )
 
-    if _is_valid.get():
+    if is_valid_ctx_var.get():
         return load_valid(instance, fields, data)
 
     error = None
-    fail_fast = _fail_fast.get()
-    by_name = _by_name.get()
-    name_map = type(instance).base_to_effective_name_map
+    fail_fast = fail_fast_ctx_var.get()
+    by_name = by_name_ctx_var.get()
+    name_map = type(instance)._name_map
     for field in fields:
         name: str = field.name  # type: ignore[assignment]
         try:
@@ -986,9 +948,9 @@ def load_valid(
     :param data: Mapping of raw data to initialize the dataclass instance with.
     :return: This same instance with the raw data loaded and validated.
     """
-    by_name = _by_name.get()
+    by_name = by_name_ctx_var.get()
     fields_set = instance.__fields_set__
-    name_map = type(instance).base_to_effective_name_map
+    name_map = type(instance)._name_map
     for field in fields:
         name: str = field.name  # type: ignore[assignment]
         if by_name:
@@ -1005,9 +967,12 @@ def load_valid(
                     field.set_default(instance)
                     continue
 
-        field.set_value(
-            instance, value, lazy=not field.always_coerce, is_lazy_valid=True
-        )  # Bypass coercion and validation
+        field._set_value(
+            instance,
+            value,
+            lazy=not field.always_coerce,
+            is_lazy_valid=True,
+        )  # Bypass coercion and validation, except for fields with `always_coerce=True`
         fields_set.add(name)
     return instance
 
@@ -1024,8 +989,8 @@ def _from_attributes(
     :return: The dataclass instance.
     """
     values = {}
-    by_name = _by_name.get()
-    name_map = dataclass_.base_to_effective_name_map
+    by_name = by_name_ctx_var.get()
+    name_map = dataclass_._name_map
     for field in dataclass_.__init_fields__:
         name: str = field.name  # type: ignore[assignment]
         if by_name:
@@ -1139,12 +1104,12 @@ def copy(
     ):
         new_instance = setstate((field_values, attributes))
         if update:
-            fields = instance.__fields__
+            fields = instance.__dataclass_fields__
             normalized_update: DataDict = {}
             update_fields = []
             for key, value in update.items():
-                if key in instance.effective_to_base_name_map:
-                    name = instance.effective_to_base_name_map[key]
+                if key in instance._effective_name_map:
+                    name = instance._effective_name_map[key]
                     normalized_update[name] = value
                     update_fields.append(fields[name])
                 else:
@@ -1161,32 +1126,31 @@ def copy(
 
 
 def get_field(
-    cls: typing.Type[Dataclass],
-    field_name: str,
-) -> typing.Optional[Field]:
+    cls: typing.Type[Dataclass], name: str
+) -> typing.Optional[Field[typing.Any]]:
     """
     Get a field by its name.
 
     :param cls: The Dataclass type to search in.
-    :param field_name: The name of the field to retrieve.
+    :param name: The name of the field to retrieve.
     :return: The field instance or None if not found.
     """
-    field = cls.__fields__.get(field_name, None)
-    if field is None and field_name in cls.effective_to_base_name_map:
-        field_name = cls.effective_to_base_name_map[field_name]
-        field = cls.__fields__.get(field_name, None)
+    field = cls.__dataclass_fields__.get(name, None)
+    if field is None and name in cls._effective_name_map:
+        actual_name = cls._effective_name_map[name]
+        field = cls.__dataclass_fields__.get(actual_name, None)
     return field
 
 
-def get_fields(cls: typing.Type[Dataclass]) -> typing.Dict[str, Field[typing.Any]]:
+def get_fields(cls: typing.Type[typing.Any]) -> typing.Dict[str, Field[typing.Any]]:
     """
     Inspect and retrieve all data fields from a class.
 
     :param cls: The class to inspect.
     :return: A dictionary of field names and their corresponding Field instances.
     """
-    if issubclass(cls, Dataclass) or hasattr(cls, "__fields__"):
-        return dict(cls.__fields__)
+    if is_dataclass(cls):
+        return dict(cls.__dataclass_fields__)
 
     fields = {}
     for key, value in cls.__dict__.items():

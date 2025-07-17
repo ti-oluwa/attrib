@@ -1,8 +1,8 @@
 import typing
 from typing_extensions import Unpack
 
-from attrib._typing import Context
-from attrib.descriptors.base import Field, String, FieldKwargs
+from attrib.types import Context
+from attrib.descriptors.base import Field, String, FieldKwargs, no_op_serializer
 from phonenumbers import (  # type: ignore[import]
     PhoneNumber as PhoneNumberType,
     parse as parse_number,
@@ -17,8 +17,7 @@ def phone_number_serializer(
     context: Context,
 ) -> str:
     """Serialize a phone number object to a string format."""
-    output_format = typing.cast(int, field.output_format)
-    return format_number(value, output_format)
+    return format_number(value, field.output_format)
 
 
 def phone_number_deserializer(
@@ -54,14 +53,6 @@ class PhoneNumber(Field[PhoneNumberType]):
         self.output_format = output_format or self.default_output_format
 
 
-def phone_number_string_serializer(
-    value: PhoneNumberType,
-    field: "PhoneNumberString",
-    context: Context,
-) -> str:
-    """Serialize a phone number object to a string format."""
-    return format_number(value, field.output_format)
-
 
 def phone_number_string_deserializer(
     value: typing.Any,
@@ -76,7 +67,9 @@ class PhoneNumberString(String):
 
     default_output_format: typing.ClassVar[int] = PhoneNumberFormat.E164
     default_serializers = {
-        "json": phone_number_string_serializer,
+        # Phonenumber string would have already been parsed to a string in output format,
+        # so we can use the python serializer (that returns the string as is)
+        "json": no_op_serializer, 
     }
     default_deserializer = phone_number_string_deserializer
 

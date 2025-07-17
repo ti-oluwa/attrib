@@ -6,7 +6,7 @@ import quantities as pq
 
 from attrib.descriptors.base import Field, FieldKwargs
 from attrib.exceptions import FieldError
-from attrib._typing import Context
+from attrib.types import Context
 
 
 __all__ = [
