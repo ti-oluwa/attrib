@@ -49,6 +49,8 @@ Proper documentation and tests will be included soon, but you can check the [exa
 
 uv sync --extra dev
 
+uv add tzdata
+
 uv run --python 3.10 examples/main.py 1000 -OO -B
 ```
 
