@@ -34,13 +34,13 @@ Next, ensure you have python installed. If you do not, run these commands.
 Check available python versions:
 
 ```bash
-uv install python --list
+uv python list
 ```
 
 Install version of choice:
 
 ```bash
-uv install python <version>
+uv python install <version>
 ```
 
 Proper documentation and tests will be included soon, but you can check the [examples](/examples) directory for usage patterns, or run:
