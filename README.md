@@ -35,12 +35,14 @@ Sync dependencies:
 
 ```bash
 uv sync --dev
+
+uv add tzdata
 ```
 
 Run examples:
 
 ```bash
-uv run python examples/main.py
+uv run --python 3.10 examples/main.py 1000 -OO -B
 ```
 
 ## Getting Started
