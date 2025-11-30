@@ -1,7 +1,8 @@
-import typing
-import sys
-from typing_extensions import Self
 from contextlib import contextmanager
+import sys
+import typing
+
+from typing_extensions import Self
 
 from attrib.types import Context
 
@@ -75,7 +76,7 @@ class ErrorDetail(typing.NamedTuple):
     """Error code for the error detail."""
     context: typing.Optional[Context] = None
     """Context dictionary for additional information."""
-    origin: typing.Optional[Exception] = None
+    origin: typing.Optional[BaseException] = None
     """Original exception that caused the error, if any."""
 
     def as_string(self) -> str:
@@ -146,8 +147,8 @@ class DetailedError(AttribException):
         input_type: typing.Optional[typing.Any] = None,
         location: typing.Optional[typing.List[typing.Any]] = None,
         code: typing.Optional[str] = None,
-        context: typing.Optional[typing.Dict[str, typing.Any]] = None,
-        origin: typing.Optional[Exception] = None,
+        context: typing.Optional[Context] = None,
+        origin: typing.Optional[BaseException] = None,
     ) -> None:
         """
         Initialize a `DetailedError`.
@@ -182,8 +183,8 @@ class DetailedError(AttribException):
         expected_type: typing.Optional[typing.Any] = None,
         input_type: typing.Optional[typing.Any] = None,
         code: typing.Optional[str] = None,
-        context: typing.Optional[typing.Dict[str, typing.Any]] = None,
-        origin: typing.Optional[Exception] = None,
+        context: typing.Optional[Context] = None,
+        origin: typing.Optional[BaseException] = None,
     ) -> None:
         """
         Add a new error detail directly to the error list.
@@ -210,7 +211,7 @@ class DetailedError(AttribException):
     @classmethod
     def from_exception(
         cls,
-        exception: Exception,
+        exception: BaseException,
         *,
         message: typing.Optional[str] = None,
         parent_name: typing.Optional[str] = None,
@@ -218,7 +219,7 @@ class DetailedError(AttribException):
         input_type: typing.Optional[typing.Any] = None,
         location: typing.Optional[typing.List[typing.Any]] = None,
         code: typing.Optional[str] = None,
-        context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+        context: typing.Optional[Context] = None,
     ) -> Self:
         """
         Create a detailed error from any exception type.
@@ -290,7 +291,7 @@ class DetailedError(AttribException):
         input_type: typing.Optional[typing.Any] = None,
         location: typing.Optional[typing.List[typing.Any]] = None,
         code: typing.Optional[str] = None,
-        context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+        context: typing.Optional[Context] = None,
     ) -> None:
         """
         Add an exception as a new error detail.
@@ -415,7 +416,7 @@ class ValidationError(DetailedError):
         input_type: typing.Optional[typing.Any] = None,
         location: typing.Optional[typing.List[typing.Any]] = None,
         code: typing.Optional[str] = None,
-        context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+        context: typing.Optional[Context] = None,
         origin: typing.Optional[Exception] = None,
     ) -> None:
         super().__init__(
@@ -442,7 +443,7 @@ class SerializationError(DetailedError):
         input_type: typing.Optional[typing.Any] = None,
         location: typing.Optional[typing.List[typing.Any]] = None,
         code: typing.Optional[str] = None,
-        context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+        context: typing.Optional[Context] = None,
         origin: typing.Optional[Exception] = None,
     ) -> None:
         super().__init__(
@@ -469,7 +470,7 @@ class DeserializationError(DetailedError):
         input_type: typing.Optional[typing.Any] = None,
         location: typing.Optional[typing.List[typing.Any]] = None,
         code: typing.Optional[str] = None,
-        context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+        context: typing.Optional[Context] = None,
         origin: typing.Optional[Exception] = None,
     ) -> None:
         super().__init__(
@@ -496,7 +497,7 @@ class InvalidTypeError(DeserializationError):
         input_type: typing.Optional[typing.Any] = None,
         location: typing.Optional[typing.List[typing.Any]] = None,
         code: typing.Optional[str] = None,
-        context: typing.Optional[typing.Dict[str, typing.Any]] = None,
+        context: typing.Optional[Context] = None,
         origin: typing.Optional[Exception] = None,
     ) -> None:
         super().__init__(

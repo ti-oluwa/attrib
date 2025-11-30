@@ -1,12 +1,14 @@
 import numbers
 import typing
-from typing_extensions import Self, ParamSpec, TypeAlias
+
+from typing_extensions import ParamSpec, Self, TypeAlias
 
 P = ParamSpec("P")
 R = typing.TypeVar("R")
 T = typing.TypeVar("T")
 V = typing.TypeVar("V")
 Tco = typing.TypeVar("Tco", covariant=True)
+T_con = typing.TypeVar("T_con", contravariant=True)
 
 
 class KwArg(typing.Protocol[Tco]):
@@ -31,10 +33,11 @@ JSONDict: TypeAlias = typing.Dict[str, "JSONValue"]
 JSONList: TypeAlias = typing.List["JSONValue"]
 JSONNamedDataTuple: TypeAlias = typing.Tuple[typing.Tuple[str, "JSONValue"], ...]
 
-Context: TypeAlias = typing.Dict[str, typing.Any]
+Context: TypeAlias = typing.MutableMapping[str, typing.Any]
 NoneType = type(None)
 
 RealNumberT = typing.TypeVar("RealNumberT", bound=numbers.Real)
+
 
 class SupportsRichComparison(typing.Protocol):
     def __lt__(self, other: typing.Any, /) -> bool: ...
@@ -46,7 +49,11 @@ class SupportsRichComparison(typing.Protocol):
 
 
 Serializer: TypeAlias = typing.Callable[..., R]
+"""A serializer takes in a value, an optional adapter, and any other args and kwargs, and returns a serialized representation of the value."""
 Deserializer: TypeAlias = typing.Callable[..., R]
+"""A deserializer takes in a value, an optional adapter, and any other args and kwargs, and returns a deserialized representation of the value."""
+SerializerMap: TypeAlias = typing.Mapping[str, Serializer[typing.Any]]
+"""A mapping of format names to serializer callables."""
 
 
 @typing.runtime_checkable
@@ -54,7 +61,10 @@ class TypeAdapter(typing.Generic[Tco], typing.Protocol):
     """
     Type adapter protocol.
 
-    A type adapter is a pseudo-type. It defines type-like behavior using 3 methods:
+    A type adapter is a pseudo-type. It defines type-like behavior using 5 methods:
+
+    - build: Builds any necessary components for the type adapter to function
+    - check_type: Checks if the value is of the adapted type
     - validate: Validates the value
     - serialize: Serializes the value to a specific format
     - deserialize: Coerces the value to a specific type
@@ -69,6 +79,15 @@ class TypeAdapter(typing.Generic[Tco], typing.Protocol):
     ) -> None:
         """
         Builds any necessary components or itenaries for the type adapter to function.
+        """
+        ...
+
+    def check_type(self, value: typing.Any) -> bool:
+        """
+        Check if the value is of the adapted type.
+
+        :param value: The value to check
+        :return: True if the value is of the adapted type, False otherwise
         """
         ...
 
@@ -96,7 +115,7 @@ class TypeAdapter(typing.Generic[Tco], typing.Protocol):
 
 
 @typing.runtime_checkable
-class Validator(typing.Generic[Tco], typing.Protocol):
+class Validator(typing.Generic[T_con], typing.Protocol):
     """
     Validator protocol.
 
@@ -108,9 +127,7 @@ class Validator(typing.Generic[Tco], typing.Protocol):
     def __call__(
         self,
         value: typing.Any,
-        adapter: typing.Optional[
-            typing.Union[TypeAdapter[Tco], TypeAdapter[typing.Any]]
-        ],
+        adapter: typing.Optional[TypeAdapter[T_con]],
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
@@ -152,3 +169,20 @@ class Empty:
 
 
 EMPTY = Empty()
+
+
+@typing.final
+class AnyType:
+    """Type representing any type."""
+
+    def __init_subclass__(cls):
+        raise TypeError("AnyType cannot be subclassed.")
+
+    def __new__(cls):
+        raise TypeError("AnyType cannot be instantiated.")
+
+    def __instancecheck__(self, instance: typing.Any) -> bool:
+        return True
+
+    def __subclasscheck__(self, subclass: typing.Type[typing.Any]) -> bool:
+        return True

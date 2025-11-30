@@ -1,17 +1,16 @@
 from collections.abc import Sequence
-import typing
 import numbers
-from typing_extensions import Unpack
+import typing
+
 import quantities as pq
+from typing_extensions import Unpack
 
 from attrib.descriptors.base import Field, FieldKwargs
 from attrib.exceptions import FieldError
 from attrib.types import Context
 
 
-__all__ = [
-    "Quantity",
-]
+__all__ = ["Quantity"]
 
 
 def _quantity_from_parts(
@@ -112,8 +111,8 @@ class Quantity(Field[pq.Quantity]):
         super().__init__(field_type=pq.Quantity, **kwargs)
         self.unit = unit
 
-    def post_init(self) -> None:
-        super().post_init()
+    def __post_init__(self) -> None:
+        super().__post_init__()
         if self.unit is not None:
             try:
                 pq.quantity.validate_dimensionality(self.unit)

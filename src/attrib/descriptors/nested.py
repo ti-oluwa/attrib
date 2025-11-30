@@ -1,18 +1,14 @@
 from types import MappingProxyType
 import typing
+
 from typing_extensions import Unpack
 
-from attrib.descriptors.base import Field, FieldKwargs, NonTupleFieldType
-from attrib.dataclass import Dataclass
-from attrib.serializers import asdict
 from attrib._utils import is_iterable
+from attrib.dataclass import Dataclass
+from attrib.descriptors.base import Field, FieldKwargs, NonTupleFieldType
 from attrib.exceptions import FieldError
-from attrib.types import (
-    JSONDict,
-    JSONNamedDataTuple,
-    DataDict,
-    Context,
-)
+from attrib.serializers import _asdict
+from attrib.types import Context, DataDict, JSONDict, JSONNamedDataTuple
 
 __all__ = [
     "Nested",
@@ -29,7 +25,7 @@ def nested_json_serializer(
     field: Field[DataclassTco],
     context: Context,
 ) -> typing.Union[JSONDict, JSONNamedDataTuple]:
-    return asdict(instance, context=context, fmt="json")
+    return _asdict(instance, context=context, fmt="json")
 
 
 def nested_python_serializer(
@@ -37,7 +33,7 @@ def nested_python_serializer(
     field: Field[DataclassTco],
     context: Context,
 ) -> DataDict:
-    return asdict(instance, context=context, fmt="python")
+    return _asdict(instance, context=context, fmt="python")
 
 
 dataclass_serializers = MappingProxyType(
@@ -65,8 +61,8 @@ class Nested(Field[DataclassT]):
         """
         super().__init__(nested, **kwargs)
 
-    def post_init(self) -> None:
-        super().post_init()
+    def __post_init__(self) -> None:
+        super().__post_init__()
         field_type = typing.cast(NonTupleFieldType[DataclassT], self.field_type)
         if isinstance(field_type, (typing.ForwardRef, str)):
             return

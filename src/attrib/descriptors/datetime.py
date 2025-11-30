@@ -1,17 +1,17 @@
-import typing
 import datetime
+import typing
+
 from typing_extensions import Unpack
+
+from attrib._utils import iso_parse, parse_duration, string_serializer
+from attrib.descriptors.base import Field, FieldKwargs
+from attrib.exceptions import DeserializationError
+from attrib.types import Context
 
 try:
     import zoneinfo  # type: ignore[import]
 except ImportError:
     from backports import zoneinfo  # type: ignore[import]
-
-
-from attrib.descriptors.base import Field, FieldKwargs, string_serializer
-from attrib.types import Context
-from attrib._utils import iso_parse, parse_duration, _LRUCache
-from attrib.exceptions import DeserializationError
 
 
 __all__ = [
@@ -24,7 +24,7 @@ __all__ = [
 
 
 def timedelta_deserializer(
-    value: typing.Any, field: Field[typing.Any]
+    value: typing.Any, field: Field[typing.Any], *args: typing.Any, **kwargs: typing.Any
 ) -> datetime.timedelta:
     """Deserialize duration data to time delta."""
     duration = parse_duration(value)
@@ -54,7 +54,7 @@ TimeDelta = Duration
 
 
 def timezone_deserializer(
-    value: typing.Any, field: Field[typing.Any]
+    value: typing.Any, field: Field[typing.Any], *args: typing.Any, **kwargs: typing.Any
 ) -> zoneinfo.ZoneInfo:
     """Deserialize timezone data to `zoneinfo.ZoneInfo` object."""
     return zoneinfo.ZoneInfo(value)
@@ -82,11 +82,13 @@ def datetime_serializer(
     value: DatetimeType,
     field: "DateTimeBase[DatetimeType]",
     context: Context,
+    *args: typing.Any,
+    **kwargs: typing.Any,
 ) -> str:
     """Serialize a datetime object to a string."""
     if not field.output_format:
-        return value.isoformat()
-    return value.strftime(field.output_format)
+        return value.isoformat()  # type: ignore[misc]
+    return value.strftime(field.output_format)  # type: ignore[misc]
 
 
 class DateTimeBase(Field[DatetimeType]):
@@ -119,7 +121,7 @@ class DateTimeBase(Field[DatetimeType]):
         self.output_format = output_format
 
 
-_datetime_cache = _LRUCache[str, datetime.datetime](maxsize=128)
+_datetime_cache = {}
 
 
 def cached_iso_parse(
@@ -139,14 +141,20 @@ def cached_iso_parse(
 
 
 def iso_date_deserializer(
-    value: str, field: DateTimeBase[datetime.date]
+    value: str,
+    field: DateTimeBase[datetime.date],
+    *args: typing.Any,
+    **kwargs: typing.Any,
 ) -> datetime.date:
     """Parse a date string in ISO format."""
     return cached_iso_parse(value, fmt=field.input_formats).date()
 
 
 def iso_time_deserializer(
-    value: str, field: DateTimeBase[datetime.time]
+    value: str,
+    field: DateTimeBase[datetime.time],
+    *args: typing.Any,
+    **kwargs: typing.Any,
 ) -> datetime.time:
     """Parse a time string in ISO format."""
     return cached_iso_parse(value, fmt=field.input_formats).time()
@@ -193,7 +201,10 @@ class Time(DateTimeBase[datetime.time]):
 
 
 def datetime_deserializer(
-    value: str, field: DateTimeBase[datetime.datetime]
+    value: str,
+    field: DateTimeBase[datetime.datetime],
+    *args: typing.Any,
+    **kwargs: typing.Any,
 ) -> datetime.datetime:
     """Parse a datetime string in ISO format."""
     return cached_iso_parse(value, fmt=field.input_formats)

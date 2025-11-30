@@ -130,15 +130,15 @@ converter = configure_converters()
 AttrsclassT = typing.TypeVar("AttrsclassT")
 
 
-def load_data(
+def load(
     data_list: typing.List[typing.Dict[str, typing.Any]], cls: typing.Type[AttrsclassT]
 ) -> typing.List[AttrsclassT]:
     return [converter.structure(data, cls) for data in data_list]
 
 
-years = load_data(year_data, AcademicYear)
-courses = load_data(course_data, Course)
-students = load_data(student_data, Student)
+years = load(year_data, AcademicYear)
+courses = load(course_data, Course)
+students = load(student_data, Student)
 
 
 def example():
@@ -153,6 +153,6 @@ def example():
 
 
 @timeit("attrs + cattrs")
-def test(n: int) -> None:
+def test(n: int, mode: str = "python") -> None:
     for _ in range(n):
         example()

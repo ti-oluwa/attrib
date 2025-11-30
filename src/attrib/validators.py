@@ -1,15 +1,16 @@
 import inspect
-import typing
 import operator
-import re
 import os
 import pathlib
+import re
+import typing
+
 from annotated_types import MinLen
 from typing_extensions import Annotated, Self, TypeAlias
 
-from attrib.types import SupportsRichComparison, Validator, TypeAdapter
 from attrib._utils import is_iterable, is_mapping
 from attrib.exceptions import ValidationError
+from attrib.types import SupportsRichComparison, TypeAdapter, Validator
 
 
 Bound: TypeAlias = SupportsRichComparison
@@ -33,7 +34,7 @@ class Pipeline(typing.NamedTuple):
     def __call__(
         self,
         value: typing.Any,
-        adapter: typing.Optional[TypeAdapter] = None,
+        adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
@@ -95,8 +96,8 @@ class Pipeline(typing.NamedTuple):
                             *other.validators,
                         }
                     )
-                )
-            return self.__class__(tuple({*self.validators, other}))
+                )  # type: ignore[return-value]
+            return self.__class__(tuple({*self.validators, other}))  # type: ignore[return-value]
         return NotImplemented
 
 
@@ -119,7 +120,7 @@ class Or(typing.NamedTuple):
     def __call__(
         self,
         value: typing.Any,
-        adapter: typing.Optional[TypeAdapter] = None,
+        adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
@@ -176,8 +177,8 @@ class Or(typing.NamedTuple):
                             *other.validators,
                         }
                     )
-                )
-            return self.__class__(tuple({*self.validators, other}))
+                )  # type: ignore[return-value]
+            return self.__class__(tuple({*self.validators, other}))  # type: ignore[return-value]
         return NotImplemented
 
 
@@ -206,20 +207,18 @@ class FieldValidator(typing.NamedTuple):
     def __call__(
         self,
         value: typing.Any,
-        adapter: typing.Optional[TypeAdapter] = None,
-        instance: typing.Optional[typing.Any] = None,
-        fail_fast: bool = False,
+        adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
+        *args: typing.Any,
+        **kwargs: typing.Any,
     ) -> None:
-        msg = self.message or "Field validation failed."
-        name = getattr(adapter, "name", None)
         try:
-            self.func(
-                value,
-                adapter,
-                instance,
-                fail_fast=fail_fast,
-            )
+            self.func(value, adapter, *args, **kwargs)
         except ValueError as exc:
+            msg = self.message or "Field validation failed."
+            name = getattr(adapter, "name", None)
+            instance = kwargs.get("instance", None)
+            if instance is None and args:
+                instance = args[0]
             raise ValidationError.from_exception(
                 exc,
                 message=msg,
@@ -243,16 +242,16 @@ class FieldValidator(typing.NamedTuple):
 
     def __and__(self, other: typing.Any) -> "FieldValidator":
         if isinstance(other, Validator):
-            return pipe(self, other)
+            return pipe(self, other)  # type: ignore[arg-type]
         return NotImplemented
 
     def __or__(self, other: typing.Any) -> "FieldValidator":
         if isinstance(other, Validator):
-            return or_(self, other)
+            return or_(self, other)  # type: ignore[arg-type]
         return NotImplemented
 
     def __not__(self) -> "FieldValidator":
-        return FieldValidator(not_(self))
+        return FieldValidator(not_(self))  # type: ignore[arg-type]
 
 
 def load(*validators: Validator) -> typing.Tuple[FieldValidator, ...]:
@@ -302,7 +301,9 @@ def pipe(
     return FieldValidator(Pipeline(tuple(aggregate)), message)
 
 
-def or_(*validators: Validator, message: typing.Optional[str] = None) -> FieldValidator:
+def or_(
+    *validators: Validator[typing.Any], message: typing.Optional[str] = None
+) -> FieldValidator:
     """
     Builds an OR validator.
 
@@ -361,7 +362,7 @@ def number_validator_factory(
 
         def validator(
             value: typing.Any,
-            adapter: typing.Optional[typing.Any] = None,
+            adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
             *args: typing.Any,
             **kwargs: typing.Any,
         ) -> None:
@@ -417,7 +418,7 @@ eq = number_validator_factory(operator.eq, "=")
 """Validates that the value is equal to the bound."""
 
 
-def number_range(
+def range_(
     min_val: SupportsRichComparison,
     max_val: SupportsRichComparison,
     message: typing.Optional[str] = None,
@@ -436,7 +437,7 @@ def number_range(
 
     def validator(
         value: typing.Any,
-        adapter: typing.Optional[typing.Any] = None,
+        adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
@@ -466,7 +467,7 @@ def number_range(
                 },
             )
 
-    validator.__name__ = f"number_range({min_val},{max_val})"
+    validator.__name__ = f"range_({min_val},{max_val})"
     return validator
 
 
@@ -500,7 +501,7 @@ def length_validator_factory(
 
         def validator(
             value: Countable,
-            adapter: typing.Optional[typing.Any] = None,
+            adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
             *args: typing.Any,
             **kwargs: typing.Any,
         ) -> None:
@@ -516,6 +517,16 @@ def length_validator_factory(
             :return: None if the comparison passes
             """
             nonlocal msg
+
+            if not hasattr(value, "__len__"):
+                name = getattr(adapter, "name", None)
+                raise ValidationError(
+                    f"Value of type {type(value).__name__} is not countable.",
+                    expected_type="countable",
+                    input_type=type(value),
+                    location=[name],
+                    code="not_countable",
+                )
 
             if comparison_func(len(value), bound):
                 return
@@ -579,7 +590,7 @@ def pattern(
     valid_funcs = (re.fullmatch, None, re.search, re.match)
     if func not in valid_funcs:
         msg = "'func' must be one of {}.".format(
-            ", ".join(sorted((e and e.__name__) or "None" for e in set(valid_funcs)))
+            ", ".join(sorted((e and e.__name__) or "None" for e in set(valid_funcs)))  # type: ignore[attr-defined]
         )
         raise ValueError(msg)
 
@@ -589,7 +600,7 @@ def pattern(
             raise TypeError(msg)
         pattern = regex
     else:
-        pattern = re.compile(regex, flags)
+        pattern = re.compile(regex, flags)  # type: ignore[arg-type]
 
     if func is re.match:
         match_func = pattern.match
@@ -602,7 +613,7 @@ def pattern(
 
     def validator(
         value: typing.Any,
-        adapter: typing.Optional[typing.Any] = None,
+        adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
@@ -658,7 +669,7 @@ def instance_of(
 
     def validator(
         value: typing.Any,
-        adapter: typing.Optional[typing.Any] = None,
+        adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
@@ -715,7 +726,7 @@ def subclass_of(
 
     def validator(
         value: typing.Any,
-        adapter: typing.Optional[typing.Any] = None,
+        adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
@@ -752,7 +763,7 @@ def subclass_of(
     return validator
 
 
-def optional(validator: Validator) -> Validator[typing.Any]:
+def optional(validator: Validator[typing.Any]) -> Validator[typing.Any]:
     """
     Builds a validator that applies the given validator only if the value is not `None`.
 
@@ -764,7 +775,7 @@ def optional(validator: Validator) -> Validator[typing.Any]:
 
     def optional_validator(
         value: typing.Any,
-        adapter: typing.Optional[typing.Any] = None,
+        adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
@@ -809,7 +820,7 @@ def member_of(
 
     def validator(
         value: typing.Any,
-        adapter: typing.Optional[typing.Any] = None,
+        adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
@@ -848,6 +859,57 @@ def member_of(
 in_ = member_of
 
 
+def is_(
+    expected_value: typing.Any,
+    message: typing.Optional[str] = None,
+) -> Validator[typing.Any]:
+    """
+    Builds a validator that checks if a value is equal to the expected value.
+
+    :param expected_value: The expected value
+    :param message: Error message template
+    :return: A validator function
+    """
+    msg = message or "Value must be equal to {expected_value!r}."
+
+    def validator(
+        value: typing.Any,
+        adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
+        *args: typing.Any,
+        **kwargs: typing.Any,
+    ) -> None:
+        """
+        Equality check validator.
+
+        Checks if the value is equal to the expected value.
+
+        :param value: The value to validate
+        :param adapter: The type adapter being used
+        :raises ValidationError: If the value is not equal to the expected value
+        :return: None if the value is equal to the expected value
+        """
+        nonlocal msg
+
+        if value is not expected_value:
+            name = getattr(adapter, "name", None)
+            raise ValidationError(
+                msg.format_map(
+                    {
+                        "expected_value": expected_value,
+                        "value": value,
+                        "name": name,
+                    }
+                ),
+                expected_type=type(expected_value),
+                input_type=type(value),
+                location=[name],
+                code="value_not_equal",
+            )
+
+    validator.__name__ = f"is({expected_value!r})"
+    return validator
+
+
 def not_(
     validator: Validator,
     message: typing.Optional[str] = None,
@@ -867,7 +929,7 @@ def not_(
 
     def negate_validator(
         value: typing.Any,
-        adapter: typing.Optional[typing.Any] = None,
+        adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
@@ -912,7 +974,7 @@ and_ = pipe
 
 def is_callable(
     value: typing.Any,
-    adapter: typing.Optional[typing.Any] = None,
+    adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
     *args: typing.Any,
     **kwargs: typing.Any,
 ) -> None:
@@ -957,7 +1019,7 @@ def value_validator(
 
     def validator_wrapper(
         value: typing.Any,
-        adapter: typing.Optional[typing.Any] = None,
+        adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
@@ -979,7 +1041,7 @@ def value_validator(
             )
         return
 
-    validator_wrapper.__name__ = f"validate_value({func.__name__})"
+    validator_wrapper.__name__ = f"validate_value({func.__name__})"  # type: ignore[attr-defined]
     validator_wrapper.__doc__ = func.__doc__
     return validator_wrapper
 
@@ -1166,8 +1228,8 @@ def path(
 
 
 def mapping(
-    key_validator: typing.Optional[Validator],
-    value_validator: typing.Optional[Validator],
+    key_validator: typing.Optional[Validator[typing.Hashable]],
+    value_validator: typing.Optional[Validator[typing.Any]],
     *,
     deep: bool = False,
     message: typing.Optional[str] = None,
@@ -1194,7 +1256,7 @@ def mapping(
 
     def validate_mapping(
         value: typing.Any,
-        adapter: typing.Optional[typing.Any] = None,
+        adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
@@ -1246,7 +1308,7 @@ def mapping(
 
     def deep_validate_mapping(
         value: typing.Any,
-        adapter: typing.Optional[typing.Any] = None,
+        adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
@@ -1275,7 +1337,7 @@ def mapping(
         # Use iterative approach to avoid recursion limit issues
         # when dealing with deeply nested mappings. May be more
         # efficient than recursion in some cases.
-        stack = list([value])
+        stack = [value]
         while stack:
             current_value = stack.pop()
             for key, val in current_value.items():
@@ -1290,7 +1352,12 @@ def mapping(
                             input_type=type(key),
                             code="key_validation_failed",
                         )
-                if value_validator:
+
+                if is_mapping(val):
+                    # Add nested mapping to stack for further processing
+                    stack.append(val)
+                elif value_validator:
+                    # Only validate leaf values (non-mappings)
                     try:
                         value_validator(val, adapter, *args, **kwargs)
                     except (ValidationError, ValueError) as exc:
@@ -1302,14 +1369,11 @@ def mapping(
                             code="value_validation_failed",
                         )
 
-                if is_mapping(val):
-                    stack.append(val)
-
     return deep_validate_mapping if deep else validate_mapping
 
 
 def iterable(
-    child_validator: Validator,
+    child_validator: Validator[typing.Any],
     *,
     deep: bool = False,
     message: typing.Optional[str] = None,
@@ -1331,7 +1395,7 @@ def iterable(
 
     def validate_iterable(
         value: typing.Any,
-        adapter: typing.Optional[typing.Any] = None,
+        adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
@@ -1369,7 +1433,7 @@ def iterable(
 
     def deep_validate_iterable(
         value: typing.Any,
-        adapter: typing.Optional[typing.Any] = None,
+        adapter: typing.Optional[TypeAdapter[typing.Any]] = None,
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> None:
@@ -1397,20 +1461,23 @@ def iterable(
         # Use iterative approach to avoid recursion limit issues
         # when dealing with deeply nested iterables. May be more
         # efficient than recursion in some cases.
-        stack = list([value, []])
+        stack = [(value, [])]
         while stack:
             current_value, parent_indices = stack.pop()
             for index, item in enumerate(current_value):
-                try:
-                    child_validator(item, adapter, *args, **kwargs)
-                except (ValidationError, ValueError) as exc:
-                    raise ValidationError.from_exception(
-                        exc,
-                        message="Item validation failed",
-                        location=[name, *parent_indices, index],
-                        input_type=type(item),
-                    )
                 if is_iterable(item):
+                    # Add nested iterable to stack for further processing
                     stack.append((item, [*parent_indices, index]))
+                else:
+                    # Only validate leaf items (non-iterables)
+                    try:
+                        child_validator(item, adapter, *args, **kwargs)
+                    except (ValidationError, ValueError) as exc:
+                        raise ValidationError.from_exception(
+                            exc,
+                            message="Item validation failed",
+                            location=[name, *parent_indices, index],
+                            input_type=type(item),
+                        )
 
     return deep_validate_iterable if deep else validate_iterable

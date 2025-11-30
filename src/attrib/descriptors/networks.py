@@ -1,7 +1,8 @@
-import typing
 import ipaddress
+import typing
+from urllib.parse import ParseResult as Url, ParseResultBytes as UrlBytes, urlparse
+
 from typing_extensions import Unpack
-from urllib.parse import urlparse, ParseResult as Url, ParseResultBytes as UrlBytes
 
 from attrib.descriptors.base import Field, FieldKwargs, string_serializer
 from attrib.exceptions import ValidationError
@@ -10,6 +11,8 @@ from attrib.exceptions import ValidationError
 __all__ = [
     "URL",
     "IPAddress",
+    "IPNetwork",
+    "IPInterface",
     "allowed_schemes",
     "allowed_hosts",
     "allowed_ports",
@@ -39,7 +42,7 @@ class URL(Field[typing.Union[Url, UrlBytes]]):
 def ip_address_deserializer(
     value: typing.Any,
     field: Field[typing.Any],
-) -> typing.Any:
+) -> typing.Union[ipaddress.IPv4Address, ipaddress.IPv6Address]:
     """Deserialize IP address data to an IP address object."""
     return ipaddress.ip_address(value)
 
@@ -60,6 +63,66 @@ class IPAddress(Field[typing.Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
             field_type=(
                 ipaddress.IPv4Address,
                 ipaddress.IPv6Address,
+            ),
+            **kwargs,
+        )
+
+
+def ip_network_deserializer(
+    value: typing.Any,
+    field: Field[typing.Any],
+) -> typing.Union[ipaddress.IPv4Network, ipaddress.IPv6Network]:
+    """Deserialize IP network data to an IP network object."""
+    return ipaddress.ip_network(value)
+
+
+class IPNetwork(Field[typing.Union[ipaddress.IPv4Network, ipaddress.IPv6Network]]):
+    """Field for handling IP networks."""
+
+    default_serializers = {
+        "json": string_serializer,
+    }
+    default_deserializer = ip_network_deserializer
+
+    def __init__(
+        self,
+        **kwargs: Unpack[FieldKwargs],
+    ):
+        super().__init__(
+            field_type=(
+                ipaddress.IPv4Network,
+                ipaddress.IPv6Network,
+            ),
+            **kwargs,
+        )
+
+
+def ip_interface_deserializer(
+    value: typing.Any,
+    field: Field[typing.Any],
+) -> typing.Union[ipaddress.IPv4Interface, ipaddress.IPv6Interface]:
+    """Deserialize IP interface data to an IP interface object."""
+    return ipaddress.ip_interface(value)
+
+
+class IPInterface(
+    Field[typing.Union[ipaddress.IPv4Interface, ipaddress.IPv6Interface]]
+):
+    """Field for handling IP interfaces."""
+
+    default_serializers = {
+        "json": string_serializer,
+    }
+    default_deserializer = ip_interface_deserializer
+
+    def __init__(
+        self,
+        **kwargs: Unpack[FieldKwargs],
+    ):
+        super().__init__(
+            field_type=(
+                ipaddress.IPv4Interface,
+                ipaddress.IPv6Interface,
             ),
             **kwargs,
         )

@@ -47,10 +47,7 @@ class Person(attrib.Dataclass, slots=True, frozen=True):
     age = attrib.Integer(min_value=0, max_value=100)
     friends = attrib.Iterable[collections.deque["Person"], "Person"](
         collections.deque,
-        child=attrib.Nested(
-            "Person",
-            lazy=True,
-        ),
+        child=attrib.Nested("Person"),
         default=attrib.Factory(list),
         allow_null=True,
     )

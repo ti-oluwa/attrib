@@ -119,7 +119,7 @@ class Student(PersonalInfo):
         return f"{self.name} (ID: {self.id})"
 
 
-def configure_converters() -> Converter:
+def configure_converter() -> Converter:
     """Configure cattrs converter for custom serialization/deserialization"""
     converter = Converter()
 
@@ -129,7 +129,7 @@ def configure_converters() -> Converter:
     )
     converter.register_unstructure_hook(date, lambda d: d.isoformat() if d else None)
 
-    # For StudentClass, rename 'courses' to 'enrolled_in' during serialization
+    # For `Student`, rename 'courses' to 'enrolled_in' during serialization
     student_unstruct_hook = make_dict_unstructure_fn(
         Student,
         converter,
@@ -153,12 +153,12 @@ def configure_converters() -> Converter:
     return converter
 
 
-converter = configure_converters()
+converter = configure_converter()
 
 DataclassT = typing.TypeVar("DataclassT")
 
 
-def load_data(
+def load(
     data_list: typing.List[typing.Dict[str, typing.Any]],
     cls: typing.Type[DataclassT],
 ) -> typing.List[DataclassT]:
@@ -172,9 +172,9 @@ def load_data(
     return [converter.structure(data, cls) for data in data_list]
 
 
-years = load_data(year_data, AcademicYear)
-courses = load_data(course_data, Course)
-students = load_data(student_data, Student)
+years = load(year_data, AcademicYear)
+courses = load(course_data, Course)
+students = load(student_data, Student)
 
 
 def example():
@@ -191,7 +191,7 @@ def example():
 
 
 @timeit("dataclasses + cattrs")
-def test(n: int = 1) -> None:
+def test(n: int = 1, mode: str = "python") -> None:
     """Run the dataclasses example multiple times"""
     for _ in range(n):
         example()

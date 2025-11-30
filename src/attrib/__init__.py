@@ -13,11 +13,11 @@ from .descriptors.datetime import *  # noqa
 from .serializers import *  # noqa
 from . import validators  # noqa
 from ._utils import *  # noqa
+from ._field import field  # noqa
 from .adapters import TypeAdapter  # noqa
 from .types import Empty, EMPTY  # noqa
 from . import exceptions  # noqa
 from .decorators import *  # noqa
-from .contextmanagers import *  # noqa
 
 
-__version__ = "0.0.1"
+__version__ = "0.0.1a0"

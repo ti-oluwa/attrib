@@ -1,8 +1,7 @@
 import sys
-import attrib_example
-import dataclass_example
-import attrs_example
-import pydantic_example
+import attrib_
+import dataclass_
+import attrs_
 import utils
 
 
@@ -11,10 +10,9 @@ DEFAULT_ITERATIONS = 10000
 
 def main(n: int) -> None:
     """Main function to run the benchmarks."""
-    dataclass_example.test(n)
-    attrs_example.test(n)
-    pydantic_example.test(n)
-    attrib_example.test(n)
+    attrib_.test(n)
+    dataclass_.test(n)
+    attrs_.test(n)
 
 
 if __name__ == "__main__":

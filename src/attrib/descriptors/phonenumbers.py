@@ -1,14 +1,16 @@
 import typing
+
+from phonenumbers import (
+    PhoneNumber as PhoneNumberType,
+    PhoneNumberFormat,
+    format_number,
+    parse as parse_number,
+)
 from typing_extensions import Unpack
 
+from attrib.descriptors.base import Field, FieldKwargs, String
+from attrib._utils import no_op_serializer
 from attrib.types import Context
-from attrib.descriptors.base import Field, String, FieldKwargs, no_op_serializer
-from phonenumbers import (  # type: ignore[import]
-    PhoneNumber as PhoneNumberType,
-    parse as parse_number,
-    format_number,
-    PhoneNumberFormat,
-)
 
 
 def phone_number_serializer(
@@ -34,7 +36,7 @@ class PhoneNumber(Field[PhoneNumberType]):
     default_serializers = {
         "json": phone_number_serializer,
     }
-    default_deserializer = phone_number_deserializer
+    default_deserializer = phone_number_deserializer  # type: ignore[assignment]
 
     def __init__(
         self,
@@ -53,7 +55,6 @@ class PhoneNumber(Field[PhoneNumberType]):
         self.output_format = output_format or self.default_output_format
 
 
-
 def phone_number_string_deserializer(
     value: typing.Any,
     field: "PhoneNumberString",
@@ -69,9 +70,9 @@ class PhoneNumberString(String):
     default_serializers = {
         # Phonenumber string would have already been parsed to a string in output format,
         # so we can use the python serializer (that returns the string as is)
-        "json": no_op_serializer, 
+        "json": no_op_serializer,
     }
-    default_deserializer = phone_number_string_deserializer
+    default_deserializer = phone_number_string_deserializer  # type: ignore[assignment]
 
     def __init__(
         self,

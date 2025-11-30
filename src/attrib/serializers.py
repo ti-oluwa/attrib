@@ -2,16 +2,12 @@
 
 from collections import defaultdict
 import typing
+
 from typing_extensions import TypeAlias
 
-from attrib.types import (
-    EMPTY,
-    JSONDict,
-    DataDict,
-    Context,
-)
-from attrib.exceptions import DeserializationError, SerializationError, ValidationError
 from attrib.dataclass import Dataclass
+from attrib.exceptions import DeserializationError, SerializationError, ValidationError
+from attrib.types import Context, DataDict, EMPTY, JSONDict
 
 
 __all__ = [
@@ -25,7 +21,14 @@ __all__ = [
 class Option:
     """Dataclass serialization options."""
 
-    __slots__ = ("target", "recurse", "include", "exclude", "field_names", "hash")
+    __slots__ = (
+        "target",
+        "recurse",
+        "include",
+        "exclude",
+        "field_names",
+        "hash",
+    )
 
     def __init__(
         self,
@@ -86,11 +89,7 @@ DEFAULT_OPTION = Option(Dataclass)
 DEFAULT_OPTIONS_MAP: OptionsMap = defaultdict(lambda: DEFAULT_OPTION)
 
 
-from line_profiler import profile
-
-
-# @profile
-def asdict(
+def _asdict(
     instance: Dataclass,
     context: Context,
     fmt: typing.Union[typing.Literal["python", "json"], str] = "python",
@@ -104,39 +103,40 @@ def asdict(
     :return: Dictionary representation of the instance.
     :raises SerializationError: If serialization fails.
     """
-    exclude_unset: bool = context["_exclude_unset"]
-    options: OptionsMap = context["_options"]
-
+    options, fail_fast, by_alias, exclude_unset = context["__options__"]
     datacls = type(instance)
     option = options[datacls]
-    field_names = option.field_names or datacls._name_map.keys()
-    if exclude_unset:
-        field_names = instance.__fields_set__ & field_names
+    fields = instance.__dataclass_fields__
+    memo = context["__memo__"]
+
+    if datacls in memo:
+        field_names = memo[datacls]
+    else:
+        field_names = option.field_names or datacls._name_map.keys()
+        if exclude_unset is True:
+            fields_set = instance.__fields_set__
+            field_names = [name for name in field_names if name in fields_set]
+        memo[datacls] = list(field_names)
 
     serialized_data = {}
-    _setter = serialized_data.__setitem__
-    by_alias = context["_by_alias"]
+    skip_nested = not option.recurse
     error = None
-    fields = instance.__dataclass_fields__
+
     for name in field_names:
         field = fields[name]
-        key = field.serialization_alias or field.effective_name if by_alias else name
-
+        key = field._serialization_keys[by_alias]
         try:
             value = field.__get__(instance, datacls)
-            if value is EMPTY:
-                continue
-
-            if fmt in field._identity_formats or (
-                not option.recurse and field._meta["_nested"]
-            ):
-                _setter(key, value)
-                continue
-
-            _setter(key, field.serialize(value, fmt, context))
+            if value is not EMPTY:
+                if fmt in field._identity_formats:
+                    serialized_data[key] = value
+                elif skip_nested and field._meta["_nested"]:
+                    serialized_data[key] = value
+                else:
+                    serialized_data[key] = field.serialize(value, fmt, context)
         except (SerializationError, DeserializationError, ValidationError) as exc:
             parent_name = datacls.__name__
-            if context["_fail_fast"]:
+            if fail_fast:
                 raise SerializationError.from_exception(
                     exc,
                     parent_name=parent_name,
@@ -158,7 +158,7 @@ def asdict(
                     location=[name],
                 )
 
-    if error:
+    if error is not None:
         raise error
     return serialized_data
 
@@ -226,7 +226,7 @@ def serialize(
     exclude_unset: bool = False,
 ) -> typing.Any:
     """
-    Build a serialized representation of the instance.
+    Returns a serialized representation of the instance.
 
     :param instance: The dataclass instance to serialize.
     :param fmt: The format to serialize to. Can be 'python' or 'json' or any other
@@ -290,9 +290,14 @@ def serialize(
     # }
     ```
     """
-    context = context or {}
-    context["_options"] = options or DEFAULT_OPTIONS_MAP
-    context["_fail_fast"] = fail_fast
-    context["_by_alias"] = by_alias
-    context["_exclude_unset"] = exclude_unset
-    return asdict(instance, fmt=fmt, context=context)
+    if context is None:
+        context = {}
+    serialization_options = (
+        options or DEFAULT_OPTIONS_MAP,
+        fail_fast,
+        by_alias,
+        exclude_unset,
+    )
+    context["__options__"] = serialization_options
+    context["__memo__"] = {}
+    return _asdict(instance, fmt=fmt, context=context)

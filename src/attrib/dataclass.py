@@ -1,39 +1,48 @@
 """Data description classes"""
 
 from collections.abc import Iterable, Mapping, Sequence
-import sys
-import typing
 import copy as pycopy
 from functools import partial
-from typing_extensions import Unpack, Self, TypeAlias
+import functools
+import typing
 import warnings
 
+from typing_extensions import Self, TypeAlias, Unpack, TypeGuard
+
 from attrib._utils import is_generic_type
-from attrib.descriptors.base import Field, Value
+from attrib.descriptors.base import Field
 from attrib.exceptions import (
-    FrozenInstanceError,
-    DeserializationError,
     ConfigurationError,
+    DeserializationError,
+    FrozenInstanceError,
     ValidationError,
 )
-from attrib.types import DataDict, RawData, KwArg
-from attrib.contextmanagers import (
-    deserialization_context,
-    fail_fast_ctx_var,
-    by_name_ctx_var,
-    is_valid_ctx_var,
-    ignore_extras_ctx_var,
-)
+from attrib.types import DataDict, KwArg, RawData
 
 
 __all__ = [
     "Dataclass",
-    "Config",
+    "MetaConfig",
+    "InitConfig",
     "deserialize",
     "copy",
+    "evolve",
     "get_field",
     "get_fields",
+    "is_dataclass",
 ]
+
+
+@typing.final
+class InitConfig(typing.NamedTuple):
+    """Configuration for dataclass initialization/deserialization."""
+
+    by_name: bool = False
+    """If True, use actual field names instead of aliases."""
+    fail_fast: bool = False
+    """If True, raise on first error instead of collecting all errors."""
+    is_valid: bool = False
+    """If True, skip validation assuming data is already valid."""
 
 
 def _sort_by_name(item: typing.Tuple[str, Field]) -> str:
@@ -74,10 +83,10 @@ def _setitem(instance: "Dataclass", key: str, value: typing.Any) -> None:
     field.__set__(instance, value)
 
 
-def _frozen_setattr(instance: "Dataclass", key: str, value: Value) -> None:
+def _frozen_setattr(instance: "Dataclass", key: str, value: typing.Any) -> None:
     """Set an attribute on a frozen dataclass instance."""
     if (
-        not getattr(instance, "_initializing", False)
+        getattr(instance, "_initializing_", False) is False
         and key not in instance.__state_attributes__
     ):
         raise FrozenInstanceError(
@@ -123,12 +132,15 @@ def _setstate(
 ) -> "Dataclass":
     """Set the state of the dataclass instance."""
     field_values, attributes = state
-    with deserialization_context(by_name=True):
-        instance = load_valid(
-            instance,
-            fields=instance.__dataclass_fields__.values(),
-            data=field_values,
-        )
+    config = InitConfig(
+        by_name=True, is_valid=True, fail_fast=True
+    )  # Fail fast to raise errors during unpickling
+    instance = _load_valid(
+        instance,
+        fields=instance.__dataclass_fields__.values(),
+        data=field_values,
+        config=config,
+    )
 
     for key, value in attributes.items():
         setattr(instance, key, value)
@@ -223,35 +235,6 @@ def _get_ordering_values(
     )
 
 
-def _lt(
-    instance: "Dataclass",
-    other: typing.Any,
-) -> bool:
-    """Compare two dataclass instances for less than."""
-    if not isinstance(other, instance.__class__):
-        return NotImplemented
-    if getattr(instance, "_initializing", False):
-        # Incomplete state during initialization is a safety concern for ordering.
-        return False
-    if instance is other:
-        return False
-    return _get_ordering_values(instance) < _get_ordering_values(other)
-
-
-def _le(
-    instance: "Dataclass",
-    other: typing.Any,
-) -> bool:
-    """Compare two dataclass instances for less than or equal to."""
-    if not isinstance(other, instance.__class__):
-        return NotImplemented
-    if getattr(instance, "_initializing", False):
-        return False
-    if instance is other:
-        return True
-    return _get_ordering_values(instance) <= _get_ordering_values(other)
-
-
 def _gt(
     instance: "Dataclass",
     other: typing.Any,
@@ -259,9 +242,9 @@ def _gt(
     """Compare two dataclass instances for greater than."""
     if not isinstance(other, instance.__class__):
         return NotImplemented
-    if getattr(instance, "_initializing", False):
-        return False
     if instance is other:
+        return True
+    if getattr(instance, "_initializing_", False):
         return False
     return _get_ordering_values(instance) > _get_ordering_values(other)
 
@@ -273,7 +256,7 @@ def _ge(
     """Compare two dataclass instances for greater than or equal to."""
     if not isinstance(other, instance.__class__):
         return NotImplemented
-    if getattr(instance, "_initializing", False):
+    if getattr(instance, "_initializing_", False):
         return False
     if instance is other:
         return True
@@ -327,7 +310,7 @@ StrType: TypeAlias = str
 FieldName: TypeAlias = str
 
 
-class ConfigSchema(typing.TypedDict, total=False):
+class _MetaConfigs(typing.TypedDict, total=False):
     """Configuration schema for Dataclass types"""
 
     frozen: bool
@@ -383,8 +366,8 @@ class ConfigSchema(typing.TypedDict, total=False):
 
 
 @typing.final
-class Config(typing.NamedTuple):
-    """Configuration for Dataclass types"""
+class MetaConfig(typing.NamedTuple):
+    """Configuration for construction dataclass types"""
 
     frozen: bool = False
     """If True, the dataclass is immutable after creation."""
@@ -437,13 +420,13 @@ class Config(typing.NamedTuple):
     If None, use the default behavior of the dataclass."""
 
 
-def build_config(
-    class_config: typing.Optional[Config] = None,
+def _build_meta_config(
+    class_config: typing.Optional[MetaConfig] = None,
     bases: typing.Optional[typing.Tuple[typing.Type[typing.Any]]] = None,
-    **meta_config: Unpack[ConfigSchema],
-) -> Config:
+    **meta_config: Unpack[_MetaConfigs],
+) -> MetaConfig:
     """
-    Build a configuration for Dataclass types.
+    Build dataclass meta configuration.
 
     Order of precedence (from lowest to highest):
     1. Base class(es) configuration
@@ -453,7 +436,7 @@ def build_config(
     :param class_config: Configuration defined directly in the class using `__config__` class variable.
     :param bases: Base classes to inspect for configuration.
     :param meta_config: Additional configuration options defined in the metaclass.
-    :return: A Config instance with the combined configuration.
+    :return: A MetaConfig instance with the combined configuration.
     """
     config = {}
 
@@ -464,9 +447,8 @@ def build_config(
 
     if class_config:
         config.update(class_config._asdict())
-
     config.update(meta_config)
-    return Config(**config)
+    return MetaConfig(**config)
 
 
 FieldMap: TypeAlias = typing.Mapping[str, Field[typing.Any]]
@@ -479,7 +461,7 @@ NameDict: TypeAlias = typing.Dict[str, str]
 """A mapping of names"""
 
 
-def build_auxilliary_fields(
+def _build_auxilliary_fields(
     fields: FieldDict,
 ) -> typing.Dict[str, typing.Tuple[Field[typing.Any]]]:
     auxilliary_fields = {}
@@ -509,11 +491,13 @@ def build_auxilliary_fields(
     return auxilliary_fields
 
 
-def is_dataclass(cls: typing.Type[typing.Any]) -> bool:
+def is_dataclass(cls: typing.Any) -> TypeGuard[typing.Type["Dataclass"]]:
+    if not isinstance(cls, type):
+        return False
     return hasattr(cls, "__dataclass_fields__") or issubclass(cls, Dataclass)
 
 
-def type_has_dataclass(typ: typing.Any) -> bool:
+def _type_has_dataclass(typ: typing.Any) -> bool:
     """
     Check if a type contains a dataclass.
 
@@ -524,7 +508,7 @@ def type_has_dataclass(typ: typing.Any) -> bool:
     if is_generic_type(typ):
         # Handle generic types like List[Dataclass]
         return any(
-            type_has_dataclass(arg) for arg in typ.__args__ if isinstance(arg, type)
+            _type_has_dataclass(arg) for arg in typ.__args__ if isinstance(arg, type)
         )
     return is_dataclass(typ)
 
@@ -536,24 +520,24 @@ class DataclassMeta(type):
         cls,
         name: str,
         bases: typing.Tuple[typing.Type],
-        attrs: typing.Dict[str, typing.Any],
-        **meta_config: Unpack[ConfigSchema],
+        namespace: typing.Dict[str, typing.Any],
+        **meta_config: Unpack[_MetaConfigs],
     ):
         """
         Create a new Dataclass type.
 
         :param name: Name of the new class.
         :param bases: Base classes for the new class.
-        :param attrs: Attributes and namespace for the new class.
+        :param namespace: Attributes and namespace for the new class.
         :param meta_config: Additional configuration options for the new class.
         :return: New Dataclass type
         """
-        config = build_config(
-            class_config=attrs.get("__config__", None),
+        config = _build_meta_config(
+            class_config=namespace.get("__config__", None),
             bases=bases,
             **meta_config,
         )
-        attrs["__config__"] = config
+        namespace["__config__"] = config
         own_fields: FieldDict = {}
         fields: FieldDict = {}
         _name_map: NameDict = {}
@@ -581,21 +565,21 @@ class DataclassMeta(type):
                 _name_map.update(cls_._name_map)
                 _effective_name_map.update(cls_._effective_name_map)
 
-        for key, value in attrs.items():
+        for key, value in namespace.items():
             if isinstance(value, Field):
-                value.post_init()
+                value.__post_init__()
                 own_fields[key] = value
                 fields[key] = value
                 effective_name = value.alias or key
                 _name_map[key] = effective_name
                 _effective_name_map[effective_name] = key
 
-        auxilliary_fields = build_auxilliary_fields(fields)
-        attrs.update(auxilliary_fields)
+        auxilliary_fields = _build_auxilliary_fields(fields)
+        namespace.update(auxilliary_fields)
 
         if config.order and config.eq:
-            eq_fields_set = set(attrs["__eq_fields__"])
-            ordering_fields_set = set(attrs["__ordering_fields__"])
+            eq_fields_set = set(namespace["__eq_fields__"])
+            ordering_fields_set = set(namespace["__ordering_fields__"])
             # Check for potential inconsistencies where fields are used for ordering but not equality
             if ordering_fields_set and eq_fields_set:
                 ordering_only = ordering_fields_set - eq_fields_set
@@ -610,76 +594,72 @@ class DataclassMeta(type):
         if config.slots:
             # Replace the original namespace with a slotted one.
             slotted_namespace = _build_slotted_namespace(
-                namespace=attrs.copy(),
+                namespace=namespace.copy(),
                 own_fields=own_fields.keys(),
                 additional_slots=config.slots
                 if isinstance(config.slots, Sequence)
                 else None,
                 parent_slotted_attributes=parent_slotted_attributes,
             )
-            attrs = slotted_namespace
+            namespace = slotted_namespace
 
         if config.frozen:
-            attrs["__setattr__"] = _frozen_setattr
-            attrs["__delattr__"] = _frozen_delattr
+            namespace["__setattr__"] = _frozen_setattr
+            namespace["__delattr__"] = _frozen_delattr
             # Only allow frozen dataclasses to be iterable by default. We do not want to allow
             # iteration over mutable dataclasses as it can lead to unexpected behavior.
-            if "__iter__" not in attrs:
-                attrs["__iter__"] = _iter
-        if config.repr and "__repr__" not in attrs:
-            if fields and not attrs["__repr_fields__"]:
+            if "__iter__" not in namespace:
+                namespace["__iter__"] = _iter
+        if config.repr and "__repr__" not in namespace:
+            if fields and not namespace["__repr_fields__"]:
                 raise ConfigurationError(
                     "Cannot add __repr__ without fields with `repr=True`. No fields with `repr=True` found."
                 )
-            attrs["__repr__"] = _repr
+            namespace["__repr__"] = _repr
 
-        if config.str and "__str__" not in attrs:
-            attrs["__str__"] = _str
-        if config.getitem and "__getitem__" not in attrs:
-            attrs["__getitem__"] = _getitem
-        if config.setitem and "__setitem__" not in attrs:
-            attrs["__setitem__"] = _setitem
-        if config.hash and "__hash__" not in attrs:
+        if config.str and "__str__" not in namespace:
+            namespace["__str__"] = _str
+        if config.getitem and "__getitem__" not in namespace:
+            namespace["__getitem__"] = _getitem
+        if config.setitem and "__setitem__" not in namespace:
+            namespace["__setitem__"] = _setitem
+        if config.hash and "__hash__" not in namespace:
             if not config.frozen:
                 raise ConfigurationError(
                     "Cannot use __hash__ without frozen=True. Hashing is unsafe for mutable objects."
                     " Set frozen=True to enable hashing."
                 )
 
-            if fields and not attrs["__hash_fields__"]:
+            if fields and not namespace["__hash_fields__"]:
                 raise ConfigurationError(
                     "Cannot use __hash__ without fields with `hash=True`. No fields with `hash=True` found."
                 )
-            attrs["__hash__"] = _hash
+            namespace["__hash__"] = _hash
 
-        if config.eq and "__eq__" not in attrs:
-            if fields and not attrs["__eq_fields__"]:
+        if config.eq and "__eq__" not in namespace:
+            if fields and not namespace["__eq_fields__"]:
                 raise ConfigurationError(
                     "Cannot use __eq__ without fields with `eq=True`. No fields with `eq=True` found."
                 )
-            attrs["__eq__"] = _eq
+            namespace["__eq__"] = _eq
 
         if config.pickleable:
-            if "__getstate__" not in attrs:
-                attrs["__getstate__"] = _getstate
-            if "__setstate__" not in attrs:
-                attrs["__setstate__"] = _setstate
-            if "__getnewargs__" not in attrs:
-                attrs["__getnewargs_ex__"] = _getnewargs_ex
+            if "__getstate__" not in namespace:
+                namespace["__getstate__"] = _getstate
+            if "__setstate__" not in namespace:
+                namespace["__setstate__"] = _setstate
+            if "__getnewargs__" not in namespace:
+                namespace["__getnewargs_ex__"] = _getnewargs_ex
         if config.order:
-            if fields and not attrs["__ordering_fields__"]:
+            if fields and not namespace["__ordering_fields__"]:
                 raise ConfigurationError(
                     "Cannot use ordering methods without fields with `order` set."
                 )
 
-            if "__lt__" not in attrs:
-                attrs["__lt__"] = _lt
-            if "__le__" not in attrs:
-                attrs["__le__"] = _le
-            if "__gt__" not in attrs:
-                attrs["__gt__"] = _gt
-            if "__ge__" not in attrs:
-                attrs["__ge__"] = _ge
+            if "__gt__" not in namespace:
+                namespace["__gt__"] = _gt
+            if "__ge__" not in namespace:
+                namespace["__ge__"] = _ge
 
         if config.sort:
             sort_key = config.sort if callable(config.sort) else _sort_by_name
@@ -687,9 +667,9 @@ class DataclassMeta(type):
                 typing.Callable[[typing.Tuple[str, Field]], str], sort_key
             )
             fields_data = sorted(fields.items(), key=sort_key)
-            fields = typing.cast(FieldDict, dict(fields_data))
+            fields = dict(fields_data)
 
-        if (state_attributes := attrs.get("__state_attributes__", None)) and set(
+        if (state_attributes := namespace.get("__state_attributes__", None)) and set(
             state_attributes
         ).intersection(fields.keys()):
             raise ConfigurationError(
@@ -697,10 +677,13 @@ class DataclassMeta(type):
                 "State attributes must not overlap with field names."
             )
 
-        attrs["__dataclass_fields__"] = fields
-        attrs["_name_map"] = _name_map
-        attrs["_effective_name_map"] = _effective_name_map
-        new_cls = super().__new__(cls, name, bases, attrs)
+        namespace["__dataclass_fields__"] = fields
+        namespace["_name_map"] = _name_map
+        namespace["_effective_name_map"] = _effective_name_map
+        new_cls = super().__new__(cls, name, bases, namespace)
+        if config.order:
+            # Use total_ordering to fill in the missing ordering methods
+            new_cls = functools.total_ordering(new_cls)
         return new_cls
 
     def __init__(cls, *args: typing.Any, **kwargs: typing.Any) -> None:
@@ -716,7 +699,7 @@ class DataclassMeta(type):
         fields_annotations = {}
         for field_name, field in cls.__dataclass_fields__.items():  # type: ignore
             annotation = field.__get_type_hint__()
-            field._meta["_nested"] = type_has_dataclass(annotation)
+            field._meta["_nested"] = _type_has_dataclass(annotation)
             fields_annotations[field_name] = annotation
 
         cls_annotations: typing.Dict[str, typing.Any] = getattr(
@@ -727,24 +710,21 @@ class DataclassMeta(type):
 
 
 class Dataclass(metaclass=DataclassMeta):
-    """
-    Data description class.
-
-    Dataclasses are defined by subclassing `Dataclass` and defining fields as class attributes.
-    """
+    """Base class for data description classes."""
 
     __slots__: typing.ClassVar[typing.Tuple[str, ...]] = (
         "__weakref__",
-        "_initializing",
+        "_initializing_",
         "__fields_set__",
         "__cache__",
+        "__init_config__",
     )
     __state_attributes__: typing.ClassVar[typing.Tuple[str, ...]] = ("__fields_set__",)
     """
     Attributes to be included in the state of the dataclass when __getstate__ is called,
     usually during pickling
     """
-    __config__: typing.ClassVar[Config] = Config()
+    __config__: typing.ClassVar[MetaConfig] = MetaConfig()
     """Configuration for the dataclass."""
     __dataclass_fields__: typing.ClassVar[FieldMap]
     """Mapping of field names to their corresponding Field instances."""
@@ -779,7 +759,9 @@ class Dataclass(metaclass=DataclassMeta):
         return instance
 
     @typing.overload
-    def __init__(self, data: None = None) -> None:
+    def __init__(
+        self, data: None = None, __config__: typing.Optional[InitConfig] = None
+    ) -> None:
         """Initialize the dataclass with no data."""
         ...
 
@@ -787,40 +769,53 @@ class Dataclass(metaclass=DataclassMeta):
     def __init__(
         self,
         data: RawData,
+        __config__: typing.Optional[InitConfig] = None,
         **kwargs: KwArg[typing.Any],
     ) -> None:
         """Initialize the dataclass with raw data."""
         ...
 
     @typing.overload
-    def __init__(self, data: None = None, **kwargs: KwArg[typing.Any]) -> None:
+    def __init__(
+        self,
+        data: None = None,
+        __config__: typing.Optional[InitConfig] = None,
+        **kwargs: KwArg[typing.Any],
+    ) -> None:
         """Initialize the dataclass with keyword arguments."""
         ...
 
     def __init__(
         self,
         data: typing.Optional[RawData] = None,
+        __config__: typing.Optional[InitConfig] = None,
         **kwargs: KwArg[typing.Any],
     ) -> None:
         """
         Initialize the dataclass with raw data or keyword arguments.
 
         :param data: Raw data to initialize the dataclass with.
+        :param __config__: InitConfig instance with deserialization options (by_name, fail_fast, is_valid).
         :param kwargs: Keyword arguments with values for the fields in the dataclass.
         """
         self.__fields_set__: typing.Set[str]
         self.__cache__: typing.Dict[str, typing.Any]
+        self.__init_config__: InitConfig
 
-        object.__setattr__(self, "_initializing", True)
-        combined = {**dict(data or {}), **kwargs}  # type: ignore[assignment]
-        load_raw(
+        object.__setattr__(self, "_initializing_", True)
+        config = __config__ if __config__ is not None else InitConfig()
+        object.__setattr__(self, "__init_config__", config)
+
+        combined = {**dict(data or {}), **kwargs}  # type: ignore[arg-type]
+        _load_raw(
             self,
             fields=type(self).__init_fields__,
             data=combined,
+            config=config,
         )
-        object.__setattr__(self, "_initializing", False)
+        object.__setattr__(self, "_initializing_", False)
 
-    def __init_subclass__(cls, **kwargs: Unpack[ConfigSchema]) -> None:
+    def __init_subclass__(cls, **kwargs: Unpack[_MetaConfigs]) -> None:
         """Ensure that subclasses define fields."""
         if len(cls.__dataclass_fields__) == 0:
             raise ConfigurationError("Dataclasses must define fields")
@@ -832,7 +827,7 @@ class Dataclass(metaclass=DataclassMeta):
 
         :return: A new instance of the dataclass with the same field values.
         """
-        return copy(self)
+        return copy(self, deep=False)
 
     def __deepcopy__(
         self, memo: typing.Optional[typing.Dict[int, typing.Any]] = None
@@ -849,7 +844,80 @@ class Dataclass(metaclass=DataclassMeta):
             return memo[_id]
 
         memo[_id] = self
-        return copy(self, _memo=memo)
+        return copy(self, deep=True, _memo=memo)
+
+    if typing.TYPE_CHECKING:
+
+        def __getattr__(self, item: str) -> typing.Any:
+            """Get attribute value by name."""
+            ...
+
+        def __setattr__(self, key: str, value: typing.Any) -> None:
+            """Set attribute value by name."""
+            ...
+
+        def __delattr__(self, item: str) -> None:
+            """Delete attribute by name."""
+            ...
+
+        def __hash__(self) -> int:
+            """Compute the hash of the dataclass instance."""
+            ...
+
+        def __eq__(self, other: typing.Any) -> bool:
+            """Compare two dataclass instances for equality."""
+            ...
+
+        def __lt__(self, other: typing.Any) -> bool:
+            """Compare two dataclass instances for less than."""
+            ...
+
+        def __le__(self, other: typing.Any) -> bool:
+            """Compare two dataclass instances for less than or equal to."""
+            ...
+
+        def __gt__(self, other: typing.Any) -> bool:
+            """Compare two dataclass instances for greater than."""
+            ...
+
+        def __ge__(self, other: typing.Any) -> bool:
+            """Compare two dataclass instances for greater than or equal to."""
+            ...
+
+        def __iter__(self) -> typing.Iterator[typing.Tuple[str, typing.Any]]:
+            """Iterate over the instance's fields and their values."""
+            ...
+
+        def __getitem__(self, item: str) -> typing.Any:
+            """Get item by field name."""
+            ...
+
+        def __setitem__(self, key: str, value: typing.Any) -> None:
+            """Set item by field name."""
+            ...
+
+        def __repr__(self) -> str:
+            """Get the string representation of the dataclass instance."""
+            ...
+
+        def __str__(self) -> str:
+            """Get the string representation of the dataclass instance."""
+            ...
+
+        def __getstate__(
+            self,
+        ) -> typing.Tuple[typing.Dict[str, typing.Any], typing.Dict[str, typing.Any]]:
+            """Get the state of the dataclass instance."""
+            ...
+
+        def __setstate__(
+            self,
+            state: typing.Tuple[
+                typing.Dict[str, typing.Any], typing.Dict[str, typing.Any]
+            ],
+        ) -> None:
+            """Set the state of the dataclass instance."""
+            ...
 
 
 DataclassTco = typing.TypeVar("DataclassTco", bound=Dataclass, covariant=True)
@@ -858,10 +926,11 @@ _missing = object()
 """Sentinel representing a missing value in a data dict"""
 
 
-def load_raw(
+def _load_raw(
     instance: DataclassTco,
     fields: typing.Iterable[Field[typing.Any]],
     data: DataDict,
+    config: InitConfig,
 ) -> DataclassTco:
     """
     Load raw data unto the dataclass instance.
@@ -869,30 +938,16 @@ def load_raw(
     :param instance: The dataclass instance to load data unto.
     :param fields: Iterable of fields to be populated in the dataclass.
     :param data: Mapping of raw data to initialize the dataclass instance with.
+    :param config: Initialization configuration.
     :raises DeserializationError: If there are errors during deserialization.
     :return: This same instance with the raw data loaded.
     """
-    ignore_extras = ignore_extras_ctx_var.get()
-    if not ignore_extras:
-        extra_keys = set(data.keys()) - {field.name for field in fields}
-        if extra_keys:
-            raise DeserializationError(
-                f"Unknown field(s) found: {', '.join(extra_keys)}",
-                parent_name=type(instance).__name__,
-                input_type="dict",
-                expected_type=type(instance).__name__,
-                code="unknown_fields",
-                context={
-                    "extra_fields": extra_keys,
-                },
-            )
+    if config.is_valid:
+        return _load_valid(instance, fields, data, config)
 
-    if is_valid_ctx_var.get():
-        return load_valid(instance, fields, data)
-
-    error = None
-    fail_fast = fail_fast_ctx_var.get()
-    by_name = by_name_ctx_var.get()
+    by_name = config.by_name
+    fail_fast = config.fail_fast
+    error: typing.Optional[DeserializationError] = None
     name_map = type(instance)._name_map
     for field in fields:
         name: str = field.name  # type: ignore[assignment]
@@ -918,27 +973,28 @@ def load_raw(
                     exc,
                     parent_name=type(instance).__name__,
                 ) from exc
+            if error is None:
+                error = DeserializationError.from_exception(
+                    exc,
+                    parent_name=type(instance).__name__,
+                )
             else:
-                if error is None:
-                    error = DeserializationError.from_exception(
+                error.merge(
+                    DeserializationError.from_exception(
                         exc,
                         parent_name=type(instance).__name__,
                     )
-                else:
-                    error.add(
-                        exc,
-                        parent_name=type(instance).__name__,
-                    )
-
+                )
     if error is not None:
         raise error
     return instance
 
 
-def load_valid(
+def _load_valid(
     instance: DataclassTco,
     fields: typing.Iterable[Field[typing.Any]],
     data: DataDict,
+    config: InitConfig,
 ) -> DataclassTco:
     """
     Load already validated data unto the dataclass instance.
@@ -946,11 +1002,12 @@ def load_valid(
     :param instance: The dataclass instance to load data unto.
     :param fields: Iterable of fields to be populated in the dataclass.
     :param data: Mapping of raw data to initialize the dataclass instance with.
+    :param config: Initialization configuration.
     :return: This same instance with the raw data loaded and validated.
     """
-    by_name = by_name_ctx_var.get()
     fields_set = instance.__fields_set__
     name_map = type(instance)._name_map
+    by_name = config.by_name
     for field in fields:
         name: str = field.name  # type: ignore[assignment]
         if by_name:
@@ -970,28 +1027,30 @@ def load_valid(
         field._set_value(
             instance,
             value,
-            lazy=not field.always_coerce,
-            is_lazy_valid=True,
+            is_valid=field.always_coerce is False,
         )  # Bypass coercion and validation, except for fields with `always_coerce=True`
         fields_set.add(name)
     return instance
 
 
 def _from_attributes(
-    dataclass_: typing.Type[DataclassTco], obj: typing.Any
+    datacls: typing.Type[DataclassTco],
+    obj: typing.Any,
+    config: InitConfig,
 ) -> DataclassTco:
     """
     Convert an object to a dataclass instance by initializing an instance using
     the object's attributes
 
-    :param dataclass_: The target dataclass type to convert to.
+    :param datacls: The target dataclass type to convert to.
     :param obj: The object to convert.
+    :param config: Initialization configuration.
     :return: The dataclass instance.
     """
     values = {}
-    by_name = by_name_ctx_var.get()
-    name_map = dataclass_._name_map
-    for field in dataclass_.__init_fields__:
+    name_map = datacls._name_map
+    by_name = config.by_name
+    for field in datacls.__init_fields__:
         name: str = field.name  # type: ignore[assignment]
         if by_name:
             if (value := getattr(obj, name, _missing)) is not _missing:
@@ -1003,52 +1062,60 @@ def _from_attributes(
             elif (value := getattr(obj, name, _missing)) is not _missing:
                 values[name] = value
 
-    return dataclass_(**values)
+    return datacls(values, __config__=config)
 
 
 @typing.overload
 def deserialize(
-    dataclass_: typing.Type[DataclassTco],
+    datacls: typing.Type[DataclassTco],
     obj: RawData,
+    *,
+    config: typing.Optional[InitConfig] = None,
 ) -> DataclassTco: ...
 
 
 @typing.overload
 def deserialize(
-    dataclass_: typing.Type[DataclassTco],
+    datacls: typing.Type[DataclassTco],
     obj: typing.Any,
     *,
     from_attributes: bool = False,
+    config: typing.Optional[InitConfig] = None,
 ) -> DataclassTco: ...
 
 
 def deserialize(
-    dataclass_: typing.Type[DataclassTco],
+    datacls: typing.Type[DataclassTco],
     obj: typing.Union[RawData, typing.Any],
     *,
     from_attributes: bool = False,
+    config: typing.Optional[InitConfig] = None,
 ) -> DataclassTco:
     """
     Deserialize an object to a dataclass instance.
 
     :param obj: The object to deserialize.
-    :param dataclass_: The dataclass type to convert to.
+    :param datacls: The dataclass type to convert to.
     :param from_attributes: If True, load fields using the object's attributes.
+    :param config: Initialization configuration. If None, uses default InitConfig().
     :raises DeserializationError: If there are errors during deserialization.
     :return: The dataclass instance.
     """
     if obj is None:
         raise DeserializationError(
             "Cannot deserialize 'None'",
-            parent_name=dataclass_.__name__,
+            parent_name=datacls.__name__,
             input_type="null",
-            expected_type=dataclass_.__name__,
+            expected_type=datacls.__name__,
             code="invalid_value",
         )
 
+    if config is None:
+        config = InitConfig()
+
     if from_attributes:
-        return _from_attributes(dataclass_, obj)
-    return dataclass_(obj)
+        return _from_attributes(datacls, obj=obj, config=config)
+    return datacls(obj, __config__=config)
 
 
 def copy(
@@ -1072,14 +1139,6 @@ def copy(
     :param update: Optional dictionary to update fields in the copied instance.
     :param deep: If True, create and return a deep copy of the instance.
     :return: A new dataclass instance that is a copy of the original.
-
-    **Tip: If `update` data provided is confirmed to be valid. Efficiently update with:**
-
-    ```python
-
-    with attrib.deserialization_context(is_valid=True):
-        new_instance = attrib.copy(instance, update=update)
-    ```
     """
     if (getstate := getattr(instance, "__getstate__", None)) is None:
         getstate = partial(_getstate, instance)
@@ -1087,7 +1146,7 @@ def copy(
     field_values, attributes = getstate()
     if deep:
         field_values = pycopy.deepcopy(field_values, memo=_memo)
-        attributes = pycopy.deepcopy(attributes, memo=_memo)  # TODO: Might remove later
+        attributes = pycopy.deepcopy(attributes, memo=_memo)
 
     if getnewargs := getattr(instance, "__getnewargs_ex__", None):
         args, kwargs = getnewargs()
@@ -1097,32 +1156,42 @@ def copy(
     if (setstate := getattr(new_instance, "__setstate__", None)) is None:
         setstate = partial(_setstate, new_instance)
 
-    with deserialization_context(
-        fail_fast=True,
-        ignore_extras=True,
-        by_name=True,
-    ):
-        new_instance = setstate((field_values, attributes))
-        if update:
-            fields = instance.__dataclass_fields__
-            normalized_update: DataDict = {}
-            update_fields = []
-            for key, value in update.items():
-                if key in instance._effective_name_map:
-                    name = instance._effective_name_map[key]
-                    normalized_update[name] = value
-                    update_fields.append(fields[name])
-                else:
-                    normalized_update[key] = value
-                    if field := fields.get(key, None):
-                        update_fields.append(field)
+    # Use the instance's stored config
+    config = instance.__init_config__
+    new_instance = setstate((field_values, attributes))
 
-            new_instance = load_raw(
-                new_instance,
-                fields=update_fields,
-                data=normalized_update,
-            )
+    if update:
+        fields = instance.__dataclass_fields__
+        normalized_update: DataDict = {}
+        update_fields = []
+        for key, value in update.items():
+            if key in instance._effective_name_map:
+                name = instance._effective_name_map[key]
+                normalized_update[name] = value
+                update_fields.append(fields[name])
+            else:
+                normalized_update[key] = value
+                if field := fields.get(key, None):
+                    update_fields.append(field)
+
+        new_instance = _load_raw(
+            new_instance,
+            fields=update_fields,
+            data=normalized_update,
+            config=config,
+        )
     return typing.cast(DataclassTco, new_instance)
+
+
+def evolve(instance: DataclassTco, **kwargs: KwArg[DataclassTco]) -> DataclassTco:
+    """
+    Create a new dataclass instance with updated field values.
+
+    :param instance: The dataclass instance to evolve.
+    :param kwargs: Keyword arguments representing field updates.
+    :return: A new dataclass instance with the updated field values.
+    """
+    return copy(instance, update=kwargs, deep=False)
 
 
 def get_field(

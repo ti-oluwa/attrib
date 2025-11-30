@@ -1,21 +1,21 @@
-import functools
-import typing
-from typing_extensions import Unpack, Annotated, TypeAlias
 from collections.abc import Iterator
 import copy
-import annotated_types as annot
+import functools
 from itertools import count
+import typing
 
-from attrib.types import EMPTY, T
+import annotated_types as annot
+from typing_extensions import Annotated, TypeAlias, Unpack
+
 from attrib.dataclass import DataclassTco
 from attrib.descriptors.base import Field
 from attrib.exceptions import ConfigurationError
+from attrib.types import EMPTY, T
 
 __all__ = [
     "modify_cls",
     "partial",
     "strict",
-    "lazy",
     "ordered",
     "hashable",
 ]
@@ -61,7 +61,6 @@ class GenericFieldAttributes(typing.TypedDict, total=False):
     """
 
     strict: AttributeValue[bool]
-    lazy: AttributeValue[bool]
     fail_fast: AttributeValue[bool]
     allow_null: AttributeValue[bool]
     required: AttributeValue[bool]
@@ -239,13 +238,6 @@ strict = functools.partial(modify_cls, strict=True)
 Dataclass decorator.
 
 Returns a dataclass with all or specific fields strict.
-"""
-
-lazy = functools.partial(modify_cls, lazy=True)
-"""
-Dataclass decorator.
-
-Returns a dataclass with all or specific fields lazy.
 """
 
 hashable = functools.partial(
