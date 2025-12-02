@@ -1,13 +1,12 @@
 import typing
-from datetime import datetime, date
+from datetime import date, datetime
 
 import pytest
 
 import attrib
 from attrib._utils import iso_parse
 from attrib.adapters import TypeAdapter
-from attrib.descriptors.datetime import datetime_deserializer
-from attrib.exceptions import ValidationError, DeserializationError
+from attrib.exceptions import DeserializationError, ValidationError
 
 
 class TestTypeAdapterBasics:

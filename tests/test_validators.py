@@ -1,6 +1,7 @@
 """Tests for validators module."""
 
 import re
+
 import pytest
 
 from attrib import validators

@@ -1,127 +1,99 @@
-import copy
-import typing
 import enum
-from datetime import date, datetime
+import random
+import typing
 
-try:
-    import zoneinfo  # type: ignore[import]
-except ImportError:
-    from backports import zoneinfo  # type: ignore[import]
 import attrs
 from cattrs import Converter
 from cattrs.gen import make_dict_unstructure_fn, override
-import random
 
-from utils import timeit, profileit, log
-from mock_data import course_data, student_data, year_data
-from dateutil.parser import parse
-
+from mock_data import category_data, customer_data, product_data
+from utils import timeit
 
 ################
 # DATA CLASSES #
 ################
 
 
-class Term(enum.Enum):
-    """Academic term enumeration"""
+class ProductStatus(enum.Enum):
+    """Product status enumeration"""
 
-    FIRST = "First"
-    SECOND = "Second"
-    THIRD = "Third"
+    AVAILABLE = "available"
+    OUT_OF_STOCK = "out_of_stock"
+    DISCONTINUED = "discontinued"
 
 
 @attrs.define()
-class AcademicYear:
-    """Academic year data class"""
+class Category:
+    """Product category data class"""
 
     id: int = attrs.field()
     name: typing.Optional[str] = attrs.field(
         default=None, validator=attrs.validators.max_len(100)
     )
-    term: Term = attrs.field(default=Term.FIRST)
-    start_date: typing.Optional[date] = attrs.field(
-        default=None,
-    )
-    end_date: typing.Optional[date] = attrs.field(
-        default=None,
-    )
-    created_at: datetime = attrs.field(factory=datetime.now)
+    description: typing.Optional[str] = attrs.field(default=None)
 
 
 @attrs.define()
-class Course:
-    """Course data class"""
+class Product:
+    """Product data class"""
 
     id: int = attrs.field()
     name: str = attrs.field(validator=attrs.validators.max_len(100))
-    code: str = attrs.field(validator=attrs.validators.max_len(20))
-    year: AcademicYear = attrs.field()
-    created_at: datetime = attrs.field(factory=datetime.now)
+    price: float = attrs.field(validator=attrs.validators.gt(0.0))
+    quantity: int = attrs.field(validator=attrs.validators.ge(0))
+    category: Category = attrs.field()
+    status: ProductStatus = attrs.field(default=ProductStatus.AVAILABLE)
 
 
 @attrs.define(kw_only=True)
-class PersonalInfo:
-    """Personal information data class"""
-
-    name: str = attrs.field(validator=attrs.validators.max_len(100))
-    age: int = attrs.field(validator=attrs.validators.in_(range(0, 31)))
-    email: typing.Optional[str] = attrs.field(default=None)
-    phone: typing.Optional[str] = attrs.field(default=None)
-
-
-@attrs.define(kw_only=True)
-class Student(PersonalInfo):
-    """Student data class"""
+class Customer:
+    """Customer data class"""
 
     id: int = attrs.field()
-    year: typing.Optional[AcademicYear] = attrs.field()
-    gpa: float = attrs.field(
-        default=attrs.Factory(lambda: random.uniform(1.5, 5.0)),
+    name: str = attrs.field(validator=attrs.validators.max_len(100))
+    email: str = attrs.field()
+    stock_level: int = attrs.field(
+        default=attrs.Factory(lambda: random.randint(10, 100)),
     )
-    courses: typing.List[Course] = attrs.field(
+    products: typing.List[Product] = attrs.field(
         default=attrs.Factory(list),
         validator=attrs.validators.and_(
             attrs.validators.min_len(1),
-            attrs.validators.max_len(15),
+            attrs.validators.max_len(50),
         ),
     )
-    joined_at: typing.Optional[datetime] = attrs.field(
-        default=None,
+
+
+@attrs.define()
+class Order:
+    """Order data class"""
+
+    id: int = attrs.field()
+    customer: Customer = attrs.field()
+    items: typing.List[Product] = attrs.field(
+        default=attrs.Factory(list),
+        validator=attrs.validators.min_len(1),
     )
-    created_at: datetime = attrs.field(factory=datetime.now)
+    order_total: float = attrs.field(
+        default=attrs.Factory(lambda: random.uniform(10.0, 1000.0)),
+    )
 
 
 def configure_converters() -> Converter:
     """Configure cattrs converter for custom serialization/deserialization"""
     converter = Converter()
 
-    converter.register_unstructure_hook(Term, lambda e: e.value)
-    converter.register_unstructure_hook(
-        datetime, lambda dt: dt.isoformat() if dt else None
-    )
-    converter.register_unstructure_hook(date, lambda d: d.isoformat() if d else None)
+    converter.register_unstructure_hook(ProductStatus, lambda e: e.value)
 
-    # For StudentClass, rename 'courses' to 'enrolled_in' during serialization
-    student_unstruct_hook = make_dict_unstructure_fn(
-        Student,
+    # For Customer class, rename 'products' to 'inventory' during serialization
+    customer_unstruct_hook = make_dict_unstructure_fn(
+        Customer,
         converter,
         _cattrs_omit_if_default=False,
-        courses=override(rename="enrolled_in"),
+        products=override(rename="inventory"),
     )
-    converter.register_unstructure_hook(Student, student_unstruct_hook)
+    converter.register_unstructure_hook(Customer, customer_unstruct_hook)
 
-    def structure_datetime(val, _) -> datetime:
-        if isinstance(val, datetime):
-            return val
-        return parse(val)
-
-    def structure_date(val, _) -> date:
-        if isinstance(val, datetime):
-            return val.date()
-        return parse(val).date()
-
-    converter.register_structure_hook(datetime, structure_datetime)
-    converter.register_structure_hook(date, structure_date)
     return converter
 
 
@@ -136,23 +108,35 @@ def load(
     return [converter.structure(data, cls) for data in data_list]
 
 
-years = load(year_data, AcademicYear)
-courses = load(course_data, Course)
-students = load(student_data, Student)
+categories = load(category_data, Category)
+products = load(product_data, Product)
+customers = load(customer_data, Customer)
 
 
-def example():
-    for student in students:
-        converter.unstructure(student)
+def serialization_example():
+    for customer in customers:
+        converter.unstructure(customer)
 
-    for course in courses:
-        converter.unstructure(course)
+    for product in products:
+        converter.unstructure(product)
 
-    for year in years:
-        converter.unstructure(year)
+    for category in categories:
+        converter.unstructure(category)
+
+
+def deserialization_example():
+    load(customer_data, Customer)
+    load(product_data, Product)
+    load(category_data, Category)
 
 
 @timeit("attrs + cattrs")
-def test(n: int, mode: str = "python") -> None:
+def test_serialization(n: int, mode: str = "python") -> None:
     for _ in range(n):
-        example()
+        serialization_example()
+
+
+@timeit("attrs + cattrs")
+def test_deserialization(n: int) -> None:
+    for _ in range(n):
+        deserialization_example()

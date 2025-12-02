@@ -3,14 +3,15 @@ from typing_extensions import Unpack
 from attrib import validators
 from attrib.descriptors.base import FieldKwargs, String
 
-
 __all__ = [
     "HexColor",
     "RGBColor",
     "HSLColor",
+    "HSVColor",
     "hex_color_validator",
     "rgb_color_validator",
     "hsl_color_validator",
+    "hsv_color_validator",
 ]
 
 
@@ -64,6 +65,28 @@ class HSLColor(String):
 
     def __init__(self, **kwargs: Unpack[FieldKwargs]) -> None:
         # Enforces lowercase for HSL color values
+        super().__init__(
+            trim_whitespaces=True,
+            to_lowercase=True,
+            to_uppercase=False,
+            **kwargs,
+        )
+
+
+hsv_color_validator = validators.pattern(
+    r"^hsv[a]?\(\s*(\d{1,3})\s*,\s*(\d{1,3})%?\s*,\s*(\d{1,3})%?\s*(?:,\s*(\d{1,3})\s*)?\)$",
+    message="Value must be a valid HSV color code.",
+)
+
+
+class HSVColor(String):
+    """Field for handling HSV color values."""
+
+    # default_max_length = 40
+    default_validator = hsv_color_validator
+
+    def __init__(self, **kwargs: Unpack[FieldKwargs]) -> None:
+        # Enforces lowercase for HSV color values
         super().__init__(
             trim_whitespaces=True,
             to_lowercase=True,

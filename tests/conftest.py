@@ -1,7 +1,7 @@
 import datetime
-from decimal import Decimal
 import enum
 import typing
+from decimal import Decimal
 
 import pytest
 
@@ -44,8 +44,8 @@ class Person(attrib.Dataclass, getitem=True, setitem=True):
 class Company(attrib.Dataclass, frozen=True, hash=True):
     """Frozen company dataclass."""
 
-    id = attrib.field(int, required=True)
-    name = attrib.field(str)
+    id = attrib.field(int, required=True, hash=True)
+    name = attrib.field(str, hash=True)
     founded = attrib.field(datetime.date, allow_null=True, default=None)
     revenue = attrib.field(Decimal, allow_null=True, default=None)
 

@@ -1,3 +1,6 @@
+import functools
+import inspect
+import typing
 from collections.abc import (
     Iterable,
     Mapping,
@@ -6,9 +9,6 @@ from collections.abc import (
     Sequence,
     Set,
 )
-import functools
-import inspect
-import typing
 
 from attrib._utils import coalesce, is_generic_type
 from attrib.exceptions import (
@@ -22,8 +22,8 @@ from attrib.types import (
     JSONValue,
     NoneType,
     Serializer,
-    T,
     SerializerMap,
+    T,
     Validator,
 )
 from attrib.validators import (
@@ -167,12 +167,10 @@ def build_generic_type_deserializer(
                 return multi_optional_deserializer
 
         args_deserializers = tuple(
-            [
-                build_generic_type_deserializer(arg, depth=next_depth)
-                if is_generic_type(arg)
-                else build_concrete_type_deserializer(arg, depth=next_depth)
-                for arg in type_args
-            ]
+            build_generic_type_deserializer(arg, depth=next_depth)
+            if is_generic_type(arg)
+            else build_concrete_type_deserializer(arg, depth=next_depth)
+            for arg in type_args
         )
         return coalesce(
             *args_deserializers,
@@ -185,12 +183,10 @@ def build_generic_type_deserializer(
         )
 
     args_deserializers = tuple(
-        [
-            build_generic_type_deserializer(arg, depth=next_depth)
-            if is_generic_type(arg)
-            else build_concrete_type_deserializer(arg, depth=next_depth)
-            for arg in type_args
-        ]
+        build_generic_type_deserializer(arg, depth=next_depth)
+        if is_generic_type(arg)
+        else build_concrete_type_deserializer(arg, depth=next_depth)
+        for arg in type_args
     )
     if is_mapping_origin(origin):
         assert len(args_deserializers) == 2, (
@@ -225,7 +221,7 @@ def build_generic_type_deserializer(
                         value_deserializer(item, *args, **kwargs)
                     )
                 except (TypeError, ValueError, DeserializationError) as exc:
-                    raise DeserializationError.from_exception(
+                    raise DeserializationError.from_exc(
                         exc,
                         input_type=type(value),
                         expected_type=origin,
@@ -262,7 +258,7 @@ def build_generic_type_deserializer(
                             args_deserializers[index](item, *args, **kwargs)
                         )
                     except (TypeError, ValueError, DeserializationError) as exc:
-                        raise DeserializationError.from_exception(
+                        raise DeserializationError.from_exc(
                             exc,
                             input_type=type(value),
                             expected_type=type_args[index],
@@ -297,7 +293,7 @@ def build_generic_type_deserializer(
                         break
                     except (TypeError, ValueError, DeserializationError) as exc:
                         if error is None:
-                            error = DeserializationError.from_exception(
+                            error = DeserializationError.from_exc(
                                 exc,
                                 message="Failed to deserialize item at index",
                                 input_type=type(value),
@@ -381,13 +377,11 @@ def build_generic_type_validator(
             # If the origin is Union and NoneType is one of the arguments,
             # we have an optional type.
             args_validators = tuple(
-                [
-                    build_generic_type_validator(arg, depth=next_depth)
-                    if is_generic_type(arg)
-                    else build_concrete_type_validator(arg, depth=next_depth)
-                    for arg in type_args
-                    if arg is not NoneType
-                ]
+                build_generic_type_validator(arg, depth=next_depth)
+                if is_generic_type(arg)
+                else build_concrete_type_validator(arg, depth=next_depth)
+                for arg in type_args
+                if arg is not NoneType
             )
             if not args_validators:
                 raise TypeError(
@@ -398,22 +392,18 @@ def build_generic_type_validator(
             return optional(Or(args_validators))
 
         args_validators = tuple(
-            [
-                build_generic_type_validator(arg, depth=next_depth)
-                if is_generic_type(arg)
-                else build_concrete_type_validator(arg, depth=next_depth)
-                for arg in type_args
-            ]
-        )
-        return Or(args_validators)
-
-    args_validators = tuple(
-        [
             build_generic_type_validator(arg, depth=next_depth)
             if is_generic_type(arg)
             else build_concrete_type_validator(arg, depth=next_depth)
             for arg in type_args
-        ]
+        )
+        return Or(args_validators)
+
+    args_validators = tuple(
+        build_generic_type_validator(arg, depth=next_depth)
+        if is_generic_type(arg)
+        else build_concrete_type_validator(arg, depth=next_depth)
+        for arg in type_args
     )
     if is_mapping_origin(origin):
         assert len(args_validators) == 2, (
@@ -446,7 +436,7 @@ def build_generic_type_validator(
                     try:
                         args_validators[index](item, *args, **kwargs)
                     except (ValidationError, TypeError, ValueError) as exc:
-                        raise ValidationError.from_exception(
+                        raise ValidationError.from_exc(
                             exc,
                             input_type=type(value),
                             expected_type=type_args[index],
@@ -542,12 +532,10 @@ def build_generic_type_serializer(
         )
 
     args_serializers = tuple(
-        [
-            build_generic_type_serializer(arg, fmt=fmt, depth=next_depth)
-            if is_generic_type(arg)
-            else build_concrete_type_serializer(arg, fmt=fmt, depth=next_depth)
-            for arg in type_args
-        ]
+        build_generic_type_serializer(arg, fmt=fmt, depth=next_depth)
+        if is_generic_type(arg)
+        else build_concrete_type_serializer(arg, fmt=fmt, depth=next_depth)
+        for arg in type_args
     )
 
     if not inspect.isclass(origin):
@@ -583,12 +571,10 @@ def build_generic_type_serializer(
             return optional_serializer
 
         args_serializers = tuple(
-            [
-                build_generic_type_serializer(arg, fmt=fmt, depth=next_depth)
-                if is_generic_type(arg)
-                else build_concrete_type_serializer(arg, fmt=fmt, depth=next_depth)
-                for arg in type_args
-            ]
+            build_generic_type_serializer(arg, fmt=fmt, depth=next_depth)
+            if is_generic_type(arg)
+            else build_concrete_type_serializer(arg, fmt=fmt, depth=next_depth)
+            for arg in type_args
         )
         return coalesce(
             *args_serializers,
@@ -601,12 +587,10 @@ def build_generic_type_serializer(
         )
 
     args_serializers = tuple(
-        [
-            build_generic_type_serializer(arg, fmt=fmt, depth=next_depth)
-            if is_generic_type(arg)
-            else build_concrete_type_serializer(arg, fmt=fmt, depth=next_depth)
-            for arg in type_args
-        ]
+        build_generic_type_serializer(arg, fmt=fmt, depth=next_depth)
+        if is_generic_type(arg)
+        else build_concrete_type_serializer(arg, fmt=fmt, depth=next_depth)
+        for arg in type_args
     )
     if is_mapping_origin(origin):
         assert len(args_serializers) == 2, (
@@ -641,7 +625,7 @@ def build_generic_type_serializer(
                         value_serializer(item, *args, **kwargs)
                     )
                 except (SerializationError, TypeError, ValueError) as exc:
-                    raise SerializationError.from_exception(
+                    raise SerializationError.from_exc(
                         exc,
                         input_type=type(value),
                         expected_type=origin,
@@ -677,7 +661,7 @@ def build_generic_type_serializer(
                     try:
                         new_tuple.append(args_serializers[index](item, *args, **kwargs))
                     except (SerializationError, TypeError, ValueError) as exc:
-                        raise SerializationError.from_exception(
+                        raise SerializationError.from_exc(
                             exc,
                             input_type=type(value),
                             expected_type=type_args[index],
@@ -710,7 +694,7 @@ def build_generic_type_serializer(
                         break
                     except (SerializationError, TypeError, ValueError) as exc:
                         if error is None:
-                            error = SerializationError.from_exception(
+                            error = SerializationError.from_exc(
                                 exc,
                                 message="Failed to serialize item at index",
                                 input_type=type(value),

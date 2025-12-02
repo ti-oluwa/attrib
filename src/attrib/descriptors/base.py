@@ -36,10 +36,10 @@ from attrib.exceptions import (
     ValidationError,
 )
 from attrib.types import (
+    EMPTY,
     AnyType,
     Context,
     Deserializer,
-    EMPTY,
     Empty,
     IterT,
     JSONValue,
@@ -63,20 +63,21 @@ __all__ = [
     "Any",
     "Boolean",
     "String",
-    "RealNumber",
+    "Email",
+    "Choice",
+    "Slug",
+    "Char",
+    "Character",
+    "Number",
     "Float",
     "Integer",
     "Decimal",
-    "Dict",
     "Iterable",
     "List",
     "Set",
     "FrozenSet",
     "Deque",
-    "Email",
-    "Choice",
     "JSONObject",
-    "Slug",
     "Bytes",
     "IOBase",
     "Path",
@@ -85,6 +86,7 @@ __all__ = [
 
 NonTupleFieldType: TypeAlias = typing.Union[
     str,
+    T,
     typing.Type[T],
     typing.Type[AnyType],
     typing.ForwardRef,
@@ -227,16 +229,14 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         serializers: typing.Optional[typing.Mapping[str, Serializer[T]]] = None,
         deserializer: typing.Optional[Deserializer[T]] = None,
         always_coerce: bool = False,
-        check_coerced: bool = False,
         skip_validator: bool = False,
         validate_default: bool = False,
         fail_fast: bool = False,
-        hash: bool = True,
+        hash: bool = False,
         repr: bool = True,
         eq: bool = True,
         init: bool = True,
         order: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
-        **kwargs,
     ) -> None:
         """
         Initialize the field.
@@ -256,17 +256,14 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
 
         :param serializers: A mapping of serialization formats to their respective serializer functions. Defaults to None.
         :param deserializer: A deserializer function to convert the field's value to the expected type. Defaults to None.
-        :param always_coerce: If True, the field will always attempt to coerce the value by applying the deserializer
-            to the specified type, even if the value is already of that type. Defaults to False.
-
-        :param check_coerced: If True, the field will (double) check that the value returned by the deserializer is of the expected type.
-            If the value is not of the expected type, a ValidationError will be raised. Defaults to False.
-            Set to True if a custom deserializer is used and the return type cannot be guaranteed to match the field type.
+        :param always_coerce: If True, the field will always attempt to coerce the value to the specified type,
+            even if the value is already of that type. Defaults to False. This is useful when
+            when constant 'transformation' and not just 'type checking' is desired during deserialization.
 
         :param skip_validator: If True, the field will skip validator run after deserialization. Defaults to False.
         :param validate_default: If True, the field will check that the default value is valid before setting it. Defaults to False.
         :param fail_fast: If True, the field will raise an error immediately a validation fails. Defaults to False.
-        :param hash: If True, the field will be included in the hash of the class it is defined in. Defaults to True.
+        :param hash: If True, the field will be included in the hash of the class it is defined in. Defaults to False.
         :param repr: If True, the field will be included in the repr of the class it is defined in. Defaults to True.
         :param eq: If True, the field will be compared for equality when comparing instances of the class it is defined in. Defaults to True.
         :param init: If True, the field will be included as an instantiation argument for the class it is defined in. Defaults to True.
@@ -314,10 +311,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         self.allow_null = allow_null
         self.required = required
         self.strict = strict
-        _validator = field_validators.pipe(*validators) if validators else None
-        if allow_null and _validator is not None:
-            _validator = field_validators.optional(_validator)
-        self.validator = field_validators.load(_validator)[0] if _validator else None
+        self.validator = field_validators.pipe(*validators) if validators else None
         self.serializers = {
             **serializers_map,
             **(serializers or {}),
@@ -325,7 +319,6 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         self.deserializer = deserializer or default_deserializer
         self.default = default
         self.always_coerce = always_coerce
-        self.check_coerced = check_coerced
         self.skip_validator = skip_validator
         self._check_default = validate_default
         self.fail_fast = fail_fast
@@ -341,38 +334,24 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         """Meta information for the field, can be used to store additional data."""
         self._slotted_name: typing.Optional[str] = None
         """The name with which the field will be stored in the instance's __slots__."""
-        # We precompute the identity formats here, so that we can use it later in `asdict` so
-        # We do not need to call `Field.serialize` for formats that do not change the value.
-        # This should reduce overhead in function calls, for serialization formats that do not change the value.
-        # Especially for function used in hot paths like `Field.serialize`.
         self._identity_formats = {}
         """Set of serialization formats that will not change the value during serialization."""
         self._typestr: str = "<unknown>"
         """The string representation of the field type."""
         self._serialization_keys: typing.Dict[bool, str] = {}
         """A cache for serialization keys based on by_alias flag."""
-        self._type_cache = dict()
+        self._type_cache = {}
+        """Cache for resolved types."""
 
-        # Precompute flags
-        self._allow_any_type = (
-            self.field_type is AnyType or self.field_type is typing.Any
-        )
-        self._default_is_callable = callable(default)
-        # If `_check_default` is False, the default value is assumed valid and doesn't need validation.
-        # However, this only applies if the field is not configured to always coerce input.
-        # If `_check_default` is True, the default value needs to be validated.
-        self._default_is_valid = (
-            self._check_default is False
-            and self.always_coerce is False
-            and self.required is False
-        )
-        self._type_is_union = is_iterable(self.field_type)
-        self._type_is_enum = (
-            is_enum_type(self.field_type) if not self._allow_any_type else False
-        )
-        self._can_use_identity_type_check = (
-            self._uses_type_adapter is False and self._type_is_union is False
-        )
+        # Precomputation flags
+        self._allow_any_type = False
+        self._default_is_factory = False
+        self._default_is_valid = False
+        self._type_is_union = False
+        self._type_is_enum = False
+        self._can_use_identity_type_check = False
+        self._has_validator = False
+        self._is_slotted = False
 
     @property
     def typestr(self) -> str:
@@ -395,10 +374,43 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         return value
 
     def _update_identity_formats(self) -> None:
-        """Update the identity formats set."""
+        """Update the identity formats set. Must be called ONCE the field type is built and all serializers are known."""
         self._identity_formats = {
             fmt for fmt, f in self.serializers.items() if f is no_op_serializer
         }
+
+    def _compute_type_flags(self) -> None:
+        """Compute type-related flags. Used when the field type is changed."""
+        self._allow_any_type = (
+            self.field_type is AnyType or self.field_type is typing.Any
+        )
+        self._type_is_union = is_iterable(self.field_type)
+        self._type_is_enum = (
+            is_enum_type(self.field_type) if not self._allow_any_type else False
+        )
+        self._can_use_identity_type_check = (
+            self._uses_type_adapter is False and self._type_is_union is False
+        )
+
+    def _compute_validator_flags(self) -> None:
+        """Compute validator-related flags. Used when the validator is changed."""
+        self._has_validator = self.validator is not None and not self.skip_validator
+
+    def _compute_default_flags(self) -> None:
+        """Compute default-related flags. Used when the default value is changed."""
+        self._default_is_factory = callable(self.default)
+        # If `_check_default` is False, the default value is assumed valid and doesn't need validation.
+        # However, this only applies if the field is not configured to always coerce input.
+        # If `_check_default` is True, the default value needs to be validated.
+        self._default_is_valid = (
+            self._check_default is False
+            and self.always_coerce is False
+            and self.required is False
+        )
+
+    def _compute_slotted_flag(self) -> None:
+        """Compute whether the field is slotted. To be called after binding the field to a parent class."""
+        self._is_slotted = self._slotted_name is not None
 
     def __post_init__(self) -> None:
         """
@@ -415,8 +427,8 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
                 f"{self.field_type!r} is not a valid field type.", name=self.name
             )
 
-        default_provided = self.default is not EMPTY
-        if self.required and default_provided:
+        has_default = self.default is not EMPTY
+        if self.required and has_default:
             raise FieldError(
                 "A default value is not necessary when required=True", name=self.name
             )
@@ -426,11 +438,14 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
                 "If strict is True, the field will not attempt to coerce values.",
                 name=self.name,
             )
-        if default_provided and self.default is None and not self.allow_null:
+        if has_default and self.default is None and not self.allow_null:
             raise FieldError(
                 "Field default cannot be None when `allow_null=False`", name=self.name
             )
         self._typestr = self.get_typestr()
+        self._compute_type_flags()
+        self._compute_validator_flags()
+        self._compute_default_flags()
 
     def __get_type_hint__(self):
         """Return type information for the field."""
@@ -455,7 +470,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
 
     def get_default(self) -> typing.Union[T, typing.Any, None]:
         """Return the default value for the field."""
-        if self._default_is_callable:
+        if self._default_is_factory:
             try:
                 return self.default()  # type: ignore
             except Exception as exc:
@@ -478,12 +493,15 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         )
         if self._check_default:
             # Since we've checked the default so we don't need to check it again.
-            # For default factories, we assume they always return a valid value.
-            # Since the first value is checked, subsequent calls are assumed valid.
-            # Hence, we recompute `_default_is_valid` to just be the negation of `always_coerce`.
+            # However, if `always_coerce` is True, we cannot assume the default is valid.
+            # Also, if the field is required, the default may not be valid. Lastly,
+            # if the default is a factory, we cannot assume the default is valid.
+            # We have to re-evaluate the validity of the default in these cases.
             self._check_default = False
             self._default_is_valid = (
-                self.always_coerce is False and self.required is False
+                self.always_coerce is False
+                and self.required is False
+                and not self._default_is_factory
             )
 
     def build(
@@ -501,7 +519,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         if isinstance(field_type, TypeAdapter) and not field_type._is_built:
             field_type.build(globalns=globalns, localns=localns)
             self.serializers.update(field_type.serializers)  # type: ignore
-            self.deserializer = field_type.deserializer
+            self.deserializer = typing.cast(Deserializer[T], field_type.deserializer)
             if self.validator is not None and field_type.validator is not None:
                 self.validator = field_validators.pipe(
                     self.validator,  # type: ignore
@@ -509,7 +527,8 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
                 )
             elif field_type.validator is not None:
                 self.validator = field_type.validator
-            # Use already resolved type of the TypeAdapter
+
+            # Use already resolved type of the `TypeAdapter`
             self.field_type = field_type
         else:
             self.field_type = typing.cast(
@@ -520,6 +539,14 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
                     localns=localns,
                 ),
             )
+
+        # Re-compute type and validator flags as the field's type and validator may have changed
+        self._compute_type_flags()
+        self._compute_validator_flags()
+        # We precompute the identity formats here, so that we can use it later in `asdict` so
+        # We do not need to call `Field.serialize` for formats that do not change the value.
+        # This should reduce overhead in function calls, for serialization formats that do not change the value.
+        # Especially for function used in hot paths like `Field.serialize`.
         self._update_identity_formats()
 
     def bind(
@@ -561,14 +588,16 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
                 "self": parent,
             },
         )
+        # Pre-compute slotted flag now that we have the slotted name
+        self._compute_slotted_flag()
 
     def __set_name__(self, owner: typing.Type[typing.Any], name: str):
-        """Assign the field name when the descriptor is initialized on the class."""
+        """Bind the field to the owner class."""
         self.bind(owner, name)
 
     def __delete__(self, instance: typing.Any) -> None:
-        if name := self._slotted_name:
-            object.__delattr__(instance, name)
+        if self._is_slotted:
+            object.__delattr__(instance, self._slotted_name)  # type: ignore[arg-type]
         else:
             del instance.__dict__[self.name]
 
@@ -592,18 +621,18 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         owner: typing.Optional[typing.Type[typing.Any]],
     ) -> typing.Union[T, Self, None, Empty]:
         """Retrieve the field value from an instance or return the default if unset."""
-        if not instance:
+        if instance is None:
             return self
 
-        if name := self._slotted_name:
-            return object.__getattribute__(instance, name)
+        if self._is_slotted:
+            return object.__getattribute__(instance, self._slotted_name)  # type: ignore[arg-type]
         return instance.__dict__[self.name]
 
     def __set__(self, instance: typing.Any, value: typing.Any) -> None:
         """Set and validate the field value on an instance."""
         validated = self._coerce_and_validate(instance, value)
-        if name := self._slotted_name:
-            object.__setattr__(instance, name, validated)
+        if self._is_slotted:
+            object.__setattr__(instance, self._slotted_name, validated)  # type: ignore[arg-type]
         else:
             instance.__dict__[self.name] = validated
 
@@ -611,18 +640,44 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         field_set: typing.Set = instance.__fields_set__  # type: ignore[attr-defined]
         field_set.add(self.name)
 
+    def check_type(self, value: typing.Any) -> TypeGuard[T]:
+        """Check if the value is of the expected type."""
+        if self._allow_any_type:
+            return True
+
+        value_type = type(value)
+        if value_type in self._type_cache:
+            return self._type_cache[value_type]
+
+        if self.allow_null and value_type is NoneType:
+            self._type_cache[value_type] = True
+            return True
+
+        field_type = self.field_type
+        if self._can_use_identity_type_check and value_type is field_type:
+            self._type_cache[value_type] = True
+            return True
+
+        is_type = isinstance(value, field_type)  # type: ignore[arg-type]
+        if not self._uses_type_adapter:
+            self._type_cache[value_type] = is_type
+        return is_type
+
     def _coerce_and_validate(
         self, instance: typing.Any, value: typing.Any
     ) -> typing.Union[T, None, Empty]:
         """
         Validate and coerce value.
 
+        Orchestrates the coercion and validation of a field value,
+        taking into consideration the field's configuration too.
+
         :param instance: The instance to which the field belongs.
         :param value: The field value to validate and coerce.
         :return: The validated and coerced value.
         """
         is_empty = value is EMPTY
-        if self.required and is_empty:
+        if is_empty and self.required:
             raise ValidationError(
                 "Value is required but not provided.",
                 parent_name=type(instance).__name__ if instance else None,
@@ -632,8 +687,11 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
                 code="missing_value",
             )
 
-        if is_empty:
+        elif is_empty:
             return EMPTY
+
+        if self.allow_null and value is None:
+            return None
 
         deserialized = self.deserialize(value, instance)
         self.validate(deserialized, instance)
@@ -664,29 +722,6 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
             instance.__dict__[self.name] = validated
         return validated
 
-    def check_type(self, value: typing.Any) -> TypeGuard[T]:
-        """Check if the value is of the expected type."""
-        if self._allow_any_type:
-            return True
-
-        value_type = type(value)
-        if value_type in self._type_cache:
-            return self._type_cache[value_type]
-
-        if self.allow_null and value_type is NoneType:
-            self._type_cache[value_type] = True
-            return True
-
-        field_type = self.field_type
-        if self._can_use_identity_type_check and value_type is field_type:
-            self._type_cache[value_type] = True
-            return True
-
-        is_type = isinstance(value, field_type)  # type: ignore[arg-type]
-        if not self._uses_type_adapter:
-            self._type_cache[value_type] = is_type
-        return is_type
-
     def deserialize(
         self,
         value: typing.Union[T, typing.Any],
@@ -697,15 +732,12 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
 
         Converts the field's value to the specified type before it is set on the instance.
         """
-        if value is None and self.allow_null:
-            return None
-
-        # Fast path: skip type check if always_coerce is True
+        # Skip type check if `always_coerce` is True. Just coerce directly.
         if self.always_coerce:
             try:
-                deserialized = self.deserializer(value, self)  # type: ignore[call-arg]
+                return self.deserializer(value, self)  # type: ignore[call-arg]
             except (ValueError, TypeError, DeserializationError) as exc:
-                raise DeserializationError.from_exception(
+                raise DeserializationError.from_exc(
                     exc,
                     message="Failed to deserialize value.",
                     parent_name=type(instance).__name__ if instance else None,
@@ -713,17 +745,6 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
                     expected_type=self.typestr,
                     location=[self.name],
                 ) from exc
-
-            if self.check_coerced and not self.check_type(deserialized):
-                raise InvalidTypeError(
-                    "Coerced value is not of the expected type.",
-                    parent_name=type(instance).__name__ if instance else None,
-                    input_type=type(deserialized),
-                    expected_type=self.typestr,
-                    location=[self.name],
-                    code="invalid_type",
-                )
-            return deserialized  # type: ignore[return-value]
 
         # Check if already correct type
         if self.check_type(value):
@@ -740,9 +761,9 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
 
         # Coerce to correct type
         try:
-            deserialized = self.deserializer(value, self)  # type: ignore[call-arg]
+            return self.deserializer(value, self)  # type: ignore[call-arg]
         except (ValueError, TypeError, DeserializationError) as exc:
-            raise DeserializationError.from_exception(
+            raise DeserializationError.from_exc(
                 exc,
                 message="Failed to deserialize value.",
                 parent_name=type(instance).__name__ if instance else None,
@@ -750,17 +771,6 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
                 expected_type=self.typestr,
                 location=[self.name],
             ) from exc
-
-        if self.check_coerced and not self.check_type(deserialized):
-            raise InvalidTypeError(
-                "Coerced value is not of the expected type.",
-                parent_name=type(instance).__name__ if instance else None,
-                input_type=type(deserialized),
-                expected_type=self.typestr,
-                location=[self.name],
-                code="invalid_type",
-            )
-        return deserialized  # type: ignore[return-value]
 
     def validate(
         self,
@@ -775,17 +785,17 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         :param value: The value to validate.
         :param instance: The instance to which the field belongs.
         """
-        if self.skip_validator or self.validator is None:
+        if not self._has_validator:
             return
         try:
-            self.validator(
+            self.validator(  # type: ignore
                 value,
                 self,  # type: ignore[arg-type]
                 instance,
                 fail_fast=self.fail_fast,
             )
         except (ValueError, ValidationError) as exc:
-            raise ValidationError.from_exception(
+            raise ValidationError.from_exc(
                 exc,
                 parent_name=type(instance).__name__ if instance else None,
                 input_type=type(value),
@@ -807,7 +817,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         try:
             return self.serializers[fmt](value, self, context)
         except (ValueError, TypeError, SerializationError) as exc:
-            raise SerializationError.from_exception(
+            raise SerializationError.from_exc(
                 exc,
                 input_type=type(value),
                 expected_type=self.typestr,
@@ -843,13 +853,9 @@ class FieldKwargs(typing.TypedDict, total=False):
     default: typing.Union[typing.Any, DefaultFactory, None]
     """A default value for the field to be used if no value is set."""
     always_coerce: bool
-    """If True, the field will always attempt to coerce the value by applying the deserializer."""
-    check_coerced: bool
     """
-    If True, the field will (double) check that the value returned by the deserializer is of the expected type.
-    If the value is not of the expected type, a ValidationError will be raised. Defaults to False.
-
-    Set to True if a custom deserializer is used and the return type cannot be guaranteed to match the field type.
+    If True, the field will always attempt to coerce the value to the specified type, 
+    even if the value is already of that type.
     """
     skip_validator: bool
     """If True, the field will skip validator run after deserialization."""
@@ -932,7 +938,7 @@ def build_min_max_value_validators(
     return validators
 
 
-class RealNumber(Field[RealNumberT]):
+class Number(Field[RealNumberT]):
     """Field for handling real number values."""
 
     default_serializers = {
@@ -961,8 +967,7 @@ class RealNumber(Field[RealNumberT]):
         super().__init__(field_type, **kwargs)
 
 
-# For some reason, the type checker flags `float` as not being a valid subtype of `RealNumberT`.
-class Float(RealNumber[float]):  # type: ignore[misc]
+class Float(Number[float]):
     """Field for handling float values."""
 
     def __init__(
@@ -991,7 +996,7 @@ def integer_field_deserializer(value: typing.Any, field: "Integer") -> int:
     return int(value, base=field.base)
 
 
-class Integer(RealNumber[int]):  # type: ignore[misc]
+class Integer(Number[int]):
     """Field for handling integer values."""
 
     default_deserializer = integer_field_deserializer
@@ -1028,7 +1033,7 @@ def get_quantizer(dp: int) -> decimal.Decimal:
     return decimal.Decimal(f"0.{'0' * (dp - 1)}1") if dp > 0 else decimal.Decimal("1")
 
 
-class Decimal(RealNumber[decimal.Decimal]):  # type: ignore[misc]
+class Decimal(Number[decimal.Decimal]):
     """Field for handling decimal values."""
 
     default_serializers = {
@@ -1141,7 +1146,10 @@ class String(Field[str]):
                 None,
                 [
                     kwargs.get("validator", None),
-                    *build_min_max_length_validators(min_length, max_length),
+                    *build_min_max_length_validators(
+                        min_length=min_length or type(self).default_min_length,
+                        max_length=max_length or type(self).default_max_length,
+                    ),
                 ],
             )
         )
@@ -1179,11 +1187,109 @@ class String(Field[str]):
         return self._formatter(deserialized)
 
 
-class Dict(Field[typing.Dict]):
-    """Field for handling dictionary values."""
+class Character(String):
+    """Field for handling single character string values."""
 
-    def __init__(self, **kwargs: Unpack[FieldKwargs]):
-        super().__init__(dict, **kwargs)
+    default_validator = field_validators.max_length(1)
+
+
+Char = Character
+
+
+slug_validator = field_validators.pattern(
+    r"^[a-zA-Z0-9_-]+$",
+    message="Value must be a valid slug.",
+)
+
+
+class Slug(String):
+    """Field for URL-friendly strings."""
+
+    default_min_length = 1
+    default_validator = slug_validator
+
+
+email_validator = field_validators.pattern(
+    r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
+    message="Value must be a valid email address.",
+)
+
+
+class Email(String):
+    """Field for handling email addresses."""
+
+    default_validator = email_validator
+
+    def __init__(
+        self,
+        *,
+        min_length: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
+        max_length: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
+        trim_whitespaces: bool = True,
+        to_lowercase: bool = True,  # Prefer to store email values in lowercase
+        to_uppercase: bool = False,
+        **kwargs: Unpack[FieldKwargs],
+    ):
+        super().__init__(
+            min_length=min_length,
+            max_length=max_length,
+            trim_whitespaces=trim_whitespaces,
+            to_lowercase=to_lowercase,
+            to_uppercase=to_uppercase,
+            **kwargs,
+        )
+
+
+class Choice(Field[T]):
+    """Field with predefined choices for values."""
+
+    @typing.overload
+    def __init__(
+        self,
+        field_type: typing.Type[T],
+        *,
+        choices: None = None,
+        **kwargs: Unpack[FieldKwargs],
+    ) -> None: ...
+
+    @typing.overload
+    def __init__(
+        self,
+        field_type: typing.Type[T],
+        *,
+        choices: typing.Iterable[T],
+        **kwargs: Unpack[FieldKwargs],
+    ) -> None: ...
+
+    def __init__(
+        self,
+        field_type: typing.Type[T],
+        *,
+        choices: typing.Optional[typing.Iterable[T]] = None,
+        **kwargs: Unpack[FieldKwargs],
+    ) -> None:
+        # Skip `in` check for Enum types since the value will always be an Enum member after deserialization
+        is_enum_choice = is_enum_type(field_type)
+        if not choices and not is_enum_choice:
+            raise ValueError(
+                "Choices must be provided for the field. Use `choices` argument."
+            )
+
+        if choices and not is_enum_choice:
+            validators = list(
+                filter(
+                    None,
+                    [
+                        kwargs.get("validator", None),
+                        field_validators.in_(choices),
+                    ],
+                )
+            )
+            if validators:
+                kwargs["validator"] = field_validators.pipe(
+                    *validators,
+                )
+        super().__init__(field_type=field_type, **kwargs)
 
 
 class UUID(Field[uuid.UUID]):
@@ -1226,14 +1332,14 @@ def iterable_field_python_serializer(
             child_typestr = child_field.typestr
             input_type = type(item)
             if fail_fast:
-                raise SerializationError.from_exception(
+                raise SerializationError.from_exc(
                     exc,
                     input_type=input_type,
                     expected_type=child_typestr,
                     location=[index],
                 ) from exc
             if error is None:
-                error = SerializationError.from_exception(
+                error = SerializationError.from_exc(
                     exc,
                     input_type=input_type,
                     expected_type=child_typestr,
@@ -1241,7 +1347,7 @@ def iterable_field_python_serializer(
                 )
             else:
                 error.merge(
-                    SerializationError.from_exception(
+                    SerializationError.from_exc(
                         exc,
                         input_type=input_type,
                         expected_type=child_typestr,
@@ -1288,7 +1394,7 @@ def iterable_field_json_serializer(
             child_typestr = child_field.typestr
             input_type = type(item)
             if fail_fast:
-                raise SerializationError.from_exception(
+                raise SerializationError.from_exc(
                     exc,
                     input_type=input_type,
                     expected_type=child_typestr,
@@ -1296,7 +1402,7 @@ def iterable_field_json_serializer(
                 ) from exc
 
             if error is None:
-                error = SerializationError.from_exception(
+                error = SerializationError.from_exc(
                     exc,
                     input_type=input_type,
                     expected_type=child_typestr,
@@ -1304,7 +1410,7 @@ def iterable_field_json_serializer(
                 )
             else:
                 error.merge(
-                    SerializationError.from_exception(
+                    SerializationError.from_exc(
                         exc,
                         input_type=input_type,
                         expected_type=child_typestr,
@@ -1342,7 +1448,7 @@ def iterable_field_deserializer(
             child_typestr = child_field.typestr
             input_type = type(item)
             if fail_fast:
-                raise DeserializationError.from_exception(
+                raise DeserializationError.from_exc(
                     exc,
                     input_type=input_type,
                     expected_type=child_typestr,
@@ -1350,7 +1456,7 @@ def iterable_field_deserializer(
                 ) from exc
 
             if error is None:
-                error = DeserializationError.from_exception(
+                error = DeserializationError.from_exc(
                     exc,
                     input_type=input_type,
                     expected_type=child_typestr,
@@ -1358,7 +1464,7 @@ def iterable_field_deserializer(
                 )
             else:
                 error.merge(
-                    DeserializationError.from_exception(
+                    DeserializationError.from_exc(
                         exc,
                         input_type=input_type,
                         expected_type=child_typestr,
@@ -1406,7 +1512,7 @@ def iterable_field_validator(
             child_typestr = child_field.typestr
             input_type = type(item)
             if fail_fast:
-                raise ValidationError.from_exception(
+                raise ValidationError.from_exc(
                     exc,
                     input_type=input_type,
                     expected_type=child_typestr,
@@ -1414,7 +1520,7 @@ def iterable_field_validator(
                 ) from exc
 
             if error is None:
-                error = ValidationError.from_exception(
+                error = ValidationError.from_exc(
                     exc,
                     input_type=input_type,
                     expected_type=child_typestr,
@@ -1422,7 +1528,7 @@ def iterable_field_validator(
                 )
             else:
                 error.merge(
-                    ValidationError.from_exception(
+                    ValidationError.from_exc(
                         exc,
                         input_type=input_type,
                         expected_type=child_typestr,
@@ -1608,89 +1714,6 @@ class Deque(Iterable[typing.Deque[V], V]):
         )
 
 
-email_validator = field_validators.pattern(
-    r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
-    message="Value must be a valid email address.",
-)
-
-
-class Email(String):
-    """Field for handling email addresses."""
-
-    default_validator = email_validator
-
-    def __init__(
-        self,
-        *,
-        min_length=None,
-        max_length=None,
-        trim_whitespaces=True,
-        to_lowercase=True,  # Field prefers to store email values in lowercase
-        to_uppercase=False,
-        **kwargs,
-    ):
-        super().__init__(
-            min_length=min_length,
-            max_length=max_length,
-            trim_whitespaces=trim_whitespaces,
-            to_lowercase=to_lowercase,
-            to_uppercase=to_uppercase,
-            **kwargs,
-        )
-
-
-class Choice(Field[T]):
-    """Field with predefined choices for values."""
-
-    @typing.overload
-    def __init__(
-        self,
-        field_type: typing.Type[T],
-        *,
-        choices: None = None,
-        **kwargs: Unpack[FieldKwargs],
-    ) -> None: ...
-
-    @typing.overload
-    def __init__(
-        self,
-        field_type: typing.Type[T],
-        *,
-        choices: typing.Iterable[T],
-        **kwargs: Unpack[FieldKwargs],
-    ) -> None: ...
-
-    def __init__(
-        self,
-        field_type: typing.Type[T],
-        *,
-        choices: typing.Optional[typing.Iterable[T]] = None,
-        **kwargs: Unpack[FieldKwargs],
-    ) -> None:
-        # Skip `in` check for Enum types since the value will always be an Enum member after deserialization
-        is_enum_choice = is_enum_type(field_type)
-        if not choices and not is_enum_choice:
-            raise ValueError(
-                "Choices must be provided for the field. Use `choices` argument."
-            )
-
-        if choices and not is_enum_choice:
-            validators = list(
-                filter(
-                    None,
-                    [
-                        kwargs.get("validator", None),
-                        field_validators.in_(choices),
-                    ],
-                )
-            )
-            if validators:
-                kwargs["validator"] = field_validators.pipe(
-                    *validators,
-                )
-        super().__init__(field_type=field_type, **kwargs)
-
-
 class JSONObject(Field[JSONValue]):
     """Field for handling JSON data."""
 
@@ -1716,19 +1739,6 @@ class JSONObject(Field[JSONValue]):
         return value
 
 
-slug_validator = field_validators.pattern(
-    r"^[a-zA-Z0-9_-]+$",
-    message="Value must be a valid slug.",
-)
-
-
-class Slug(String):
-    """Field for URL-friendly strings."""
-
-    default_min_length = 1
-    default_validator = slug_validator
-
-
 def bytes_serializer(value: bytes, field: "Bytes", context: Context) -> str:
     """Serialize bytes to a string."""
     return base64.b64encode(value).decode(encoding=field.encoding)
@@ -1740,13 +1750,13 @@ def bytes_deserializer(value: typing.Any, field: "Bytes") -> bytes:
         try:
             return base64.b64decode(value.encode(encoding=field.encoding))
         except (ValueError, TypeError) as exc:
-            raise DeserializationError.from_exception(
+            raise DeserializationError.from_exc(
                 exc,
                 message="Invalid base64 string for bytes",
                 input_type=type(value),
                 expected_type=field.typestr,
                 location=[field.name],
-            )
+            ) from exc
     return bytes(value)
 
 

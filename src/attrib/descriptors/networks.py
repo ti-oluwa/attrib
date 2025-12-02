@@ -1,12 +1,13 @@
 import ipaddress
 import typing
-from urllib.parse import ParseResult as Url, ParseResultBytes as UrlBytes, urlparse
+from urllib.parse import ParseResult as Url
+from urllib.parse import ParseResultBytes as UrlBytes
+from urllib.parse import urlparse
 
 from typing_extensions import Unpack
 
 from attrib.descriptors.base import Field, FieldKwargs, string_serializer
 from attrib.exceptions import ValidationError
-
 
 __all__ = [
     "URL",

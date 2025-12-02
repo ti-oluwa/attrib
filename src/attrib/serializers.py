@@ -1,14 +1,12 @@
 """Dataclass serialization module."""
 
-from collections import defaultdict
 import typing
 
 from typing_extensions import TypeAlias
 
-from attrib.dataclass import Dataclass
+from attrib.dataclasses import Dataclass
 from attrib.exceptions import DeserializationError, SerializationError, ValidationError
-from attrib.types import Context, DataDict, EMPTY, JSONDict
-
+from attrib.types import EMPTY, Context, DataDict, JSONDict
 
 __all__ = [
     "Option",
@@ -84,9 +82,8 @@ class Option:
         )
 
 
-OptionsMap: TypeAlias = typing.DefaultDict[typing.Type[Dataclass], Option]
+OptionsMap: TypeAlias = typing.Dict[typing.Type[Dataclass], Option]
 DEFAULT_OPTION = Option(Dataclass)
-DEFAULT_OPTIONS_MAP: OptionsMap = defaultdict(lambda: DEFAULT_OPTION)
 
 
 def _asdict(
@@ -105,7 +102,12 @@ def _asdict(
     """
     options, fail_fast, by_alias, exclude_unset = context["__options__"]
     datacls = type(instance)
-    option = options[datacls]
+    if datacls in options:
+        option = options[datacls]
+    else:
+        option = DEFAULT_OPTION
+        options[datacls] = option
+
     fields = instance.__dataclass_fields__
     memo = context["__memo__"]
 
@@ -137,14 +139,14 @@ def _asdict(
         except (SerializationError, DeserializationError, ValidationError) as exc:
             parent_name = datacls.__name__
             if fail_fast:
-                raise SerializationError.from_exception(
+                raise SerializationError.from_exc(
                     exc,
                     parent_name=parent_name,
                     expected_type=field.typestr,
                     location=[name],
                 ) from exc
             if error is None:
-                error = SerializationError.from_exception(
+                error = SerializationError.from_exc(
                     exc,
                     parent_name=parent_name,
                     expected_type=field.typestr,
@@ -170,7 +172,7 @@ def Options(*options: Option) -> OptionsMap:
     :param options: Variable number of `Option` instances.
     :return: A mapping of dataclass types to their corresponding `Option` instances.
     """
-    options_map: OptionsMap = defaultdict(lambda: DEFAULT_OPTION)
+    options_map: OptionsMap = {}
     for option in options:
         options_map[option.target] = option
     return options_map
@@ -293,7 +295,7 @@ def serialize(
     if context is None:
         context = {}
     serialization_options = (
-        options or DEFAULT_OPTIONS_MAP,
+        options if options is not None else {},
         fail_fast,
         by_alias,
         exclude_unset,

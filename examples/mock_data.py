@@ -1,151 +1,166 @@
 #############
 # MOCK DATA #
 #############
-year_data = [
+category_data = [
     {
         "id": "1",  # should be int
-        "name": "2019/2020",
-        "start_date": "01-09-2019",  # changed to "d-m-Y"
-        "end_date": "30-06-2020",  # changed to "d-m-Y"
+        "name": "Electronics",
+        "description": "Electronic devices and accessories",
     },
     {
         "id": 2,
-        "name": 20202021,  # should be str
-        "start_date": "2020-09-01",
-        "end_date": "30/06/2021",  # changed to "d/m/Y"
+        "name": "Clothing",
+        "description": None,  # optional description
     },
     {
         "id": "3",  # should be int
-        "name": "2021/2022",
-        "start_date": "2021/09/01",  # unusual format "Y/m/d"
-        "end_date": "2022-06-30",
+        "name": "Books",
+        "description": "Physical and digital books",
     },
     {
         "id": 4,
-        "name": "2022/2023",
-        "start_date": "September 1, 2022",  # non-standard format
-        "end_date": "06-30-2023",  # changed to "m-d-Y",
+        "name": "Home & Garden",
+        "description": "Home improvement and garden supplies",
     },
 ]
 
 
-course_data = [
+product_data = [
     {
         "id": "1",  # should be int
-        "name": "Computer Science",
-        "code": "CS101",
-        "year": year_data[0],
+        "name": "Laptop",
+        "price": "999.99",  # should be float
+        "quantity": "10",  # should be int
+        "category": category_data[0],
+        "status": "available",
     },
     {
         "id": 2,
-        "name": "Mathematics",
-        "code": 101,  # should be str
-        "year": year_data[1],
+        "name": "T-Shirt",
+        "price": 19.99,
+        "quantity": 50,
+        "category": category_data[1],
+        "status": "available",
     },
     {
         "id": 3,
-        "name": "Physics",
-        "code": "PHY101",
-        "year": year_data[1],
+        "name": "Python Programming Book",
+        "price": "39.99",  # should be float
+        "quantity": 25,
+        "category": category_data[2],
+        "status": "available",
     },
     {
         "id": 4,
-        "name": "Chemistry",
-        "code": "CHEM101",
-        "year": year_data[2],
+        "name": "Garden Hose",
+        "price": 29.99,
+        "quantity": "0",  # should be int
+        "category": category_data[3],
+        "status": "out_of_stock",
     },
     {
         "id": 5,
-        "name": "Biology",
-        "code": "BIO101",
-        "year": year_data[2],
+        "name": "Wireless Mouse",
+        "price": 25.50,
+        "quantity": 100,
+        "category": category_data[0],
+        "status": "available",
     },
     {
         "id": 6,
-        "name": "History",
-        "code": "HIST101",
-        "year": year_data[3],
+        "name": "Jeans",
+        "price": "49.99",  # should be float
+        "quantity": 30,
+        "category": category_data[1],
+        "status": "available",
     },
     {
         "id": 7,
-        "name": "Geography",
-        "code": "GEO101",
-        "year": year_data[3],
+        "name": "JavaScript Guide",
+        "price": 35.00,
+        "quantity": 20,
+        "category": category_data[2],
+        "status": "available",
     },
     {
         "id": "8",  # should be int
-        "name": "Economics",
-        "code": "ECON101",
-        "year": year_data[0],
+        "name": "Lawn Mower",
+        "price": "299.99",  # should be float
+        "quantity": 5,
+        "category": category_data[3],
+        "status": "available",
     },
     {
         "id": 9,
-        "name": "Literature",
-        "code": "LIT101",
-        "year": year_data[0],
+        "name": "USB Cable",
+        "price": 9.99,
+        "quantity": 200,
+        "category": category_data[0],
+        "status": "available",
     },
     {
         "id": 10,
-        "name": "Philosophy",
-        "code": "PHIL101",
-        "year": year_data[0],
+        "name": "Winter Jacket",
+        "price": 89.99,
+        "quantity": 15,
+        "category": category_data[1],
+        "status": "available",
     },
     {
         "id": "11",  # should be int
-        "name": "Psychology",
-        "code": "PSYCH101",
-        "year": year_data[1],
+        "name": "Database Design Book",
+        "price": "44.99",  # should be float
+        "quantity": 10,
+        "category": category_data[2],
+        "status": "available",
     },
     {
         "id": 12,
-        "name": "Sociology",
-        "code": "SOC101",
-        "year": year_data[1],
+        "name": "Plant Pot",
+        "price": 15.99,
+        "quantity": 40,
+        "category": category_data[3],
+        "status": "available",
     },
     {
         "id": 13,
-        "name": "Anthropology",
-        "code": "ANTH101",
-        "year": year_data[2],
+        "name": "Keyboard",
+        "price": 75.00,
+        "quantity": 25,
+        "category": category_data[0],
+        "status": "available",
     },
     {
         "id": 14,
-        "name": "Political Science",
-        "code": "POL101",
-        "year": year_data[3],
+        "name": "Sneakers",
+        "price": 69.99,
+        "quantity": 20,
+        "category": category_data[1],
+        "status": "available",
     },
 ]
 
 
-student_data = [
+customer_data = [
     {
         "id": 1,
         "name": "John Doe",
-        "age": "20",  # should be int
         "email": "john@doe.com",
-        "phone": "+1234567890",
-        "year": year_data[0],
-        "courses": [course_data[0], course_data[1], course_data[2]],
-        "joined_at": "01-09-2019",  # changed to "d-m-Y"
+        "stock_level": "50",  # should be int
+        "products": [product_data[0], product_data[1], product_data[2]],
     },
     {
         "id": 2,
-        "name": "Jane Doe",
-        "age": 21,
-        "email": None,  # should be str
-        "phone": "+1234567890",
-        "year": year_data[1],
-        "courses": [course_data[3], course_data[4], course_data[5]],
-        "joined_at": "09/01/2019",  # changed to "d/m/Y"
+        "name": "Jane Smith",
+        "email": "jane.smith@example.com",
+        "stock_level": 75,
+        "products": [product_data[3], product_data[4], product_data[5]],
     },
     {
         "id": "3",  # should be int
-        "name": "Alice Smith",
-        "age": "22",  # should be int
-        "email": "alice@smith.com",
-        "phone": "+1234567890",  # should be str
-        "year": year_data[3],
-        "courses": [course_data[6], course_data[7], course_data[8]],
-        "joined_at": "2019-09-01",
+        "name": "Alice Johnson",
+        "email": "alice.j@company.org",
+        "stock_level": "100",  # should be int
+        "products": [product_data[6], product_data[7], product_data[8]],
     },
 ]

@@ -1,13 +1,13 @@
 """Data description classes"""
 
-from collections.abc import Iterable, Mapping, Sequence
 import copy as pycopy
-from functools import partial
 import functools
 import typing
 import warnings
+from collections.abc import Iterable, Mapping, Sequence
+from functools import partial
 
-from typing_extensions import Self, TypeAlias, Unpack, TypeGuard
+from typing_extensions import Self, TypeAlias, TypeIs, Unpack
 
 from attrib._utils import is_generic_type
 from attrib.descriptors.base import Field
@@ -18,7 +18,6 @@ from attrib.exceptions import (
     ValidationError,
 )
 from attrib.types import DataDict, KwArg, RawData
-
 
 __all__ = [
     "Dataclass",
@@ -49,9 +48,7 @@ def _sort_by_name(item: typing.Tuple[str, Field]) -> str:
     return item[0]
 
 
-def _repr(
-    instance: "Dataclass",
-) -> str:
+def _repr(instance: "Dataclass") -> str:
     """Build a string representation of the dataclass instance."""
     field_strs = []
     instance_type = type(instance)
@@ -61,9 +58,7 @@ def _repr(
     return f"{instance_type.__name__}({', '.join(field_strs)})"
 
 
-def _str(
-    instance: "Dataclass",
-) -> str:
+def _str(instance: "Dataclass") -> str:
     """Build a string representation of the dataclass instance."""
     field_values = {}
     instance_type = type(instance)
@@ -143,7 +138,7 @@ def _setstate(
     )
 
     for key, value in attributes.items():
-        setattr(instance, key, value)
+        object.__setattr__(instance, key, value)
     return instance
 
 
@@ -210,23 +205,23 @@ def _iter(instance: "Dataclass") -> typing.Iterator[typing.Tuple[str, typing.Any
         yield key, field.__get__(instance, owner)
 
 
-def _get_ordering_values(
-    instance: "Dataclass",
-) -> typing.Tuple[typing.Any, ...]:
+__ordering_cache_key = "__ordering_values__"
+
+
+def _get_ordering_values(instance: "Dataclass") -> typing.Tuple[typing.Any, ...]:
     """
     Get the ordering values for the dataclass instance.
 
     Caches the values to avoid recomputing them multiple times for frozen instances.
     """
     if instance.__config__.frozen:
-        cache_key = "_ordering_values"
-        if (values := instance.__cache__.get(cache_key, None)) is None:
+        if (values := instance.__cache__.get(__ordering_cache_key, None)) is None:
             instance_type = type(instance)
             values = tuple(
                 field.__get__(instance, instance_type)
                 for field in instance.__ordering_fields__
             )
-            instance.__cache__[cache_key] = values
+            instance.__cache__[__ordering_cache_key] = values
         return values
 
     instance_type = type(instance)
@@ -235,10 +230,7 @@ def _get_ordering_values(
     )
 
 
-def _gt(
-    instance: "Dataclass",
-    other: typing.Any,
-) -> bool:
+def _gt(instance: "Dataclass", other: typing.Any) -> bool:
     """Compare two dataclass instances for greater than."""
     if not isinstance(other, instance.__class__):
         return NotImplemented
@@ -249,10 +241,7 @@ def _gt(
     return _get_ordering_values(instance) > _get_ordering_values(other)
 
 
-def _ge(
-    instance: "Dataclass",
-    other: typing.Any,
-) -> bool:
+def _ge(instance: "Dataclass", other: typing.Any) -> bool:
     """Compare two dataclass instances for greater than or equal to."""
     if not isinstance(other, instance.__class__):
         return NotImplemented
@@ -461,37 +450,37 @@ NameDict: TypeAlias = typing.Dict[str, str]
 """A mapping of names"""
 
 
-def _build_auxilliary_fields(
+def _build_auxilliary_attributes(
     fields: FieldDict,
 ) -> typing.Dict[str, typing.Tuple[Field[typing.Any]]]:
-    auxilliary_fields = {}
-    auxilliary_fields["__init_fields__"] = tuple(
+    auxilliary_attrs = {}
+    auxilliary_attrs["__init_fields__"] = tuple(
         field for field in fields.values() if field.init
     )
-    auxilliary_fields["__repr_fields__"] = tuple(
+    auxilliary_attrs["__repr_fields__"] = tuple(
         field for field in fields.values() if field.repr
     )
-    auxilliary_fields["__hash_fields__"] = tuple(
+    auxilliary_attrs["__hash_fields__"] = tuple(
         field for field in fields.values() if field.hash
     )
-    auxilliary_fields["__eq_fields__"] = tuple(
+    auxilliary_attrs["__eq_fields__"] = tuple(
         field for field in fields.values() if field.eq
     )
     ordering_fields = tuple(
         field for field in fields.values() if field.order is not None
     )
-    auxilliary_fields["__ordering_fields__"] = sorted(
-        ordering_fields,
-        key=lambda f: f.order
-        if f.order is not None
-        else float(
-            "inf"
-        ),  # Just to please the type checker since `f.order` can be None
+    auxilliary_attrs["__ordering_fields__"] = tuple(
+        sorted(
+            ordering_fields,
+            key=lambda f: f.order
+            if f.order is not None
+            else float("inf"),  # Since `f.order` can be None
+        )
     )
-    return auxilliary_fields
+    return auxilliary_attrs
 
 
-def is_dataclass(cls: typing.Any) -> TypeGuard[typing.Type["Dataclass"]]:
+def is_dataclass(cls: typing.Any) -> TypeIs[typing.Type["Dataclass"]]:
     if not isinstance(cls, type):
         return False
     return hasattr(cls, "__dataclass_fields__") or issubclass(cls, Dataclass)
@@ -574,8 +563,8 @@ class DataclassMeta(type):
                 _name_map[key] = effective_name
                 _effective_name_map[effective_name] = key
 
-        auxilliary_fields = _build_auxilliary_fields(fields)
-        namespace.update(auxilliary_fields)
+        auxilliary_attrs = _build_auxilliary_attributes(fields)
+        namespace.update(auxilliary_attrs)
 
         if config.order and config.eq:
             eq_fields_set = set(namespace["__eq_fields__"])
@@ -589,6 +578,7 @@ class DataclassMeta(type):
                         f"equality. This may lead to inconsistent behavior where a == b but a < b "
                         f"or b < a. Consider setting both 'eq' and 'compare' to True for these fields.",
                         RuntimeWarning,
+                        stacklevel=2,
                     )
 
         if config.slots:
@@ -757,33 +747,6 @@ class Dataclass(metaclass=DataclassMeta):
         object.__setattr__(instance, "__fields_set__", set())
         object.__setattr__(instance, "__cache__", {})
         return instance
-
-    @typing.overload
-    def __init__(
-        self, data: None = None, __config__: typing.Optional[InitConfig] = None
-    ) -> None:
-        """Initialize the dataclass with no data."""
-        ...
-
-    @typing.overload
-    def __init__(
-        self,
-        data: RawData,
-        __config__: typing.Optional[InitConfig] = None,
-        **kwargs: KwArg[typing.Any],
-    ) -> None:
-        """Initialize the dataclass with raw data."""
-        ...
-
-    @typing.overload
-    def __init__(
-        self,
-        data: None = None,
-        __config__: typing.Optional[InitConfig] = None,
-        **kwargs: KwArg[typing.Any],
-    ) -> None:
-        """Initialize the dataclass with keyword arguments."""
-        ...
 
     def __init__(
         self,
@@ -969,18 +932,18 @@ def _load_raw(
             field.__set__(instance, value)
         except (DeserializationError, ValidationError) as exc:
             if fail_fast:
-                raise DeserializationError.from_exception(
+                raise DeserializationError.from_exc(
                     exc,
                     parent_name=type(instance).__name__,
                 ) from exc
             if error is None:
-                error = DeserializationError.from_exception(
+                error = DeserializationError.from_exc(
                     exc,
                     parent_name=type(instance).__name__,
                 )
             else:
                 error.merge(
-                    DeserializationError.from_exception(
+                    DeserializationError.from_exc(
                         exc,
                         parent_name=type(instance).__name__,
                     )

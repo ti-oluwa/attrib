@@ -1,10 +1,20 @@
-from contextlib import contextmanager
 import sys
 import typing
+from contextlib import contextmanager
 
 from typing_extensions import Self
 
 from attrib.types import Context
+
+
+__all__ = [
+    "AttribException",
+    "ConfigurationError",
+    "InstanceError",
+    "DeserializationError",
+    "FrozenInstanceError",
+    "FieldError",
+]
 
 
 class AttribException(Exception):
@@ -117,6 +127,8 @@ class ErrorDetail(typing.NamedTuple):
 
     def as_json(self) -> typing.Dict[str, typing.Any]:
         """Return a JSON-serializable representation of the error detail."""
+        from attrib._utils import make_jsonable
+
         return {
             "location": self.location,
             "message": self.message,
@@ -131,7 +143,7 @@ class ErrorDetail(typing.NamedTuple):
                 else str(self.input_type)
             ),
             "code": self.code,
-            "context": self.context,
+            "context": make_jsonable(self.context),
         }
 
 
@@ -209,7 +221,7 @@ class DetailedError(AttribException):
         self.error_list.append(detail)
 
     @classmethod
-    def from_exception(
+    def from_exc(
         cls,
         exception: BaseException,
         *,
@@ -309,7 +321,7 @@ class DetailedError(AttribException):
         """
         if not isinstance(exception, DetailedError):
             self.merge(
-                self.from_exception(
+                self.from_exc(
                     exception,
                     message=message,
                     parent_name=parent_name,
@@ -374,7 +386,7 @@ class DetailedError(AttribException):
             if isinstance(exc, DetailedError):
                 collected.append(exc)
             else:
-                collected.append(cls.from_exception(exc))
+                collected.append(cls.from_exc(exc))
 
         if collected or len(errors.error_list) > 1:
             for error in collected:

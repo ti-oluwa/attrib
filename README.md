@@ -883,13 +883,6 @@ lower_str = attrib.field(
 )
 ```
 
-**`check_coerced`** (bool, default=`False`) - Verify deserializer output type
-
-```python
-# Safety check for custom deserializers
-value = attrib.field(int, deserializer=my_parser, check_coerced=True)
-```
-
 **`skip_validator`** (bool, default=`False`) - Skip validation after deserialization
 
 ```python

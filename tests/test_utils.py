@@ -1,7 +1,6 @@
 """Tests for utility functions."""
 
 import datetime
-import re
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
@@ -9,16 +8,16 @@ from uuid import UUID
 import pytest
 
 from attrib._utils import (
+    coalesce,
     is_generic_type,
-    is_namedtuple,
     is_iterable,
     is_iterable_type,
     is_mapping,
-    parse_duration,
+    is_namedtuple,
     iso_parse,
-    now,
     make_jsonable,
-    coalesce,
+    now,
+    parse_duration,
 )
 
 

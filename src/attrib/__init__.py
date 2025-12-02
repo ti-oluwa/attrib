@@ -4,7 +4,7 @@
 Setup structured data with fields that support type enforcement, validation, and serialization.
 """
 
-from .dataclass import *  # noqa
+from .dataclasses import *  # noqa
 from .descriptors.base import *  # noqa
 from .descriptors.nested import *  # noqa
 from .descriptors.colors import *  # noqa
@@ -18,6 +18,7 @@ from .adapters import TypeAdapter  # noqa
 from .types import Empty, EMPTY  # noqa
 from . import exceptions  # noqa
 from .decorators import *  # noqa
+from .exceptions import *  # noqa
 
 
 __version__ = "0.0.1a0"

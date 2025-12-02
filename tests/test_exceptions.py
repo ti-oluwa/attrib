@@ -98,10 +98,10 @@ class TestValidationError:
         assert len(exc.error_list) >= 1
         assert "Validation failed" in str(exc)
 
-    def test_validation_error_from_exception(self):
+    def test_validation_error_from_exc(self):
         """Test creating ValidationError from another exception."""
         original = ValueError("Original error")
-        exc = ValidationError.from_exception(
+        exc = ValidationError.from_exc(
             original, message="Wrapped error", location=["field"]
         )
         assert len(exc.error_list) >= 1
@@ -139,10 +139,10 @@ class TestDeserializationError:
         )
         assert len(exc.error_list) >= 1
 
-    def test_deserialization_error_from_exception(self):
+    def test_deserialization_error_from_exc(self):
         """Test creating DeserializationError from exception."""
         original = TypeError("Type error")
-        exc = DeserializationError.from_exception(
+        exc = DeserializationError.from_exc(
             original,
             message="Wrapped",
             location=["field"],
@@ -153,7 +153,7 @@ class TestDeserializationError:
 
     def test_deserialization_error_with_parent(self):
         """Test DeserializationError with parent_name."""
-        exc = DeserializationError.from_exception(
+        exc = DeserializationError.from_exc(
             ValueError("Error"), parent_name="MyClass", location=["field"]
         )
         error_str = str(exc)
@@ -168,10 +168,10 @@ class TestSerializationError:
         exc = SerializationError("Cannot serialize", location=["field"])
         assert len(exc.error_list) >= 1
 
-    def test_serialization_error_from_exception(self):
+    def test_serialization_error_from_exc(self):
         """Test creating SerializationError from exception."""
         original = ValueError("Cannot convert")
-        exc = SerializationError.from_exception(
+        exc = SerializationError.from_exc(
             original, message="Wrapped", location=["field"]
         )
         assert len(exc.error_list) >= 1

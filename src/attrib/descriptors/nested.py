@@ -1,10 +1,10 @@
-from types import MappingProxyType
 import typing
+from types import MappingProxyType
 
 from typing_extensions import Unpack
 
 from attrib._utils import is_iterable
-from attrib.dataclass import Dataclass
+from attrib.dataclasses import Dataclass
 from attrib.descriptors.base import Field, FieldKwargs, NonTupleFieldType
 from attrib.exceptions import FieldError
 from attrib.serializers import _asdict

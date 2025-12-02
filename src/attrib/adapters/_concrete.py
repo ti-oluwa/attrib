@@ -1,7 +1,7 @@
-from collections.abc import Iterable, Mapping
 import functools
 import sys
 import typing
+from collections.abc import Iterable, Mapping
 
 from attrib._utils import (
     is_generic_type,
@@ -9,7 +9,7 @@ from attrib._utils import (
     json_serializer,
     no_op_serializer,
 )
-from attrib.dataclass import Dataclass, DataclassTco, deserialize
+from attrib.dataclasses import Dataclass, DataclassTco, deserialize
 from attrib.exceptions import DeserializationError, InvalidTypeError, ValidationError
 from attrib.serializers import _asdict, serialize
 from attrib.types import (
@@ -144,7 +144,7 @@ def build_typeddict_deserializer(
             try:
                 new_mapping[key] = deserializers_map[key](item, *args, **kwargs)
             except (TypeError, ValueError, DeserializationError) as exc:
-                raise DeserializationError.from_exception(
+                raise DeserializationError.from_exc(
                     exc,
                     input_type=type(value),
                     expected_type=target,
@@ -218,7 +218,7 @@ def build_typeddict_validator(
             try:
                 validators_map[key](item, *args, **kwargs)
             except (ValueError, ValidationError) as exc:
-                raise ValidationError.from_exception(
+                raise ValidationError.from_exc(
                     exc,
                     input_type=type(value),
                     expected_type=target,
@@ -284,7 +284,7 @@ def build_namedtuple_deserializer(
             try:
                 new_mapping[key] = deserializers_map[key](item, *args, **kwargs)
             except (TypeError, ValueError, DeserializationError) as exc:
-                raise DeserializationError.from_exception(
+                raise DeserializationError.from_exc(
                     exc,
                     input_type=type(value),
                     expected_type=target,
@@ -349,7 +349,7 @@ def build_namedtuple_validator(
             try:
                 validators_map[key](item, *args, **kwargs)
             except (ValidationError, ValueError) as exc:
-                raise ValidationError.from_exception(
+                raise ValidationError.from_exc(
                     exc,
                     input_type=type(value),
                     expected_type=target,
@@ -465,7 +465,7 @@ def build_concrete_type_deserializer(
             try:
                 return base_deserializer(value)
             except (ValueError, TypeError) as exc:
-                raise DeserializationError.from_exception(
+                raise DeserializationError.from_exc(
                     exc,
                     input_type=type(value),
                     expected_type=type_,
@@ -546,7 +546,7 @@ def build_concrete_type_deserializer(
         try:
             return to_type(value, *args, **kwargs)
         except (ValueError, TypeError) as exc:
-            raise DeserializationError.from_exception(
+            raise DeserializationError.from_exc(
                 exc,
                 input_type=type(value),
                 expected_type=type_,

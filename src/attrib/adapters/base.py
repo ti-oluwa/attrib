@@ -51,7 +51,7 @@ class TypeAdapter(typing.Generic[T]):
         "deserializer",
         "strict",
         "_is_built",
-        "_is_generic_type",
+        "_can_cache_type",
         "_type_cache",
     )
 
@@ -89,7 +89,7 @@ class TypeAdapter(typing.Generic[T]):
         self.serializers = serializers or {}
         self.strict = strict
         self._is_built = False
-        self._is_generic_type = False
+        self._can_cache_type = True
         self._type_cache: typing.Dict[typing.Type[typing.Any], bool] = {}
         if not defer_build:
             self.build()
@@ -117,17 +117,17 @@ class TypeAdapter(typing.Generic[T]):
             module's namespace, which may not always be available or correct and can be expensive.
         :param localns: Local namespace for resolving type references
         """
-        from attrib.dataclass import Dataclass
         from attrib.adapters._concrete import (
-            build_dataclass_serializers_map,
             build_concrete_type_deserializer,
             build_concrete_type_serializers_map,
+            build_dataclass_serializers_map,
         )
         from attrib.adapters._generics import (
             build_generic_type_deserializer,
             build_generic_type_serializers_map,
             build_generic_type_validator,
         )
+        from attrib.dataclasses import Dataclass
 
         if self._is_built:
             raise RuntimeError(
@@ -151,7 +151,7 @@ class TypeAdapter(typing.Generic[T]):
             localns=localns,
         )
         if is_generic_type(self.adapted):
-            self._is_generic_type = True
+            self._can_cache_type = False  # Should not cache generic types
             if (
                 len(self.serializers) < 2
             ):  # Should contain at least "python" and "json" serializers
@@ -203,7 +203,7 @@ class TypeAdapter(typing.Generic[T]):
                 "You must build it before checking types."
             )
 
-        if not self._is_generic_type:
+        if self._can_cache_type:
             value_type = type(value)
             if value_type in self._type_cache:
                 return self._type_cache[value_type]
@@ -235,7 +235,7 @@ class TypeAdapter(typing.Generic[T]):
         try:
             validator(value, self, *args, **kwargs)
         except (ValidationError, ValueError) as exc:
-            raise ValidationError.from_exception(
+            raise ValidationError.from_exc(
                 exc,
                 message="Invalid value",
                 input_type=type(value),
@@ -286,7 +286,7 @@ class TypeAdapter(typing.Generic[T]):
         try:
             return self.deserializer(value, self, *args, **kwargs)
         except (DeserializationError, ValueError, TypeError) as exc:
-            raise DeserializationError.from_exception(
+            raise DeserializationError.from_exc(
                 exc,
                 message="Deserialization failed",
                 input_type=type(value),

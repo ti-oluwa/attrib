@@ -1,6 +1,6 @@
-from collections.abc import Sequence
 import numbers
 import typing
+from collections.abc import Sequence
 
 import quantities as pq
 from typing_extensions import Unpack
@@ -8,7 +8,6 @@ from typing_extensions import Unpack
 from attrib.descriptors.base import Field, FieldKwargs
 from attrib.exceptions import FieldError
 from attrib.types import Context
-
 
 __all__ = ["Quantity"]
 

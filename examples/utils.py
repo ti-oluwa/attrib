@@ -1,11 +1,11 @@
-import typing
-from typing_extensions import ParamSpec, Self, TypeAlias
-import time
-from contextlib import ContextDecorator
 import cProfile
-import pstats
 import io
+import pstats
+import time
+import typing
+from contextlib import ContextDecorator
 
+from typing_extensions import ParamSpec, Self, TypeAlias
 
 try:
     import rich  # type: ignore[import]

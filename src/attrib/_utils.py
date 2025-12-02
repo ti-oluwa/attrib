@@ -4,7 +4,6 @@ import datetime
 import decimal
 import enum
 import functools
-from importlib.util import find_spec
 import inspect
 import io
 import ipaddress
@@ -14,11 +13,12 @@ import sys
 import types
 import typing
 import uuid
+from importlib.util import find_spec
 
 from typing_extensions import TypeGuard
 
 from attrib.exceptions import DetailedError
-from attrib.types import Context, EMPTY, JSONDict, JSONList, JSONValue, T, TypeAdapter
+from attrib.types import EMPTY, JSONDict, JSONList, JSONValue, T, TypeAdapter
 
 try:
     import zoneinfo  # type: ignore[import]
@@ -144,7 +144,7 @@ def is_valid_type(typ: typing.Type[typing.Any], /) -> bool:
     """Check if an object is a valid type that can be used in a field"""
     if isinstance(typ, tuple):
         return all(
-            (isinstance(obj, typing.ForwardRef) or is_concrete_type(obj) for obj in typ)
+            isinstance(obj, typing.ForwardRef) or is_concrete_type(obj) for obj in typ
         )
     return (
         is_concrete_type(typ)
@@ -726,7 +726,7 @@ def coalesce(
                 return func(*args, **kwargs)
             except target as exc:
                 if error is None:
-                    error = detailed_exc_type.from_exception(
+                    error = detailed_exc_type.from_exc(
                         exc,
                         location=[func.__name__, index],
                     )

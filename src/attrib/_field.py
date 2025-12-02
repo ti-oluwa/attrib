@@ -10,7 +10,10 @@ from typing_extensions import Unpack
 
 from attrib._utils import is_generic_type
 from attrib.adapters import TypeAdapter
-from attrib.dataclass import is_dataclass
+from attrib.dataclasses import is_dataclass
+from attrib.descriptors.base import (
+    UUID as UUIDField,
+)
 from attrib.descriptors.base import (
     Boolean,
     Bytes,
@@ -20,9 +23,10 @@ from attrib.descriptors.base import (
     FieldType,
     Float,
     Integer,
-    Path as PathField,
     String,
-    UUID as UUIDField,
+)
+from attrib.descriptors.base import (
+    Path as PathField,
 )
 from attrib.descriptors.datetime import Date, DateTime, Duration, Time, TimeZone
 from attrib.descriptors.nested import Nested
@@ -158,7 +162,7 @@ def field(
         # Check if it's a `Field` subclass
         if issubclass(typ, Field):
             return typ(*args, **kwargs)  # type: ignore[arg-type]
-        
+
         # Check if it's a dataclass
         if is_dataclass(typ):
             return Nested(typ, *args, **kwargs)  # type: ignore[arg-type]

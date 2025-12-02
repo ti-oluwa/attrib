@@ -1,10 +1,10 @@
-import typing
-import pydantic
 import collections
+import typing
+
+import pydantic
+from utils import log, timeit
 
 import attrib
-from utils import timeit, log
-
 
 #######################
 #### Type Adapters ####

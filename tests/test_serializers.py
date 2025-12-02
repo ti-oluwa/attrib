@@ -1,6 +1,6 @@
 import datetime
-from decimal import Decimal
 import typing
+from decimal import Decimal
 
 import pytest
 

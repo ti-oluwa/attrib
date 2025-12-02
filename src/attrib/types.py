@@ -1,3 +1,4 @@
+import decimal
 import numbers
 import typing
 
@@ -36,7 +37,7 @@ JSONNamedDataTuple: TypeAlias = typing.Tuple[typing.Tuple[str, "JSONValue"], ...
 Context: TypeAlias = typing.MutableMapping[str, typing.Any]
 NoneType = type(None)
 
-RealNumberT = typing.TypeVar("RealNumberT", bound=numbers.Real)
+RealNumberT = typing.TypeVar("RealNumberT", int, float, decimal.Decimal, numbers.Real)
 
 
 class SupportsRichComparison(typing.Protocol):
