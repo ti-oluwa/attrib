@@ -44,10 +44,7 @@ class RGBColor(String):
     def __init__(self, **kwargs: Unpack[FieldKwargs]) -> None:
         # Enforces lowercase for RGB color values
         super().__init__(
-            trim_whitespaces=True,
-            to_lowercase=True,
-            to_uppercase=False,
-            **kwargs,
+            trim_whitespaces=True, to_lowercase=True, to_uppercase=False, **kwargs
         )
 
 
@@ -66,10 +63,7 @@ class HSLColor(String):
     def __init__(self, **kwargs: Unpack[FieldKwargs]) -> None:
         # Enforces lowercase for HSL color values
         super().__init__(
-            trim_whitespaces=True,
-            to_lowercase=True,
-            to_uppercase=False,
-            **kwargs,
+            trim_whitespaces=True, to_lowercase=True, to_uppercase=False, **kwargs
         )
 
 
@@ -88,8 +82,5 @@ class HSVColor(String):
     def __init__(self, **kwargs: Unpack[FieldKwargs]) -> None:
         # Enforces lowercase for HSV color values
         super().__init__(
-            trim_whitespaces=True,
-            to_lowercase=True,
-            to_uppercase=False,
-            **kwargs,
+            trim_whitespaces=True, to_lowercase=True, to_uppercase=False, **kwargs
         )

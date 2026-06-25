@@ -18,9 +18,7 @@ from attrib.types import Context
 
 
 def phone_number_serializer(
-    value: PhoneNumberType,
-    field: "PhoneNumber",
-    context: Context,
+    value: PhoneNumberType, field: "PhoneNumber", context: Context
 ) -> str:
     """Serialize a phone number object to a string format."""
     return format_number(value, field.output_format)
@@ -37,9 +35,7 @@ class PhoneNumber(Field[PhoneNumberType]):
     """Phone number object field."""
 
     default_output_format: typing.ClassVar[int] = PhoneNumberFormat.E164
-    default_serializers = {
-        "json": phone_number_serializer,
-    }
+    default_serializers = {"json": phone_number_serializer}
     default_deserializer = phone_number_deserializer  # type: ignore[assignment]
 
     def __init__(
@@ -51,7 +47,7 @@ class PhoneNumber(Field[PhoneNumberType]):
         Initialize the field.
 
         :param output_format: The preferred output format for the phone number value.
-            E.g. PhoneNumberFormat.E164, PhoneNumberFormat.INTERNATIONAL, etc.
+            E.g. `PhoneNumberFormat.E164`, `PhoneNumberFormat.INTERNATIONAL`, etc.
             See the `phonenumbers` library for more details.
         :param kwargs: Additional keyword arguments for the field.
         """
@@ -95,7 +91,4 @@ class PhoneNumberString(String):
         self.output_format = output_format or self.default_output_format
 
 
-__all__ = [
-    "PhoneNumber",
-    "PhoneNumberString",
-]
+__all__ = ["PhoneNumber", "PhoneNumberString"]

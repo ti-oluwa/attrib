@@ -6,9 +6,9 @@ import decimal
 import functools
 import inspect
 import io
-import pathlib
 import typing
 import uuid
+from pathlib import Path as SysPath
 
 import annotated_types as annot
 from typing_extensions import Annotated, Self, TypeAlias, TypeGuard, Unpack
@@ -334,7 +334,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
         """Meta information for the field, can be used to store additional data."""
         self._slotted_name: typing.Optional[str] = None
         """The name with which the field will be stored in the instance's __slots__."""
-        self._identity_formats = {}
+        self._identity_formats = frozenset()
         """Set of serialization formats that will not change the value during serialization."""
         self._typestr: str = "<unknown>"
         """The string representation of the field type."""
@@ -375,9 +375,9 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
 
     def _update_identity_formats(self) -> None:
         """Update the identity formats set. Must be called ONCE the field type is built and all serializers are known."""
-        self._identity_formats = {
-            fmt for fmt, f in self.serializers.items() if f is no_op_serializer
-        }
+        self._identity_formats = frozenset(
+            {fmt for fmt, f in self.serializers.items() if f is no_op_serializer}
+        )
 
     def _compute_type_flags(self) -> None:
         """Compute type-related flags. Used when the field type is changed."""
@@ -747,7 +747,7 @@ class Field(typing.Generic[T], metaclass=FieldMeta):
                 ) from exc
 
         # Check if already correct type
-        if self.check_type(value):
+        elif self.check_type(value):
             return value
         elif self.strict:
             raise InvalidTypeError(
@@ -888,12 +888,14 @@ class Any(Field[typing.Any]):
 
 
 class BooleanFieldMeta(FieldMeta):
-    """COnvert truthy and falsy values to lowercase bitwise for comparison."""
+    """Convert truthy and falsy values to lowercase bitwise for comparison."""
 
     def __init__(cls, name, bases, attrs) -> None:
         truthy = getattr(cls, "truthy", None)
         if truthy is not None:
-            cls.truthy = {iexact(v) for v in truthy}
+            cls.truthy = frozenset(
+                {iexact(v) if not isinstance(v, iexact) else v for v in truthy}
+            )
         super().__init__(name, bases, attrs)
 
 
@@ -925,7 +927,7 @@ def build_min_max_value_validators(
     if min_value is None and max_value is None:
         return []
     if min_value is not None and max_value is not None and min_value >= max_value:
-        raise ValueError("min_value must be less than max_value")
+        raise ValueError("`min_value` must be less than `max_value`")
 
     if min_value is not None and max_value is not None:
         return [field_validators.range_(min_value, max_value)]
@@ -1026,7 +1028,7 @@ class Integer(Number[int]):
             )
 
 
-def get_quantizer(dp: int) -> decimal.Decimal:
+def _get_quantizer(dp: int) -> decimal.Decimal:
     """Get the quantizer for the specified number of decimal places."""
     if dp < 0:
         raise ValueError("Decimal places (dp) must be a non-negative integer.")
@@ -1062,7 +1064,8 @@ class Decimal(Number[decimal.Decimal]):
         if dp is not None and dp < 0:
             raise ValueError("Decimal places (dp) must be a non-negative integer.")
         self.dp = int(dp) if dp is not None else None
-        self._quantizer = get_quantizer(self.dp) if self.dp is not None else None
+        self._quantizer = _get_quantizer(self.dp) if self.dp is not None else None
+        self._quantize = self._quantizer is not None
 
     def deserialize(
         self,
@@ -1070,7 +1073,7 @@ class Decimal(Number[decimal.Decimal]):
         instance: typing.Optional[typing.Any] = None,
     ) -> typing.Optional[decimal.Decimal]:
         deserialized = super().deserialize(value, instance)
-        if deserialized is not None and self.dp is not None:
+        if self._quantize and deserialized is not None:
             return deserialized.quantize(self._quantizer)  # type: ignore[return-value]
         return deserialized
 
@@ -1193,7 +1196,7 @@ class Character(String):
     default_validator = field_validators.max_length(1)
 
 
-Char = Character
+Char = Character  # Alias
 
 
 slug_validator = field_validators.pattern(
@@ -1652,12 +1655,7 @@ class List(Iterable[typing.List[V], V]):
         size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
         **kwargs: Unpack[FieldKwargs],
     ) -> None:
-        super().__init__(
-            field_type=list,
-            child=child,
-            size=size,
-            **kwargs,
-        )
+        super().__init__(field_type=list, child=child, size=size, **kwargs)
 
 
 class Set(Iterable[typing.MutableSet[V], V]):
@@ -1670,12 +1668,7 @@ class Set(Iterable[typing.MutableSet[V], V]):
         size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
         **kwargs: Unpack[FieldKwargs],
     ) -> None:
-        super().__init__(
-            field_type=set,
-            child=child,
-            size=size,
-            **kwargs,
-        )
+        super().__init__(field_type=set, child=child, size=size, **kwargs)
 
 
 class FrozenSet(Iterable[typing.FrozenSet[V], V]):
@@ -1688,12 +1681,7 @@ class FrozenSet(Iterable[typing.FrozenSet[V], V]):
         size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
         **kwargs: Unpack[FieldKwargs],
     ) -> None:
-        super().__init__(
-            field_type=frozenset,
-            child=child,
-            size=size,
-            **kwargs,
-        )
+        super().__init__(field_type=frozenset, child=child, size=size, **kwargs)
 
 
 class Deque(Iterable[typing.Deque[V], V]):
@@ -1706,12 +1694,7 @@ class Deque(Iterable[typing.Deque[V], V]):
         size: typing.Optional[Annotated[int, annot.Ge(0)]] = None,
         **kwargs: Unpack[FieldKwargs],
     ) -> None:
-        super().__init__(
-            field_type=collections.deque,
-            child=child,
-            size=size,
-            **kwargs,
-        )
+        super().__init__(field_type=collections.deque, child=child, size=size, **kwargs)
 
 
 class JSONObject(Field[JSONValue]):
@@ -1791,14 +1774,14 @@ class IOBase(Field[IOType]):
     default_deserializer = unsupported_field_deserializer
 
 
-def path_deserializer(value: typing.Any, field: "Path") -> pathlib.Path:
+def path_deserializer(value: typing.Any, field: "Path") -> SysPath:
     """Deserialize a value to a `pathlib.Path` object."""
     if field.resolve:
-        return pathlib.Path(value).resolve(strict=False)
-    return pathlib.Path(value)
+        return SysPath(value).resolve(strict=False)
+    return SysPath(value)
 
 
-class Path(Field[pathlib.Path]):
+class Path(Field[SysPath]):
     """
     Field for handling file system paths using `pathlib.Path`.
 
@@ -1815,5 +1798,5 @@ class Path(Field[pathlib.Path]):
         resolve: bool = False,
         **kwargs: Unpack[FieldKwargs],
     ):
-        super().__init__(field_type=pathlib.Path, **kwargs)
+        super().__init__(field_type=SysPath, **kwargs)
         self.resolve = resolve

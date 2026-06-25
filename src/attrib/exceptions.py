@@ -6,7 +6,6 @@ from typing_extensions import Self
 
 from attrib.types import Context
 
-
 __all__ = [
     "AttribException",
     "ConfigurationError",

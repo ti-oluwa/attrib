@@ -18,6 +18,7 @@ __all__ = [
     "Date",
     "Time",
     "DateTime",
+    "TZ",
     "TimeZone",
     "Duration",
 ]
@@ -72,6 +73,8 @@ class TimeZone(Field[datetime.tzinfo]):
         super().__init__(field_type=datetime.tzinfo, **kwargs)
 
 
+TZ = TimeZone
+
 DatetimeType = typing.TypeVar(
     "DatetimeType",
     bound=typing.Union[datetime.date, datetime.datetime, datetime.time],
@@ -124,9 +127,8 @@ class DateTimeBase(Field[DatetimeType]):
 _datetime_cache = {}
 
 
-def cached_iso_parse(
-    value: typing.Any,
-    fmt: typing.Optional[typing.Iterable[str]] = None,
+def _iso_parse(
+    value: typing.Any, fmt: typing.Optional[typing.Iterable[str]] = None
 ) -> datetime.datetime:
     """Parse a datetime string in ISO format with caching."""
     if isinstance(value, datetime.datetime):
@@ -147,7 +149,7 @@ def iso_date_deserializer(
     **kwargs: typing.Any,
 ) -> datetime.date:
     """Parse a date string in ISO format."""
-    return cached_iso_parse(value, fmt=field.input_formats).date()
+    return _iso_parse(value, fmt=field.input_formats).date()
 
 
 def iso_time_deserializer(
@@ -157,7 +159,7 @@ def iso_time_deserializer(
     **kwargs: typing.Any,
 ) -> datetime.time:
     """Parse a time string in ISO format."""
-    return cached_iso_parse(value, fmt=field.input_formats).time()
+    return _iso_parse(value, fmt=field.input_formats).time()
 
 
 class Date(DateTimeBase[datetime.date]):
@@ -207,7 +209,7 @@ def datetime_deserializer(
     **kwargs: typing.Any,
 ) -> datetime.datetime:
     """Parse a datetime string in ISO format."""
-    return cached_iso_parse(value, fmt=field.input_formats)
+    return _iso_parse(value, fmt=field.input_formats)
 
 
 def is_aware_datetime(value: datetime.datetime) -> bool:
@@ -260,6 +262,7 @@ class DateTime(DateTimeBase[datetime.datetime]):
             **kwargs,
         )
         self.tz = timezone_deserializer(tz, self) if tz else None
+        self._tz_available = self.tz is not None
 
     def deserialize(
         self,
@@ -270,10 +273,9 @@ class DateTime(DateTimeBase[datetime.datetime]):
         if deserialized is None:
             return None
 
-        tz_available = self.tz is not None
         is_aware = is_aware_datetime(deserialized)
-        if is_aware and tz_available:
+        if self._tz_available and is_aware:
             return deserialized.astimezone(self.tz)
-        if is_aware and not tz_available:
+        elif not self._tz_available and is_aware:
             return deserialized
         return deserialized.replace(tzinfo=self.tz or zoneinfo.ZoneInfo("UTC"))

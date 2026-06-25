@@ -741,12 +741,9 @@ def coalesce(
     return coalesce
 
 
-# `adapter` can also mean a field, as fields implement the adapter protocol
+# `adapter` can also mean a field, as `Field` implements the adapter protocol
 def json_serializer(
-    value: typing.Any,
-    adapter: typing.Any,
-    *args: typing.Any,
-    **kwargs: typing.Any,
+    value: typing.Any, adapter: typing.Any, *args: typing.Any, **kwargs: typing.Any
 ) -> JSONValue:
     return make_jsonable(value)
 

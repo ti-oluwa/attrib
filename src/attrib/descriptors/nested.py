@@ -69,9 +69,9 @@ class Nested(Field[DataclassT]):
 
         if is_iterable(field_type):
             raise FieldError(
-                f"{type(self).__name__} does not support iterable types. Got {field_type}."
+                f"{type(self).__name__} does not support iterable types. Got {field_type!r}."
             )
-        if not issubclass(field_type, Dataclass):
+        if not issubclass(field_type, Dataclass):  # type: ignore[arg-type]
             raise FieldError(
-                f"{field_type} must be a subclass of {Dataclass.__qualname__}. Got {field_type}."
+                f"{field_type} must be a subclass of {Dataclass.__qualname__}. Got {field_type!r}."
             )

@@ -105,7 +105,7 @@ def _getstate(
 ) -> typing.Tuple[typing.Dict[str, typing.Any], typing.Dict[str, typing.Any]]:
     """Get the state of the dataclass instance."""
     field_values = dict(_iter(instance))
-    state_attributes = getattr(instance, "__state_attributes__", [])
+    state_attributes = getattr(instance, "__state_attributes__", None)
     if not state_attributes:
         return field_values, {}
 
@@ -175,7 +175,7 @@ def _hash(instance: "Dataclass") -> int:
             (
                 instance_type,
                 tuple(values),
-                tuple(instance.__state_attributes__),
+                instance.__state_attributes__,
             )
         )
         instance.__cache__["__hash__"] = computed_hash
@@ -205,7 +205,7 @@ def _iter(instance: "Dataclass") -> typing.Iterator[typing.Tuple[str, typing.Any
         yield key, field.__get__(instance, owner)
 
 
-__ordering_cache_key = "__ordering_values__"
+_ordering_cache_key_ = "__ordering_values__"
 
 
 def _get_ordering_values(instance: "Dataclass") -> typing.Tuple[typing.Any, ...]:
@@ -215,13 +215,13 @@ def _get_ordering_values(instance: "Dataclass") -> typing.Tuple[typing.Any, ...]
     Caches the values to avoid recomputing them multiple times for frozen instances.
     """
     if instance.__config__.frozen:
-        if (values := instance.__cache__.get(__ordering_cache_key, None)) is None:
+        if (values := instance.__cache__.get(_ordering_cache_key_, None)) is None:
             instance_type = type(instance)
             values = tuple(
                 field.__get__(instance, instance_type)
                 for field in instance.__ordering_fields__
             )
-            instance.__cache__[__ordering_cache_key] = values
+            instance.__cache__[_ordering_cache_key_] = values
         return values
 
     instance_type = type(instance)
@@ -709,7 +709,9 @@ class Dataclass(metaclass=DataclassMeta):
         "__cache__",
         "__init_config__",
     )
-    __state_attributes__: typing.ClassVar[typing.Tuple[str, ...]] = ("__fields_set__",)
+    __state_attributes__: typing.ClassVar[typing.FrozenSet[str]] = frozenset(
+        {"__fields_set__"}
+    )
     """
     Attributes to be included in the state of the dataclass when __getstate__ is called,
     usually during pickling
@@ -1066,7 +1068,7 @@ def deserialize(
     """
     if obj is None:
         raise DeserializationError(
-            "Cannot deserialize 'None'",
+            "Cannot deserialize NoneType object",
             parent_name=datacls.__name__,
             input_type="null",
             expected_type=datacls.__name__,

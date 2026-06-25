@@ -31,9 +31,7 @@ def url_deserializer(
 class URL(Field[typing.Union[Url, UrlBytes]]):
     """Field for handling URL values."""
 
-    default_serializers = {
-        "json": string_serializer,
-    }
+    default_serializers = {"json": string_serializer}
     default_deserializer = url_deserializer
 
     def __init__(self, **kwargs: Unpack[FieldKwargs]) -> None:
@@ -51,9 +49,7 @@ def ip_address_deserializer(
 class IPAddress(Field[typing.Union[ipaddress.IPv4Address, ipaddress.IPv6Address]]):
     """Field for handling IP addresses."""
 
-    default_serializers = {
-        "json": string_serializer,
-    }
+    default_serializers = {"json": string_serializer}
     default_deserializer = ip_address_deserializer
 
     def __init__(
@@ -61,11 +57,7 @@ class IPAddress(Field[typing.Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
         **kwargs: Unpack[FieldKwargs],
     ):
         super().__init__(
-            field_type=(
-                ipaddress.IPv4Address,
-                ipaddress.IPv6Address,
-            ),
-            **kwargs,
+            field_type=(ipaddress.IPv4Address, ipaddress.IPv6Address), **kwargs
         )
 
 
@@ -90,11 +82,7 @@ class IPNetwork(Field[typing.Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
         **kwargs: Unpack[FieldKwargs],
     ):
         super().__init__(
-            field_type=(
-                ipaddress.IPv4Network,
-                ipaddress.IPv6Network,
-            ),
-            **kwargs,
+            field_type=(ipaddress.IPv4Network, ipaddress.IPv6Network), **kwargs
         )
 
 
@@ -121,17 +109,13 @@ class IPInterface(
         **kwargs: Unpack[FieldKwargs],
     ):
         super().__init__(
-            field_type=(
-                ipaddress.IPv4Interface,
-                ipaddress.IPv6Interface,
-            ),
-            **kwargs,
+            field_type=(ipaddress.IPv4Interface, ipaddress.IPv6Interface), **kwargs
         )
 
 
-############################
-######## Validators ########
-############################
+##############
+# Validators #
+##############
 
 
 def allowed_schemes(
@@ -217,15 +201,11 @@ def allowed_schemes(
         schemes.extend(custom)
 
     msg = message or "Scheme not allowed."
-    schemes = set(schemes)
+    schemes = frozenset(schemes)
 
-    def validator(
-        value: typing.Any,
-        *args: typing.Any,
-        **kwargs: typing.Any,
-    ) -> None:
+    def validator(value: typing.Any, *args: typing.Any, **kwargs: typing.Any) -> None:
         scheme: typing.Optional[str] = getattr(value, "scheme", None)
-        if scheme is None and isinstance(value, str):
+        if not scheme and value and isinstance(value, str):
             parsed_url = urlparse(value)
             scheme = parsed_url.scheme
 
@@ -288,15 +268,11 @@ def allowed_hosts(
     ```
     """
     msg = message or "Host not allowed."
-    allowed_hosts = set(allowed_hosts)
+    allowed_hosts = frozenset(allowed_hosts)
 
-    def validator(
-        value: typing.Any,
-        *args: typing.Any,
-        **kwargs: typing.Any,
-    ) -> None:
+    def validator(value: typing.Any, *args: typing.Any, **kwargs: typing.Any) -> None:
         host: typing.Optional[str] = getattr(value, "hostname", None)
-        if host is None and isinstance(value, str):
+        if not host and value and isinstance(value, str):
             parsed_url = urlparse(value)
             host = parsed_url.hostname
 
@@ -359,15 +335,11 @@ def allowed_ports(
     ```
     """
     msg = message or "Port not allowed."
-    allowed_ports = set(allowed_ports)
+    allowed_ports = frozenset(allowed_ports)
 
-    def validator(
-        value: typing.Any,
-        *args: typing.Any,
-        **kwargs: typing.Any,
-    ) -> None:
+    def validator(value: typing.Any, *args: typing.Any, **kwargs: typing.Any) -> None:
         port: typing.Optional[int] = getattr(value, "port", None)
-        if port is None and isinstance(value, str):
+        if not port and value and isinstance(value, str):
             parsed_url = urlparse(value)
             port = parsed_url.port
 

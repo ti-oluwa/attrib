@@ -33,7 +33,7 @@ from attrib.descriptors.nested import Nested
 from attrib.descriptors.networks import IPAddress, IPInterface, IPNetwork
 from attrib.types import T
 
-__field_mappings = {
+_FIELDS_ = {
     datetime.date: Date,
     datetime.time: Time,
     datetime.datetime: DateTime,
@@ -54,7 +54,7 @@ __field_mappings = {
     ipaddress.IPv4Interface: IPAddress,
     ipaddress.IPv6Interface: IPInterface,
 }
-__lock = RLock()
+_fields_lock = RLock()
 
 FieldT = typing.TypeVar("FieldT", bound=Field)
 
@@ -94,8 +94,8 @@ def register(
     def _decorator(
         cls: typing.Type[FieldT],
     ) -> typing.Type[FieldT]:
-        with __lock:
-            __field_mappings[typ] = cls
+        with _fields_lock:
+            _FIELDS_[typ] = cls
         return cls
 
     if field_cls is not None:
@@ -151,8 +151,8 @@ def field(
     :param kwargs: Additional keyword arguments for the field.
     :return: An instance of the appropriate Field subclass.
     """
-    if typ in __field_mappings:
-        field_type = __field_mappings[typ]
+    if typ in _FIELDS_:
+        field_type = _FIELDS_[typ]
         return field_type(*args, **kwargs)  # type: ignore[arg-type]
 
     if isinstance(typ, TypeAdapter):

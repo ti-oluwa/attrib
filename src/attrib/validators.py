@@ -87,14 +87,7 @@ class Pipeline(typing.NamedTuple):
         # Nesting Pipelines may cause performance issues
         if isinstance(other, Validator):
             if isinstance(other, Pipeline):
-                return self.__class__(
-                    tuple(
-                        {
-                            *self.validators,
-                            *other.validators,
-                        }
-                    )
-                )  # type: ignore[return-value]
+                return self.__class__(tuple({*self.validators, *other.validators}))  # type: ignore[return-value]
             return self.__class__(tuple({*self.validators, other}))  # type: ignore[return-value]
         return NotImplemented
 
@@ -168,14 +161,7 @@ class Or(typing.NamedTuple):
         # Nesting Ors may cause performance issues
         if isinstance(other, Validator):
             if isinstance(other, Or):
-                return self.__class__(
-                    tuple(
-                        {
-                            *self.validators,
-                            *other.validators,
-                        }
-                    )
-                )  # type: ignore[return-value]
+                return self.__class__(tuple({*self.validators, *other.validators}))  # type: ignore[return-value]
             return self.__class__(tuple({*self.validators, other}))  # type: ignore[return-value]
         return NotImplemented
 
